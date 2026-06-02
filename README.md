@@ -24,8 +24,11 @@ where the map looks like a **kids' game map**, but is actually derived from a
 ```bash
 npm install
 npm start
-# open http://localhost:3000
+# open http://localhost:4173
 ```
+
+> Runs on port **4173** by default (chosen to avoid the common `3000` clash).
+> Need a different one? `PORT=8080 npm start`.
 
 No backend? No problem — the frontend has a **built-in demo simulator**, so if
 Socket.IO can't connect it keeps generating events client-side (you'll see a

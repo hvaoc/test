@@ -118,7 +118,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => clearTimeout(timer));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4173;
 server.listen(PORT, () => {
   console.log(`🗺️  PlayMap running at http://localhost:${PORT}`);
 });
