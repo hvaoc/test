@@ -1,0 +1,342 @@
+/* ===========================================================================
+   PlayMap — turning a real OpenStreetMap into a candy-coloured kids game map.
+   The trick: render genuine OSM raster tiles, then run them through CSS
+   filters (boosted saturation, soft contrast, gentle blur) so the real
+   streets read as a playful cartoon world. Big bouncy emoji markers and a
+   chunky game-style UI do the rest.
+   =========================================================================== */
+
+:root {
+  --pop: #ff6f91;
+  --pop-2: #ffc75f;
+  --pop-3: #6ad7e5;
+  --pop-4: #7be08a;
+  --ink: #2b2350;
+  --paper: #fff8ef;
+  --shadow: 0 8px 0 rgba(43, 35, 80, 0.18), 0 14px 24px rgba(43, 35, 80, 0.22);
+  --round: 22px;
+  --font: "Baloo 2", "Comic Sans MS", "Segoe UI Rounded", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: var(--font);
+  color: var(--ink);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+  background: #aee0f7;
+  cursor: grab;
+}
+#map:active { cursor: grabbing; }
+
+/* The magic sauce: make real OSM tiles look like a storybook map. */
+.leaflet-tile-pane {
+  filter: saturate(1.7) contrast(0.92) brightness(1.07) hue-rotate(-6deg);
+}
+.leaflet-tile {
+  /* Soften the edges so roads/labels feel hand-drawn rather than technical. */
+  filter: blur(0.4px);
+}
+
+/* A dreamy colour wash floating over the whole map. */
+#map::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 400;
+  background: radial-gradient(120% 120% at 50% 0%, rgba(255, 199, 95, 0.12), transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, rgba(106, 215, 229, 0.16), transparent 55%);
+  mix-blend-mode: multiply;
+}
+
+.leaflet-container { font-family: var(--font); }
+.leaflet-control-zoom a {
+  border-radius: 14px !important;
+  font-weight: 800;
+  color: var(--ink) !important;
+  box-shadow: var(--shadow);
+  border: 3px solid #fff !important;
+}
+
+/* --------------------------------------------------------------------------
+   Bouncy emoji markers
+   -------------------------------------------------------------------------- */
+.pin {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  background: #fff;
+  border: 4px solid var(--ink);
+  border-radius: 50% 50% 50% 8px;
+  box-shadow: 0 6px 0 rgba(43, 35, 80, 0.25);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  animation: drop 0.45s cubic-bezier(0.18, 1.4, 0.4, 1) both;
+}
+.pin > span { transform: rotate(45deg); }
+.pin:hover { transform: rotate(-45deg) scale(1.18); z-index: 1000; }
+
+.pin--mine { border-color: var(--pop); box-shadow: 0 6px 0 rgba(255, 111, 145, 0.4); }
+.pin--fresh { animation: drop 0.45s cubic-bezier(0.18, 1.4, 0.4, 1) both, glow 1.6s ease 0.45s 2; }
+
+@keyframes drop {
+  0% { transform: translateY(-40px) rotate(-45deg) scale(0.4); opacity: 0; }
+  100% { transform: translateY(0) rotate(-45deg) scale(1); opacity: 1; }
+}
+@keyframes glow {
+  0%, 100% { box-shadow: 0 6px 0 rgba(43, 35, 80, 0.25); }
+  50% { box-shadow: 0 6px 0 rgba(43, 35, 80, 0.25), 0 0 0 10px rgba(255, 199, 95, 0.45); }
+}
+
+/* You-are-here beacon */
+.me-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--pop-3);
+  border: 4px solid #fff;
+  box-shadow: 0 0 0 4px rgba(106, 215, 229, 0.45), var(--shadow);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(106, 215, 229, 0.45); }
+  50% { box-shadow: 0 0 0 14px rgba(106, 215, 229, 0); }
+}
+
+/* Cartoon popups */
+.leaflet-popup-content-wrapper {
+  border-radius: var(--round);
+  border: 4px solid var(--ink);
+  box-shadow: var(--shadow);
+  background: var(--paper);
+}
+.leaflet-popup-content { margin: 14px 16px; font-weight: 600; }
+.leaflet-popup-tip { border: 3px solid var(--ink); }
+.pop-title { font-size: 16px; font-weight: 800; margin: 0 0 2px; }
+.pop-meta { font-size: 12px; opacity: 0.7; }
+
+/* --------------------------------------------------------------------------
+   HUD / chrome
+   -------------------------------------------------------------------------- */
+.hud-top {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+.logo {
+  pointer-events: auto;
+  background: var(--paper);
+  border: 4px solid var(--ink);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-weight: 900;
+  font-size: 20px;
+  box-shadow: var(--shadow);
+}
+.logo span { color: var(--pop); }
+
+.status {
+  pointer-events: auto;
+  margin-left: auto;
+  font-weight: 800;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 3px solid var(--ink);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.status--live { background: var(--pop-4); }
+.status--demo { background: var(--pop-2); }
+
+/* Live feed */
+.feed {
+  position: absolute;
+  top: 70px;
+  right: 14px;
+  width: 280px;
+  max-width: calc(100vw - 28px);
+  z-index: 1000;
+  background: var(--paper);
+  border: 4px solid var(--ink);
+  border-radius: var(--round);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 50vh;
+}
+.feed__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-weight: 900;
+  background: var(--pop-3);
+  border-bottom: 4px solid var(--ink);
+}
+.feed__toggle {
+  border: none;
+  background: #fff;
+  border-radius: 10px;
+  width: 26px;
+  height: 26px;
+  font-weight: 900;
+  cursor: pointer;
+  border: 3px solid var(--ink);
+}
+.feed__list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+}
+.feed.is-collapsed .feed__list { display: none; }
+.feed__item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 14px;
+  margin-bottom: 6px;
+  background: #fff;
+  border: 2px solid rgba(43, 35, 80, 0.12);
+  cursor: pointer;
+  animation: slidein 0.3s ease both;
+}
+.feed__item:hover { border-color: var(--pop); }
+.feed__item.mine { border-color: var(--pop); background: #fff3f6; }
+.feed__emoji { font-size: 22px; }
+.feed__text { font-size: 13px; line-height: 1.2; }
+.feed__text b { display: block; font-weight: 800; }
+.feed__text small { opacity: 0.6; }
+@keyframes slidein {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Bottom dock */
+.dock {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  gap: 10px;
+}
+.dock__btn {
+  font-family: var(--font);
+  font-weight: 800;
+  font-size: 15px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 4px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.08s ease;
+}
+.dock__btn:active { transform: translateY(3px); box-shadow: 0 3px 0 rgba(43, 35, 80, 0.18); }
+.dock__btn--primary { background: var(--pop); color: #fff; }
+
+/* Composer */
+.composer {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  background: rgba(43, 35, 80, 0.35);
+  padding: 16px;
+}
+.composer[hidden] { display: none; }
+.composer.is-placing { background: transparent; pointer-events: none; }
+.composer.is-placing .composer__card { display: none; }
+.composer__card {
+  width: min(420px, 100%);
+  background: var(--paper);
+  border: 5px solid var(--ink);
+  border-radius: var(--round);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+.composer__card h2 { margin: 0 0 4px; font-size: 22px; }
+.composer__hint { margin: 0 0 14px; font-size: 13px; opacity: 0.7; }
+.composer__types {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.type-chip {
+  aspect-ratio: 1;
+  font-size: 22px;
+  border-radius: 14px;
+  border: 3px solid rgba(43, 35, 80, 0.18);
+  background: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.08s ease;
+}
+.type-chip:hover { transform: scale(1.08); }
+.type-chip.selected { border-color: var(--pop); background: #fff3f6; box-shadow: 0 4px 0 rgba(255, 111, 145, 0.3); }
+.composer__field { display: block; margin-bottom: 12px; font-weight: 700; font-size: 13px; }
+.composer__field input {
+  width: 100%;
+  margin-top: 5px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  border: 3px solid rgba(43, 35, 80, 0.2);
+  font-family: var(--font);
+  font-size: 15px;
+}
+.composer__field input:focus { outline: none; border-color: var(--pop-3); }
+.composer__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+
+/* Floating "tap the map" banner shown while placing */
+.place-banner {
+  position: absolute;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  background: var(--pop);
+  color: #fff;
+  font-weight: 800;
+  padding: 12px 20px;
+  border-radius: 999px;
+  border: 4px solid var(--ink);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  animation: pulse-banner 1.2s ease-in-out infinite;
+}
+@keyframes pulse-banner {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.05); }
+}
+
+@media (max-width: 560px) {
+  .feed { top: 64px; width: 220px; max-height: 38vh; }
+  .logo { font-size: 16px; }
+}

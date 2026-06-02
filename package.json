@@ -1,0 +1,16 @@
+{
+  "name": "playmap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time local events & activities on a kids-game-style map derived from OpenStreetMap",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
