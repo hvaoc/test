@@ -14,9 +14,13 @@ build in Phase 1 and why it's worth building.
 **A private AI guide that remembers your whole life and gives advice that actually
 fits your situation — the opposite of a blank, forgetful chat box.**
 
-"Facebook × ChatGPT" is the shorthand the founder used, but the sharper framing is:
-**ChatGPT gives you answers; Cairn gives you *your* answer**, because it knows the
-context a stranger-chatbot never will.
+"Facebook × ChatGPT" was the founder's shorthand, but it means the **feeling of being
+known** — *not* a social network. **Decided: Cairn is a guide that knows you, not a
+place where users connect to each other.** No friend graph, no feed of other people, no
+user-to-user social layer. The "Facebook" half is the warmth and continuity of a
+relationship that remembers you; the "ChatGPT" half is the capability. The sharper
+framing: **ChatGPT gives you answers; Cairn gives you *your* answer**, because it knows
+the context a stranger-chatbot never will.
 
 ---
 
@@ -322,16 +326,20 @@ encryption-at-rest hardening, payments, voice. Prove the *memory-makes-it-better
 
 ---
 
-## 16. Open questions for the founder
+## 16. Decisions & open questions
 
+**Decided:**
+- ✅ **It's a guide that knows you, not a social network.** No user-to-user connections,
+  friend graph, or feed of other people. "Facebook × ChatGPT" describes the *feeling of
+  being known* + capability — not a literal social layer. This keeps scope tight and the
+  privacy model simple (one user's memory, for that one user).
+
+**Still open for the founder:**
 1. **Lead persona for the MVP demo** — student / dater / career-mover? (Pick one to make
    the onboarding and wow-moments concrete.)
 2. **How proactive?** Push-notification check-ins from day one, or in-app only first?
-3. **Social layer** — is "Facebook" literally on the roadmap (connecting users), or just
-   the *relationship/feed* feel of a guide that knows you? This materially changes scope
-   and privacy design.
-4. **Brand & name** — keep *Cairn* or explore alternatives?
-5. **Data residency / regulation** — any target market (EU/UK GDPR, etc.) that should
+3. **Brand & name** — keep *Cairn* or explore alternatives?
+4. **Data residency / regulation** — any target market (EU/UK GDPR, etc.) that should
    shape the privacy architecture from the start?
 
 ---
