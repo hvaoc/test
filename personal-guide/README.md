@@ -15,13 +15,14 @@ conversation, because each conversation adds a stone to your profile.
 
 ## Status
 
-📄 **Phase 0 — Product & market definition.** This directory currently contains
-the strategy document that defines what we're building and why it's worth building.
-No app code yet (that's the next phase).
+🚧 **Phase 1 — MVP in progress.** The strategy is defined and the first working app
+is in [`app/`](app/): onboarding → grounded chat → automatic memory extraction →
+memory viewer, with a mock-LLM fallback so it runs without any API key.
 
-| Doc | What's in it |
+| Path | What's in it |
 | --- | --- |
 | [`docs/PRODUCT.md`](docs/PRODUCT.md) | The full product & market thesis: problem, differentiation vs ChatGPT, the memory/profile engine (the moat), privacy model, market opportunity, business model, tech architecture, MVP scope, roadmap, and risks. |
+| [`app/`](app/) | The Expo (React Native) MVP — Expo Router app + serverless API routes + on-device private memory. See [`app/README.md`](app/README.md) to run it. |
 
 ## The one-paragraph pitch
 
@@ -38,7 +39,7 @@ something a stateless chatbot structurally can't be.
 
 1. **Phase 0 — this doc.** Product & market thesis. ✅
 2. **Phase 1 — MVP.** Expo app: onboarding → profile, context-aware chat, automatic
-   memory extraction, private per-user storage. Demoable with a mock-LLM fallback.
+   memory extraction, private per-user storage. Demoable with a mock-LLM fallback. 🚧 *in [`app/`](app/)*
 3. **Phase 2 — Depth.** Life "threads" (exam prep, a relationship, a job hunt),
    proactive check-ins, richer profile schema.
 4. **Phase 3 — Trust & scale.** Encryption, export/delete, monetization.

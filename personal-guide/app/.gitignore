@@ -1,0 +1,22 @@
+# Expo / Node
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Secrets
+.env
+.env.local
+
+# Misc
+npm-debug.*
+.DS_Store
