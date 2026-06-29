@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Things Clone",
+    "slug": "things3-clone",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#ffffff",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.things3clone"
+    },
+    "android": {
+      "package": "com.example.things3clone"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
