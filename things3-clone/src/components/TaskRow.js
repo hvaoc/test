@@ -3,13 +3,13 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Checkbox from './Checkbox';
 import { colors, spacing, typography } from '../theme';
-import { STATUS } from '../store/constants';
+import { STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel, isPast, isToday } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
 
 // A single to-do row. Shows the checkbox, title, and a set of metadata badges
 // (project dot, notes glyph, checklist progress, tags, deadline).
-export default function TaskRow({ task, onPress, showProject = false }) {
+export default function TaskRow({ task, onPress, showProject = false, inProject = false }) {
   const { state, toggleTask } = useTasks();
   const done = task.status !== STATUS.OPEN;
 
@@ -27,6 +27,11 @@ export default function TaskRow({ task, onPress, showProject = false }) {
   const deadlineOverdue =
     task.deadline && (isPast(task.deadline) || isToday(task.deadline));
 
+  // In the project view, an open task's checkbox outline takes on its priority
+  // color (if any) as an at-a-glance urgency cue.
+  const priorityBorder =
+    inProject && task.priority ? PRIORITY_MAP[task.priority]?.color : undefined;
+
   return (
     <Pressable
       onPress={onPress}
@@ -35,6 +40,7 @@ export default function TaskRow({ task, onPress, showProject = false }) {
       <Checkbox
         status={task.status}
         color={project?.color}
+        borderColor={priorityBorder}
         onPress={() => toggleTask(task.id)}
       />
 

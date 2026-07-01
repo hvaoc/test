@@ -34,15 +34,22 @@ function Chip({ icon, label, color, active, onPress }) {
 }
 
 // Inline compose card with the full field set (Date / Deadline / Priority /
-// Location / Labels). Stays open after adding so several can be entered.
-export default function TaskComposer({ onAdd, onCancel }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [when, setWhen] = useState(null);
-  const [deadline, setDeadline] = useState(null);
-  const [priority, setPriority] = useState(null);
-  const [location, setLocation] = useState('');
-  const [tags, setTags] = useState([]);
+// Location / Labels). In "add" mode it stays open after adding so several can
+// be entered; with `initial` supplied it edits one existing task and closes.
+export default function TaskComposer({
+  onAdd,
+  onCancel,
+  initial = null,
+  submitLabel = 'Add task',
+  persistAfterAdd = true,
+}) {
+  const [title, setTitle] = useState(initial?.title || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [when, setWhen] = useState(initial?.when || null);
+  const [deadline, setDeadline] = useState(initial?.deadline || null);
+  const [priority, setPriority] = useState(initial?.priority || null);
+  const [location, setLocation] = useState(initial?.location || '');
+  const [tags, setTags] = useState(initial?.tags || []);
   const [sheet, setSheet] = useState(null);
   const ref = useRef(null);
 
@@ -58,6 +65,7 @@ export default function TaskComposer({ onAdd, onCancel }) {
       location: location.trim(),
       tags,
     });
+    if (!persistAfterAdd) return; // editing a task — parent closes the card.
     // Keep the field selections for rapid entry; clear the text.
     setTitle('');
     setDescription('');
@@ -136,7 +144,7 @@ export default function TaskComposer({ onAdd, onCancel }) {
           onPress={add}
           disabled={!title.trim()}
         >
-          <Text style={styles.addText}>Add task</Text>
+          <Text style={styles.addText}>{submitLabel}</Text>
         </Pressable>
       </View>
 

@@ -291,55 +291,54 @@ export default function ListScreen({
     setProjectLayout({ tasks, headings });
   };
 
-  // Header (nav bar + title) shared by both the scroll and reorderable paths.
-  const header = (
-    <>
-      {/* Back/sidebar-toggle + (for Trash) the Empty action. In the two-pane
-          layout the sidebar is always visible, so the chevron toggles it. */}
-      <View style={styles.navBar}>
-        {embedded ? (
-          <Pressable hitSlop={10} onPress={onToggleSidebar} style={styles.back}>
-            <Ionicons
-              name={sidebarVisible ? 'chevron-back' : 'menu'}
-              size={26}
-              color={colors.accent}
-            />
-          </Pressable>
-        ) : (
-          <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
-            <Ionicons name="chevron-back" size={26} color={colors.accent} />
-          </Pressable>
-        )}
-        {listId === 'trash' && totalTasks > 0 && (
-          <Pressable hitSlop={10} onPress={emptyTrash}>
-            <Text style={styles.emptyTrash}>Empty</Text>
-          </Pressable>
-        )}
-      </View>
-
-      {project ? (
-        <ProjectHeader project={project} navigation={navigation} />
+  // The chevron/sidebar-toggle bar sits above the content and is intentionally
+  // NOT constrained by the "Center content" setting — it spans the full pane.
+  const navBar = (
+    <View style={styles.navBar}>
+      {embedded ? (
+        <Pressable hitSlop={10} onPress={onToggleSidebar} style={styles.back}>
+          <Ionicons
+            name={sidebarVisible ? 'chevron-back' : 'menu'}
+            size={26}
+            color={colors.accent}
+          />
+        </Pressable>
       ) : (
-        <View style={styles.titleRow}>
-          {smart && (
-            <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
-          )}
-          {area && (
-            <Ionicons name="cube-outline" size={24} color={headerColor} style={{ marginRight: 8 }} />
-          )}
-          <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
-            {headerTitle}
-          </Text>
-        </View>
+        <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
+          <Ionicons name="chevron-back" size={26} color={colors.accent} />
+        </Pressable>
       )}
-    </>
+      {listId === 'trash' && totalTasks > 0 && (
+        <Pressable hitSlop={10} onPress={emptyTrash}>
+          <Text style={styles.emptyTrash}>Empty</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+
+  // The title/project header is part of the content and follows the centering.
+  const titleHeader = project ? (
+    <ProjectHeader project={project} navigation={navigation} />
+  ) : (
+    <View style={styles.titleRow}>
+      {smart && (
+        <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
+      )}
+      {area && (
+        <Ionicons name="cube-outline" size={24} color={headerColor} style={{ marginRight: 8 }} />
+      )}
+      <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
+        {headerTitle}
+      </Text>
+    </View>
   );
 
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={contentPad} keyboardShouldPersistTaps="handled">
+        {navBar}
         <View style={[styles.contentCol, centered && styles.contentColCentered]}>
-        {header}
+        {titleHeader}
         {project ? (
           // One drag surface for the whole project: heading dividers are fixed,
           // tasks can be dragged within or across them. A per-section "+ Add
@@ -347,6 +346,7 @@ export default function ListScreen({
           <ReorderableTaskList
             items={projectItems}
             showProject={false}
+            inProject
             onOpenTask={setOpenTaskId}
             onCommitKeys={commitProjectLayout}
             onDeleteHeading={deleteHeading}
@@ -473,7 +473,7 @@ function EmptyState({ listId }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   contentCol: { width: '100%' },
-  contentColCentered: { maxWidth: 640, alignSelf: 'center' },
+  contentColCentered: { maxWidth: 1280, alignSelf: 'center' },
   navBar: {
     flexDirection: 'row',
     alignItems: 'center',

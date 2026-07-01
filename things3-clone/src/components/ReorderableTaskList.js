@@ -19,6 +19,10 @@ import Animated, {
 import TaskRow from './TaskRow';
 import SectionEditor from './SectionEditor';
 import TaskComposer from './TaskComposer';
+import WhenSheet from './WhenSheet';
+import PrioritySheet from './PrioritySheet';
+import { useTasks } from '../store/TasksContext';
+import { PRIORITY_MAP } from '../store/constants';
 import { colors, spacing, typography, radius } from '../theme';
 
 // Used only until a row reports its real height via onLayout.
@@ -409,12 +413,35 @@ function HeadingRow({
 
 // --- task (draggable individually) -----------------------------------------
 
-function DraggableRow({ itemKey, task, showProject, onOpenTask, onCommit, ctx }) {
-  const { positions, heights, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
+// Hover-revealed quick actions on the right of a task row: edit (inline
+// compose), set date, set priority. Wide/non-mobile only.
+function RowActions({ visible, onEdit, onDate, onPriority, priority }) {
+  const prio = priority ? PRIORITY_MAP[priority] : null;
+  return (
+    <View style={[styles.rowActions, { opacity: visible ? 1 : 0 }]} pointerEvents={visible ? 'auto' : 'none'}>
+      <Pressable hitSlop={6} style={styles.rowActionBtn} onPress={onEdit}>
+        <Ionicons name="create-outline" size={19} color={colors.textSecondary} />
+      </Pressable>
+      <Pressable hitSlop={6} style={styles.rowActionBtn} onPress={onDate}>
+        <Ionicons name="calendar-outline" size={19} color={colors.textSecondary} />
+      </Pressable>
+      <Pressable hitSlop={6} style={styles.rowActionBtn} onPress={onPriority}>
+        <Ionicons name={prio ? 'flag' : 'flag-outline'} size={19} color={prio ? prio.color : colors.textSecondary} />
+      </Pressable>
+    </View>
+  );
+}
+
+function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCommit, ctx }) {
+  const { positions, heights, kinds, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
+  const { updateTask } = useTasks();
   const top = useRowTop(itemKey, ctx);
   const startTop = useSharedValue(0);
   const [hovered, setHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [sheet, setSheet] = useState(null); // 'when' | 'priority' | null
   const handleVisible = ctx.showHandle && (!HOVERABLE || hovered);
+  const actionsVisible = ctx.showHandle && (!HOVERABLE || hovered);
 
   // A real drag also produces a trailing press/click on web — swallow that one.
   const draggedRef = React.useRef(false);
@@ -455,6 +482,17 @@ function DraggableRow({ itemKey, task, showProject, onOpenTask, onCommit, ctx })
         if (center > acc + h / 2) newIndex += 1;
         acc += h;
       }
+      // The "Add task"/"Add section" rows stay pinned at the bottom of their
+      // section: a task can't land on or below them. Pull the target up above
+      // any add-rows it would otherwise slot beneath.
+      const rest = keys.filter((k) => k !== itemKey);
+      while (
+        newIndex > 0 &&
+        (kinds.value[rest[newIndex - 1]] === 'addtask' ||
+          kinds.value[rest[newIndex - 1]] === 'addsection')
+      ) {
+        newIndex -= 1;
+      }
       if (newIndex !== positions.value[itemKey]) {
         positions.value = reposition(positions.value, positions.value[itemKey], newIndex);
       }
@@ -487,23 +525,108 @@ function DraggableRow({ itemKey, task, showProject, onOpenTask, onCommit, ctx })
     ? { onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) }
     : null;
 
+  const sheets = (
+    <>
+      <WhenSheet
+        visible={sheet === 'when'}
+        onClose={() => setSheet(null)}
+        value={task.when}
+        onChange={(when) => updateTask(task.id, { when })}
+      />
+      <PrioritySheet
+        visible={sheet === 'priority'}
+        onClose={() => setSheet(null)}
+        value={task.priority}
+        onChange={(priority) => updateTask(task.id, { priority })}
+      />
+    </>
+  );
+
+  // Inline compose view for editing the existing task (wide surfaces).
+  if (editing) {
+    return (
+      <Animated.View style={style}>
+        <View onLayout={measure(heights, itemKey)}>
+          <TaskComposer
+            initial={{
+              title: task.title,
+              description: task.notes,
+              when: task.when,
+              deadline: task.deadline,
+              priority: task.priority,
+              location: task.location,
+              tags: task.tags,
+            }}
+            submitLabel="Save"
+            persistAfterAdd={false}
+            onAdd={(p) => {
+              updateTask(task.id, {
+                title: p.title,
+                notes: p.description,
+                when: p.when,
+                deadline: p.deadline,
+                priority: p.priority,
+                location: p.location,
+                tags: p.tags,
+              });
+              setEditing(false);
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        </View>
+        {sheets}
+      </Animated.View>
+    );
+  }
+
   return ctx.showHandle ? (
     <Animated.View style={style}>
       <View style={styles.rowHandled} onLayout={measure(heights, itemKey)} {...hoverProps}>
         <Handle gesture={pan} style={styles.taskHandle} visible={handleVisible} />
         <View style={styles.rowBody}>
-          <TaskRow task={task} showProject={showProject} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} onPress={handlePress} />
         </View>
+        <RowActions
+          visible={actionsVisible}
+          priority={task.priority}
+          onEdit={() => setEditing(true)}
+          onDate={() => setSheet('when')}
+          onPriority={() => setSheet('priority')}
+        />
       </View>
+      {sheets}
     </Animated.View>
   ) : (
     <GestureDetector gesture={pan}>
       <Animated.View style={style}>
         <View style={styles.row} onLayout={measure(heights, itemKey)}>
-          <TaskRow task={task} showProject={showProject} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} onPress={handlePress} />
         </View>
       </Animated.View>
     </GestureDetector>
+  );
+}
+
+// A drop-target placeholder for the item being dragged: a faint slot with a
+// red insertion line + dot at its top, marking where the row will land. Only
+// shown for single-task drags (activeId set); block/heading drags skip it.
+function DropIndicator({ ctx }) {
+  const { positions, heights, activeId, dragging } = ctx;
+  const style = useAnimatedStyle(() => {
+    const act = activeId.value;
+    if (!act || !dragging.value) return { opacity: 0, top: 0, height: 0 };
+    const keys = orderedKeys(positions.value);
+    const top = topForIndex(keys, heights.value, positions.value[act]);
+    return { opacity: 1, top, height: heights.value[act] ?? FALLBACK_H };
+  });
+  return (
+    <Animated.View pointerEvents="none" style={[styles.dropSlot, style]}>
+      <View style={styles.dropPlaceholder} />
+      <View style={styles.dropLineRow}>
+        <View style={styles.dropDot} />
+        <View style={styles.dropLine} />
+      </View>
+    </Animated.View>
   );
 }
 
@@ -513,6 +636,7 @@ function DraggableRow({ itemKey, task, showProject, onOpenTask, onCommit, ctx })
 export default function ReorderableTaskList({
   items,
   showProject,
+  inProject,
   onOpenTask,
   onCommitKeys,
   onDeleteHeading,
@@ -559,6 +683,7 @@ export default function ReorderableTaskList({
 
   return (
     <Animated.View style={containerStyle}>
+      <DropIndicator ctx={ctx} />
       {items.map((item) =>
         item.kind === 'addtask' ? (
           <AddTaskRow
@@ -600,6 +725,7 @@ export default function ReorderableTaskList({
             itemKey={item.key}
             task={item.task}
             showProject={showProject}
+            inProject={inProject}
             onOpenTask={onOpenTask}
             onCommit={commit}
             ctx={ctx}
@@ -655,6 +781,47 @@ const styles = StyleSheet.create({
   addSectionText: { ...typography.subhead, color: colors.accent, fontWeight: '600' },
   addSectionTextHidden: { opacity: 0 },
   rowBody: { flex: 1 },
+  // Drop-target placeholder shown under the floating dragged row.
+  dropSlot: { position: 'absolute', left: 0, right: 0 },
+  dropPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    marginHorizontal: spacing.md,
+    marginVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: colors.groupedBackground,
+  },
+  dropLineRow: {
+    position: 'absolute',
+    top: -1,
+    left: spacing.lg,
+    right: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropLine: { flex: 1, height: 2, backgroundColor: colors.deadline },
+  dropDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: colors.deadline,
+    backgroundColor: colors.background,
+    marginLeft: -4,
+    marginRight: 2,
+  },
+  // Right-aligned hover actions (edit / date / priority).
+  rowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingTop: 8,
+    paddingRight: spacing.lg,
+    paddingLeft: spacing.sm,
+  },
+  rowActionBtn: {
+    padding: 3,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
   handle: {
     justifyContent: 'center',
     alignItems: 'center',

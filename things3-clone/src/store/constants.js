@@ -35,9 +35,9 @@ export const STATUS = {
 
 // Task priority levels (highest first).
 export const PRIORITIES = [
-  { key: 'high', label: 'High', color: '#e8554e' },
-  { key: 'medium', label: 'Medium', color: '#f5a623' },
-  { key: 'low', label: 'Low', color: '#2b6fff' },
+  { key: 'high', label: 'High', color: '#c04f43' },
+  { key: 'medium', label: 'Medium', color: '#de8d35' },
+  { key: 'low', label: 'Low', color: '#3b6ed9' },
 ];
 
 export const PRIORITY_MAP = PRIORITIES.reduce((acc, p) => {
