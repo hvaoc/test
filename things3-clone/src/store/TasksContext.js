@@ -277,7 +277,9 @@ function reducer(state, action) {
             id: uid('head'),
             projectId: action.projectId,
             title: action.title || 'New Heading',
-            order: Date.now(), // new headings sort to the bottom
+            description: '',
+            // Explicit order inserts between sections; default sorts to the bottom.
+            order: action.order != null ? action.order : Date.now(),
           },
         ],
       };
@@ -286,7 +288,15 @@ function reducer(state, action) {
       return {
         ...state,
         headings: state.headings.map((h) =>
-          h.id === action.id ? { ...h, title: action.title } : h
+          h.id === action.id ? { ...h, ...action.patch } : h
+        ),
+      };
+
+    case 'TOGGLE_HEADING_COLLAPSED':
+      return {
+        ...state,
+        headings: state.headings.map((h) =>
+          h.id === action.id ? { ...h, collapsed: !h.collapsed } : h
         ),
       };
 
@@ -398,9 +408,10 @@ export function TasksProvider({ children }) {
       updateProject: (id, patch) => dispatch({ type: 'UPDATE_PROJECT', id, patch }),
       deleteProject: (id) => dispatch({ type: 'DELETE_PROJECT', id }),
 
-      addHeading: (projectId, title) =>
-        dispatch({ type: 'ADD_HEADING', projectId, title }),
-      updateHeading: (id, title) => dispatch({ type: 'UPDATE_HEADING', id, title }),
+      addHeading: (projectId, title, order) =>
+        dispatch({ type: 'ADD_HEADING', projectId, title, order }),
+      updateHeading: (id, patch) => dispatch({ type: 'UPDATE_HEADING', id, patch }),
+      toggleHeadingCollapsed: (id) => dispatch({ type: 'TOGGLE_HEADING_COLLAPSED', id }),
       deleteHeading: (id) => dispatch({ type: 'DELETE_HEADING', id }),
 
       addArea: (payload) => dispatch({ type: 'ADD_AREA', payload }),
