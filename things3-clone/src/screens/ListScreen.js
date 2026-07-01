@@ -249,8 +249,9 @@ export default function ListScreen({
     addTask(task);
   };
 
-  // Insert a new heading right after `afterHeadingId` (null = before the first).
-  const handleAddSectionAfter = (afterHeadingId) => {
+  // Insert a new heading right after `afterHeadingId` (null = before the first),
+  // using the title/description composed in the inline "Add section" form.
+  const handleAddSectionAfter = (afterHeadingId, { title, description } = {}) => {
     const hs = state.headings.filter((h) => h.projectId === projectId).sort(byOrder);
     let order;
     if (!afterHeadingId) {
@@ -261,7 +262,7 @@ export default function ListScreen({
       const next = hs[i + 1];
       order = next ? (cur + (next.order ?? 0)) / 2 : cur + 1;
     }
-    addHeading(projectId, 'New Heading', order);
+    addHeading(projectId, { title, description, order });
   };
 
   // Walk the dropped order; each task adopts the heading divider above it, and

@@ -87,7 +87,7 @@ export default function ProjectHeader({ project, navigation }) {
 
         <Pressable
           style={styles.actionBtn}
-          onPress={() => addHeading(project.id, 'New Heading')}
+          onPress={() => addHeading(project.id)}
         >
           <Ionicons name="text-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionText}>Heading</Text>

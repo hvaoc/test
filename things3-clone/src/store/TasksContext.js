@@ -277,7 +277,7 @@ function reducer(state, action) {
             id: uid('head'),
             projectId: action.projectId,
             title: action.title || 'New Heading',
-            description: '',
+            description: action.description || '',
             // Explicit order inserts between sections; default sorts to the bottom.
             order: action.order != null ? action.order : Date.now(),
           },
@@ -408,8 +408,14 @@ export function TasksProvider({ children }) {
       updateProject: (id, patch) => dispatch({ type: 'UPDATE_PROJECT', id, patch }),
       deleteProject: (id) => dispatch({ type: 'DELETE_PROJECT', id }),
 
-      addHeading: (projectId, title, order) =>
-        dispatch({ type: 'ADD_HEADING', projectId, title, order }),
+      addHeading: (projectId, opts = {}) =>
+        dispatch({
+          type: 'ADD_HEADING',
+          projectId,
+          title: opts.title,
+          description: opts.description,
+          order: opts.order,
+        }),
       updateHeading: (id, patch) => dispatch({ type: 'UPDATE_HEADING', id, patch }),
       toggleHeadingCollapsed: (id) => dispatch({ type: 'TOGGLE_HEADING_COLLAPSED', id }),
       deleteHeading: (id) => dispatch({ type: 'DELETE_HEADING', id }),

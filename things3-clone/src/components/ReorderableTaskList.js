@@ -231,13 +231,34 @@ function AddSectionRow({ itemKey, afterHeadingId, onAddSection, ctx }) {
   const { heights } = ctx;
   const top = useRowTop(itemKey, ctx);
   const [hovered, setHovered] = useState(false);
+  const [composing, setComposing] = useState(false);
   const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
+
+  // Composing replaces this slot's trigger with the section compose form.
+  if (composing) {
+    return (
+      <Animated.View style={style}>
+        <View style={styles.headingEdit} onLayout={measure(heights, itemKey)}>
+          <SectionEditor
+            title=""
+            description=""
+            onSave={(patch) => {
+              onAddSection && onAddSection(afterHeadingId, patch);
+              setComposing(false);
+            }}
+            onCancel={() => setComposing(false)}
+          />
+        </View>
+      </Animated.View>
+    );
+  }
+
   return (
     <Animated.View style={style}>
       <Pressable
         style={styles.addSection}
         onLayout={measure(heights, itemKey)}
-        onPress={() => onAddSection && onAddSection(afterHeadingId)}
+        onPress={() => setComposing(true)}
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
       >
@@ -641,7 +662,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     userSelect: 'none',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.separator,
+    borderBottomColor: 'rgba(0,0,0,0.035)',
   },
   rowHandled: {
     flexDirection: 'row',
@@ -649,7 +670,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     userSelect: 'none',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.separator,
+    borderBottomColor: 'rgba(0,0,0,0.035)',
   },
   addTask: {
     flexDirection: 'row',
@@ -673,18 +694,25 @@ const styles = StyleSheet.create({
     marginVertical: spacing.xs,
     borderWidth: 1,
     borderColor: colors.separatorStrong,
-    borderRadius: radius.lg,
+    borderRadius: radius.sm,
     padding: spacing.md,
     gap: spacing.xs,
     backgroundColor: colors.background,
   },
-  composerTitle: { ...typography.body, fontWeight: '600', color: colors.text, padding: 0 },
+  composerTitle: {
+    ...typography.body,
+    fontWeight: '600',
+    color: colors.text,
+    padding: 0,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+  },
   composerDesc: {
     ...typography.subhead,
     color: colors.textSecondary,
     padding: 0,
     minHeight: 34,
     textAlignVertical: 'top',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
   },
   composerActions: {
     flexDirection: 'row',
@@ -698,14 +726,14 @@ const styles = StyleSheet.create({
   },
   composerCancel: {
     backgroundColor: colors.groupedBackground,
-    borderRadius: radius.sm,
+    borderRadius: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   composerCancelText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
   composerAdd: {
     backgroundColor: colors.accent,
-    borderRadius: radius.sm,
+    borderRadius: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
