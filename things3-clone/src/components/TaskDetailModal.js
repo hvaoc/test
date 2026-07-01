@@ -17,8 +17,10 @@ import WhenSheet from './WhenSheet';
 import DeadlineSheet from './DeadlineSheet';
 import MoveSheet from './MoveSheet';
 import TagSheet from './TagSheet';
+import PrioritySheet from './PrioritySheet';
+import LocationSheet from './LocationSheet';
 import { colors, spacing, typography, radius } from '../theme';
-import { WHEN, STATUS } from '../store/constants';
+import { WHEN, STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
 
@@ -191,11 +193,25 @@ export default function TaskDetailModal({ visible, taskId, onClose }) {
               onPress={() => setSheet('when')}
             />
             <ToolButton
-              icon="flag-outline"
+              icon="alarm-outline"
               color={task.deadline ? colors.deadline : colors.textSecondary}
               label={task.deadline ? relativeLabel(task.deadline) : 'Deadline'}
               active={!!task.deadline}
               onPress={() => setSheet('deadline')}
+            />
+            <ToolButton
+              icon={task.priority ? 'flag' : 'flag-outline'}
+              color={task.priority ? PRIORITY_MAP[task.priority].color : colors.textSecondary}
+              label={task.priority ? PRIORITY_MAP[task.priority].label : 'Priority'}
+              active={!!task.priority}
+              onPress={() => setSheet('priority')}
+            />
+            <ToolButton
+              icon={task.location ? 'location' : 'location-outline'}
+              color={task.location ? colors.accent : colors.textSecondary}
+              label={task.location ? task.location : 'Location'}
+              active={!!task.location}
+              onPress={() => setSheet('location')}
             />
             <ToolButton
               icon="pricetag-outline"
@@ -236,6 +252,18 @@ export default function TaskDetailModal({ visible, taskId, onClose }) {
           onClose={() => setSheet(null)}
           selected={task.tags}
           onChange={(tags) => updateTask(task.id, { tags })}
+        />
+        <PrioritySheet
+          visible={sheet === 'priority'}
+          onClose={() => setSheet(null)}
+          value={task.priority}
+          onChange={(priority) => updateTask(task.id, { priority })}
+        />
+        <LocationSheet
+          visible={sheet === 'location'}
+          onClose={() => setSheet(null)}
+          value={task.location}
+          onChange={(location) => updateTask(task.id, { location })}
         />
       </View>
     </Modal>
@@ -312,11 +340,13 @@ const styles = StyleSheet.create({
   tagText: { ...typography.subhead, color: colors.textSecondary },
   toolbar: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.separator,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md,
     paddingHorizontal: spacing.sm,
   },
-  toolBtn: { flex: 1, alignItems: 'center', gap: 2 },
-  toolLabel: { ...typography.caption, color: colors.textSecondary, maxWidth: 80 },
+  toolBtn: { width: '25%', alignItems: 'center', gap: 2, paddingHorizontal: 2 },
+  toolLabel: { ...typography.caption, color: colors.textSecondary, maxWidth: 84 },
 });

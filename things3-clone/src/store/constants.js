@@ -33,6 +33,18 @@ export const STATUS = {
   TRASHED: 'trashed',
 };
 
+// Task priority levels (highest first).
+export const PRIORITIES = [
+  { key: 'high', label: 'High', color: '#e8554e' },
+  { key: 'medium', label: 'Medium', color: '#f5a623' },
+  { key: 'low', label: 'Low', color: '#2b6fff' },
+];
+
+export const PRIORITY_MAP = PRIORITIES.reduce((acc, p) => {
+  acc[p.key] = p;
+  return acc;
+}, {});
+
 // Palette offered when creating a project / area.
 export const PROJECT_COLORS = [
   '#2b6fff', '#e8554e', '#1f9d55', '#f5a623',

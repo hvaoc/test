@@ -8,7 +8,7 @@ import { useTasks } from '../store/TasksContext';
 // shown inside projects; structured as a list so more settings can slot in.
 export default function SettingsSheet({ visible, onClose }) {
   const { state, setSetting } = useTasks();
-  const { showCompleted } = state.settings;
+  const { showCompleted, centeredContent } = state.settings;
 
   return (
     <BottomSheet visible={visible} onClose={onClose} title="Settings">
@@ -22,6 +22,21 @@ export default function SettingsSheet({ visible, onClose }) {
         <Switch
           value={showCompleted}
           onValueChange={(v) => setSetting('showCompleted', v)}
+          trackColor={{ true: colors.accent, false: colors.separatorStrong }}
+          ios_backgroundColor={colors.separatorStrong}
+        />
+      </View>
+
+      <View style={styles.row}>
+        <View style={styles.labelWrap}>
+          <Text style={styles.label}>Center content</Text>
+          <Text style={styles.hint}>
+            Constrain lists and projects to a centered column instead of the full width.
+          </Text>
+        </View>
+        <Switch
+          value={centeredContent}
+          onValueChange={(v) => setSetting('centeredContent', v)}
           trackColor={{ true: colors.accent, false: colors.separatorStrong }}
           ios_backgroundColor={colors.separatorStrong}
         />

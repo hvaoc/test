@@ -155,6 +155,7 @@ export default function ListScreen({
 
   const sections = useSections(state, route);
   const isWide = useIsWide();
+  const centered = state.settings?.centeredContent;
   const smart = listId ? SMART_LIST_MAP[listId] : null;
   const project = projectId ? state.projects.find((p) => p.id === projectId) : null;
   const area = areaId ? state.areas.find((a) => a.id === areaId) : null;
@@ -237,14 +238,20 @@ export default function ListScreen({
     });
   }
 
-  // Create a task inline in a specific section from the compose form.
-  const handleAddInSection = (headingId, { title, description } = {}) => {
+  // Create a task inline in a specific section from the compose form (title,
+  // description, and the scheduling/priority/location/label fields).
+  const handleAddInSection = (headingId, opts = {}) => {
     const task = newTask({
       projectId,
       headingId: headingId || null,
       areaId: project?.areaId || null,
-      title: title || '',
-      notes: description || '',
+      title: opts.title || '',
+      notes: opts.description || '',
+      when: opts.when || null,
+      deadline: opts.deadline || null,
+      priority: opts.priority || null,
+      location: opts.location || '',
+      tags: opts.tags || [],
     });
     addTask(task);
   };
@@ -331,6 +338,7 @@ export default function ListScreen({
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={contentPad} keyboardShouldPersistTaps="handled">
+        <View style={[styles.contentCol, centered && styles.contentColCentered]}>
         {header}
         {project ? (
           // One drag surface for the whole project: heading dividers are fixed,
@@ -368,6 +376,7 @@ export default function ListScreen({
             />
           ))
         )}
+        </View>
       </ScrollView>
 
       {listId !== 'logbook' && listId !== 'trash' && !(project && isWide) && (
@@ -463,6 +472,8 @@ function EmptyState({ listId }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  contentCol: { width: '100%' },
+  contentColCentered: { maxWidth: 640, alignSelf: 'center' },
   navBar: {
     flexDirection: 'row',
     alignItems: 'center',

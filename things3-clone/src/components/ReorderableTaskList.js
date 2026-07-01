@@ -18,6 +18,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import TaskRow from './TaskRow';
 import SectionEditor from './SectionEditor';
+import TaskComposer from './TaskComposer';
 import { colors, spacing, typography, radius } from '../theme';
 
 // Used only until a row reports its real height via onLayout.
@@ -133,58 +134,6 @@ function Handle({ gesture, style, visible }) {
   );
 }
 
-// Inline compose card: type a title (+ optional description) and Add task.
-// Stays open after adding so several can be entered in a row.
-function TaskComposer({ onAdd, onCancel }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const ref = React.useRef(null);
-  const add = () => {
-    const t = title.trim();
-    if (!t) return;
-    onAdd({ title: t, description: description.trim() });
-    setTitle('');
-    setDescription('');
-    if (ref.current) ref.current.focus();
-  };
-  return (
-    <View style={styles.composer}>
-      <TextInput
-        ref={ref}
-        style={styles.composerTitle}
-        value={title}
-        onChangeText={setTitle}
-        placeholder="Task name"
-        placeholderTextColor={colors.placeholder}
-        autoFocus
-        blurOnSubmit={false}
-        returnKeyType="done"
-        onSubmitEditing={add}
-      />
-      <TextInput
-        style={styles.composerDesc}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Description"
-        placeholderTextColor={colors.placeholder}
-        multiline
-      />
-      <View style={styles.composerActions}>
-        <Pressable style={styles.composerCancel} onPress={onCancel}>
-          <Text style={styles.composerCancelText}>Cancel</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.composerAdd, !title.trim() && styles.composerAddDisabled]}
-          onPress={add}
-          disabled={!title.trim()}
-        >
-          <Text style={styles.composerAddText}>Add task</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
 // A "+ Add task" row at the end of a section — expands into the compose card.
 // Rides the layout like the other rows (so it stays put during reflow).
 function AddTaskRow({ itemKey, headingId, onAddTask, ctx }) {
@@ -245,8 +194,12 @@ function AddSectionRow({ itemKey, afterHeadingId, onAddSection, ctx }) {
             onSave={(patch) => {
               onAddSection && onAddSection(afterHeadingId, patch);
               setComposing(false);
+              setHovered(false);
             }}
-            onCancel={() => setComposing(false)}
+            onCancel={() => {
+              setComposing(false);
+              setHovered(false);
+            }}
           />
         </View>
       </Animated.View>
@@ -689,56 +642,6 @@ const styles = StyleSheet.create({
   },
   addTaskIconCol: { width: 22, alignItems: 'center' },
   addTaskText: { ...typography.body, color: colors.textTertiary },
-  composer: {
-    marginHorizontal: spacing.lg,
-    marginVertical: spacing.xs,
-    borderWidth: 1,
-    borderColor: colors.separatorStrong,
-    borderRadius: radius.sm,
-    padding: spacing.md,
-    gap: spacing.xs,
-    backgroundColor: colors.background,
-  },
-  composerTitle: {
-    ...typography.body,
-    fontWeight: '600',
-    color: colors.text,
-    padding: 0,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
-  },
-  composerDesc: {
-    ...typography.subhead,
-    color: colors.textSecondary,
-    padding: 0,
-    minHeight: 34,
-    textAlignVertical: 'top',
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
-  },
-  composerActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.separator,
-    paddingTop: spacing.sm,
-  },
-  composerCancel: {
-    backgroundColor: colors.groupedBackground,
-    borderRadius: 4,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  composerCancelText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
-  composerAdd: {
-    backgroundColor: colors.accent,
-    borderRadius: 4,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  composerAddDisabled: { opacity: 0.5 },
-  composerAddText: { ...typography.subhead, color: colors.white, fontWeight: '600' },
   addSection: {
     flexDirection: 'row',
     alignItems: 'center',

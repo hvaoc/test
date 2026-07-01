@@ -11,7 +11,9 @@ export default function ProgressPie({ progress, color, size = 16 }) {
   const p = Math.max(0, Math.min(1, progress));
   const r = size / 2;
   const stroke = 1.5;
-  const rr = r - stroke / 2; // radius inside the track stroke
+  // Inset a full stroke-width so the ring never touches the SVG edge — SVG has
+  // overflow:hidden on web and would otherwise clip the stroke.
+  const rr = r - stroke;
 
   // Wedge endpoint, sweeping clockwise from the top.
   const angle = p * 2 * Math.PI;

@@ -17,7 +17,8 @@ const TasksContext = createContext(null);
 // User preferences (persisted alongside the data). Keep defaults here so older
 // saved payloads that predate a setting still get a sensible value on hydrate.
 const defaultSettings = {
-  showCompleted: true, // show the "completed" section inside projects
+  showCompleted: true, // show completed to-dos inside projects
+  centeredContent: false, // constrain the content pane to a centered column
 };
 
 const initialState = {
@@ -40,6 +41,8 @@ function newTask(partial = {}) {
     tags: [],
     when: null,
     deadline: null,
+    priority: null,
+    location: '',
     projectId: null,
     areaId: null,
     headingId: null,

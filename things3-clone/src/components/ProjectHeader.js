@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -11,23 +11,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { selectProjectTasks, isOpen } from '../store/selectors';
-import { relativeLabel, isPast, isToday } from '../utils/date';
-import DeadlineSheet from './DeadlineSheet';
 import ProgressPie from './ProgressPie';
 
-// Editable header shown atop a project: title, notes, progress ring, deadline,
-// and an action row (add heading, delete project).
+// Editable header shown atop a project: title, notes, progress ring, and a
+// Delete action. Scheduling/priority/etc. live on the individual tasks; adding
+// a section is done inline in the project body.
 export default function ProjectHeader({ project, navigation }) {
-  const { state, updateProject, deleteProject, addHeading } = useTasks();
-  const [sheet, setSheet] = useState(null);
+  const { state, updateProject, deleteProject } = useTasks();
 
   const tasks = selectProjectTasks(state.tasks, project.id);
   const total = tasks.length;
   const done = tasks.filter((t) => !isOpen(t)).length;
   const progress = total ? done / total : 0;
-
-  const deadlineOverdue =
-    project.deadline && (isPast(project.deadline) || isToday(project.deadline));
 
   const confirmDelete = () => {
     Alert.alert('Delete Project', `Delete "${project.name}"? Its to-dos will move to your Inbox.`, [
@@ -66,45 +61,11 @@ export default function ProjectHeader({ project, navigation }) {
       />
 
       <View style={styles.actions}>
-        <Pressable
-          style={styles.actionBtn}
-          onPress={() => setSheet('deadline')}
-        >
-          <Ionicons
-            name="flag-outline"
-            size={16}
-            color={deadlineOverdue ? colors.deadline : colors.textSecondary}
-          />
-          <Text
-            style={[
-              styles.actionText,
-              deadlineOverdue && { color: colors.deadline },
-            ]}
-          >
-            {project.deadline ? relativeLabel(project.deadline) : 'Deadline'}
-          </Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.actionBtn}
-          onPress={() => addHeading(project.id)}
-        >
-          <Ionicons name="text-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionText}>Heading</Text>
-        </Pressable>
-
         <Pressable style={styles.actionBtn} onPress={confirmDelete}>
           <Ionicons name="trash-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionText}>Delete</Text>
         </Pressable>
       </View>
-
-      <DeadlineSheet
-        visible={sheet === 'deadline'}
-        onClose={() => setSheet(null)}
-        value={project.deadline}
-        onChange={(deadline) => updateProject(project.id, { deadline })}
-      />
     </View>
   );
 }
