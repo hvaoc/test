@@ -6,38 +6,51 @@ import {
   StyleSheet,
   Text,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius, typography } from '../theme';
+import { useIsWide } from '../navigation/responsive';
 
-// A simple slide-up sheet built on the RN Modal. Tap the backdrop to dismiss.
+// A slide-up sheet built on the RN Modal. Tap the backdrop to dismiss.
+// On wide surfaces (iPad / web / desktop) it becomes a centered dialog instead.
 export default function BottomSheet({ visible, onClose, title, children }) {
   const insets = useSafeAreaInsets();
+  const centered = useIsWide();
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={centered ? 'fade' : 'slide'}
       onRequestClose={onClose}
     >
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <View
-        style={[
-          styles.sheet,
-          { paddingBottom: insets.bottom + spacing.md },
-        ]}
+      {/* Keep the sheet above the keyboard when it contains a focused input. */}
+      <KeyboardAvoidingView
+        style={[styles.avoider, centered && styles.avoiderCentered]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        pointerEvents="box-none"
       >
-        <View style={styles.grabber} />
-        {title ? (
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <Pressable hitSlop={10} onPress={onClose}>
-              <Text style={styles.done}>Done</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {children}
-      </View>
+        <View
+          style={[
+            styles.sheet,
+            centered
+              ? styles.sheetCentered
+              : { paddingBottom: insets.bottom + spacing.md },
+          ]}
+        >
+          {!centered && <View style={styles.grabber} />}
+          {title ? (
+            <View style={styles.header}>
+              <Text style={styles.title}>{title}</Text>
+              <Pressable hitSlop={10} onPress={onClose}>
+                <Text style={styles.done}>Done</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {children}
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -47,11 +60,16 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.25)',
   },
+  avoider: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  avoiderCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
   sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     backgroundColor: colors.background,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
@@ -66,6 +84,17 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 12 },
     }),
+  },
+  // Centered dialog variant: full rounding, capped width, sits in the middle
+  // with roomier padding on every side than the bottom-sheet variant.
+  sheetCentered: {
+    borderBottomLeftRadius: radius.lg,
+    borderBottomRightRadius: radius.lg,
+    width: '100%',
+    maxWidth: 460,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
   grabber: {
     alignSelf: 'center',

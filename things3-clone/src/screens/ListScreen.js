@@ -16,12 +16,14 @@ import {
   selectProjectTasks,
   selectAreaTasks,
   isOpen,
+  byOrder,
 } from '../store/selectors';
 import { relativeLabel, monthTitle, longLabel } from '../utils/date';
 import TaskRow from '../components/TaskRow';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
+import ReorderableTaskList from '../components/ReorderableTaskList';
 
 // Builds the grouped sections shown in a given context. Each section is
 // { key, title, subtitle?, color?, data: task[] }.
@@ -32,32 +34,39 @@ function useSections(state, route) {
     if (projectId) {
       const tasks = selectProjectTasks(state.tasks, projectId);
       const open = tasks.filter(isOpen);
-      const completed = tasks.filter(
+      const done = tasks.filter(
         (t) => t.status === STATUS.COMPLETED || t.status === STATUS.CANCELED
       );
-      const headings = state.headings.filter((h) => h.projectId === projectId);
+      const showCompleted = state.settings?.showCompleted;
+      const headings = state.headings
+        .filter((h) => h.projectId === projectId)
+        .sort(byOrder);
       const sections = [];
 
-      const noHeading = open.filter((t) => !t.headingId);
+      const inHeading = (t, hid) => (hid ? t.headingId === hid : !t.headingId);
+      // A heading's rows: open (by manual order), then its completed tasks below
+      // them — a finished to-do stays under the heading it belonged to.
+      const sectionData = (hid) => {
+        const rows = open.filter((t) => inHeading(t, hid)).sort(byOrder);
+        if (showCompleted) {
+          rows.push(...done.filter((t) => inHeading(t, hid)).sort(byOrder));
+        }
+        return rows;
+      };
+
+      const noHeading = sectionData(null);
       if (noHeading.length || headings.length === 0) {
-        sections.push({ key: 'main', title: null, data: noHeading });
+        sections.push({ key: 'main', title: null, data: noHeading, reorderable: true });
       }
       headings.forEach((h) => {
         sections.push({
           key: h.id,
           title: h.title,
           heading: h,
-          data: open.filter((t) => t.headingId === h.id),
+          data: sectionData(h.id),
+          reorderable: true,
         });
       });
-      if (completed.length) {
-        sections.push({
-          key: 'logged',
-          title: `${completed.length} completed`,
-          collapsedDefault: true,
-          data: completed,
-        });
-      }
       return sections;
     }
 
@@ -113,10 +122,17 @@ function useSections(state, route) {
   }, [state, route.params]);
 }
 
-export default function ListScreen({ navigation, route }) {
+export default function ListScreen({
+  navigation,
+  route,
+  embedded,
+  onToggleSidebar,
+  sidebarVisible,
+}) {
   const insets = useSafeAreaInsets();
   const { listId, projectId, areaId, title } = route.params || {};
-  const { state, addTask, emptyTrash } = useTasks();
+  const { state, addTask, emptyTrash, reorderTasks, setProjectLayout, deleteHeading, updateHeading } =
+    useTasks();
   const [openTaskId, setOpenTaskId] = useState(null);
 
   const sections = useSections(state, route);
@@ -149,45 +165,123 @@ export default function ListScreen({ navigation, route }) {
   const headerColor = smart?.color || project?.color || area?.color || colors.text;
   const headerTitle = title || smart?.title || project?.name || area?.name || 'List';
 
-  return (
-    <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={{
-          paddingTop: insets.top + spacing.sm,
-          paddingBottom: insets.bottom + 100,
-        }}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Back + title header */}
-        <View style={styles.navBar}>
+  // Stage 1 drag-to-reorder: only the contexts whose selector sorts by `order`
+  // (Inbox, Anytime, Someday, an Area). Today/Upcoming are schedule-ordered and
+  // Project is multi-section — those come in later stages. Restricting to these
+  // ensures a committed reorder actually persists across reloads.
+  const REORDERABLE_LISTS = ['inbox', 'anytime', 'someday'];
+  const canReorder =
+    sections.length === 1 &&
+    sections[0].data.length > 1 &&
+    (Boolean(areaId) || REORDERABLE_LISTS.includes(listId));
+
+  const contentPad = {
+    paddingTop: insets.top + spacing.sm,
+    paddingBottom: insets.bottom + 100,
+  };
+
+  // Project view: flatten sections (main tasks + heading dividers + their tasks,
+  // including each heading's own completed rows) into one drag surface.
+  let projectItems = [];
+  if (project) {
+    sections.forEach((s) => {
+      if (s.heading) {
+        projectItems.push({
+          key: `h:${s.heading.id}`,
+          kind: 'heading',
+          title: s.title,
+          headingId: s.heading.id,
+        });
+      }
+      s.data.forEach((t) => projectItems.push({ key: t.id, kind: 'task', task: t }));
+    });
+  }
+
+  // Walk the dropped order; each task adopts the heading divider above it, and
+  // the heading dividers themselves record their new order (block reorder).
+  const commitProjectLayout = (keys) => {
+    let currentHeading = null;
+    const tasks = [];
+    const headings = [];
+    keys.forEach((k) => {
+      if (k.startsWith('h:')) {
+        currentHeading = k.slice(2);
+        headings.push(currentHeading);
+      } else {
+        tasks.push({ id: k, headingId: currentHeading });
+      }
+    });
+    setProjectLayout({ tasks, headings });
+  };
+
+  // Header (nav bar + title) shared by both the scroll and reorderable paths.
+  const header = (
+    <>
+      {/* Back/sidebar-toggle + (for Trash) the Empty action. In the two-pane
+          layout the sidebar is always visible, so the chevron toggles it. */}
+      <View style={styles.navBar}>
+        {embedded ? (
+          <Pressable hitSlop={10} onPress={onToggleSidebar} style={styles.back}>
+            <Ionicons
+              name={sidebarVisible ? 'chevron-back' : 'menu'}
+              size={26}
+              color={colors.accent}
+            />
+          </Pressable>
+        ) : (
           <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
             <Ionicons name="chevron-back" size={26} color={colors.accent} />
           </Pressable>
-          {listId === 'trash' && totalTasks > 0 && (
-            <Pressable hitSlop={10} onPress={emptyTrash}>
-              <Text style={styles.emptyTrash}>Empty</Text>
-            </Pressable>
-          )}
-        </View>
-
-        {project ? (
-          <ProjectHeader project={project} navigation={navigation} />
-        ) : (
-          <View style={styles.titleRow}>
-            {smart && (
-              <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
-            )}
-            {area && (
-              <Ionicons name="cube-outline" size={24} color={headerColor} style={{ marginRight: 8 }} />
-            )}
-            <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
-              {headerTitle}
-            </Text>
-          </View>
         )}
+        {listId === 'trash' && totalTasks > 0 && (
+          <Pressable hitSlop={10} onPress={emptyTrash}>
+            <Text style={styles.emptyTrash}>Empty</Text>
+          </Pressable>
+        )}
+      </View>
 
+      {project ? (
+        <ProjectHeader project={project} navigation={navigation} />
+      ) : (
+        <View style={styles.titleRow}>
+          {smart && (
+            <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
+          )}
+          {area && (
+            <Ionicons name="cube-outline" size={24} color={headerColor} style={{ marginRight: 8 }} />
+          )}
+          <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
+            {headerTitle}
+          </Text>
+        </View>
+      )}
+    </>
+  );
+
+  return (
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={contentPad} keyboardShouldPersistTaps="handled">
+        {header}
         {isEmpty ? (
           <EmptyState listId={listId} />
+        ) : canReorder ? (
+          <ReorderableTaskList
+            items={sections[0].data.map((t) => ({ key: t.id, kind: 'task', task: t }))}
+            showProject={listId && listId !== 'logbook'}
+            onOpenTask={setOpenTaskId}
+            onCommitKeys={(keys) => reorderTasks(keys)}
+          />
+        ) : project ? (
+          // One drag surface for the whole project: heading dividers are fixed,
+          // tasks can be dragged within or across them.
+          <ReorderableTaskList
+            items={projectItems}
+            showProject={false}
+            onOpenTask={setOpenTaskId}
+            onCommitKeys={commitProjectLayout}
+            onDeleteHeading={deleteHeading}
+            onUpdateHeading={updateHeading}
+          />
         ) : (
           sections.map((section) => (
             <Section

@@ -13,6 +13,7 @@ import { useTasks } from '../store/TasksContext';
 import { selectProjectTasks, isOpen } from '../store/selectors';
 import { relativeLabel, isPast, isToday } from '../utils/date';
 import DeadlineSheet from './DeadlineSheet';
+import ProgressPie from './ProgressPie';
 
 // Editable header shown atop a project: title, notes, progress ring, deadline,
 // and an action row (add heading, delete project).
@@ -45,7 +46,7 @@ export default function ProjectHeader({ project, navigation }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.titleRow}>
-        <ProgressPie progress={progress} color={project.color} />
+        <ProgressPie progress={progress} color={project.color} size={22} />
         <TextInput
           style={styles.title}
           value={project.name}
@@ -108,19 +109,6 @@ export default function ProjectHeader({ project, navigation }) {
   );
 }
 
-function ProgressPie({ progress, color }) {
-  return (
-    <View style={[styles.pie, { borderColor: color }]}>
-      <View
-        style={[
-          styles.pieFill,
-          { backgroundColor: color, height: 18 * progress },
-        ]}
-      />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: spacing.lg,
@@ -128,15 +116,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  pie: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-  },
-  pieFill: { width: '100%' },
   title: { flex: 1, ...typography.largeTitle, fontSize: 28, color: colors.text, padding: 0 },
   notes: {
     ...typography.body,

@@ -10,6 +10,10 @@ export const isLogged = (t) =>
   t.status === STATUS.COMPLETED || t.status === STATUS.CANCELED;
 export const isTrashed = (t) => t.status === STATUS.TRASHED;
 
+// Manual sort order (drag-to-reorder writes this). Falls back to 0 so tasks
+// predating the field keep a stable position.
+export const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+
 // Is this task scheduled for "today or earlier" (i.e. it should surface in Today)?
 function isDueToday(t) {
   if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return true;
@@ -42,9 +46,9 @@ const hasContainer = (t) => Boolean(t.projectId || t.areaId);
 // Inbox: open tasks that haven't been organized into a project/area and aren't
 // scheduled or filed away.
 export function selectInbox(tasks) {
-  return tasks.filter(
-    (t) => isOpen(t) && !hasContainer(t) && !t.when
-  );
+  return tasks
+    .filter((t) => isOpen(t) && !hasContainer(t) && !t.when)
+    .sort(byOrder);
 }
 
 // Today: everything due today or overdue (the heart of Things).
@@ -62,18 +66,20 @@ export function selectUpcoming(tasks) {
 // Anytime: open, available-now tasks that live in a project or area (not Inbox,
 // not Someday, not scheduled for the future).
 export function selectAnytime(tasks) {
-  return tasks.filter(
-    (t) =>
-      isOpen(t) &&
-      !isSomeday(t) &&
-      !isScheduledFuture(t) &&
-      (hasContainer(t) || isDueToday(t))
-  );
+  return tasks
+    .filter(
+      (t) =>
+        isOpen(t) &&
+        !isSomeday(t) &&
+        !isScheduledFuture(t) &&
+        (hasContainer(t) || isDueToday(t))
+    )
+    .sort(byOrder);
 }
 
 // Someday: tasks deliberately deferred with no date.
 export function selectSomeday(tasks) {
-  return tasks.filter((t) => isOpen(t) && isSomeday(t));
+  return tasks.filter((t) => isOpen(t) && isSomeday(t)).sort(byOrder);
 }
 
 // Logbook: completed & canceled tasks, newest first.
@@ -96,9 +102,9 @@ export function selectProjectTasks(tasks, projectId) {
 
 // Tasks filed directly under an area (not via a project).
 export function selectAreaTasks(tasks, areaId) {
-  return tasks.filter(
-    (t) => t.areaId === areaId && !t.projectId && !isTrashed(t)
-  );
+  return tasks
+    .filter((t) => t.areaId === areaId && !t.projectId && !isTrashed(t))
+    .sort(byOrder);
 }
 
 // ---------------------------------------------------------------------------

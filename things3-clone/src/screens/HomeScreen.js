@@ -13,14 +13,22 @@ import { colors, spacing, typography, radius } from '../theme';
 import { SMART_LISTS } from '../store/constants';
 import { useTasks } from '../store/TasksContext';
 import { counts, selectProjectTasks, isOpen } from '../store/selectors';
+import { selectionKey } from '../navigation/responsive';
 import NewListSheet from '../components/NewListSheet';
+import SettingsSheet from '../components/SettingsSheet';
+import ProgressPie from '../components/ProgressPie';
 
 // The Things sidebar / home: smart lists at the top, then your Areas and
 // Projects. Tapping any entry drills into the matching list.
-export default function HomeScreen({ navigation }) {
+//
+// `embedded` + `selectedKey` are passed by the two-pane SplitView (iPad / web /
+// desktop): the sidebar stays mounted and highlights the active row instead of
+// pushing a new screen. On phones both are undefined and it behaves as a stack.
+export default function HomeScreen({ navigation, selectedKey, embedded }) {
   const insets = useSafeAreaInsets();
   const { state } = useTasks();
   const [sheet, setSheet] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const badge = useMemo(() => counts(state.tasks), [state.tasks]);
 
@@ -40,12 +48,25 @@ export default function HomeScreen({ navigation }) {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
+    <View
+      style={[
+        styles.container,
+        // Two-tone master/detail: a light-gray sidebar against the white detail
+        // pane. Only when always-visible (iPad / web / desktop); phones stay white.
+        embedded && styles.containerEmbedded,
+        { paddingTop: insets.top + spacing.sm },
+      ]}
+    >
       <View style={styles.headerRow}>
         <Text style={styles.appTitle}>Things</Text>
-        <Pressable hitSlop={10} onPress={() => setSheet(true)}>
-          <Ionicons name="add" size={26} color={colors.accent} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable hitSlop={10} onPress={() => setSettingsOpen(true)}>
+            <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+          </Pressable>
+          <Pressable hitSlop={10} onPress={() => setSheet(true)}>
+            <Ionicons name="add" size={26} color={colors.accent} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
@@ -58,6 +79,7 @@ export default function HomeScreen({ navigation }) {
               color={list.color}
               title={list.title}
               badge={badge[list.id]}
+              selected={selectedKey === `list:${list.id}`}
               onPress={() =>
                 navigation.navigate('List', { listId: list.id, title: list.title })
               }
@@ -73,7 +95,10 @@ export default function HomeScreen({ navigation }) {
           return (
             <View key={area.id} style={styles.section}>
               <Pressable
-                style={styles.areaHeader}
+                style={[
+                  styles.areaHeader,
+                  selectedKey === `area:${area.id}` && styles.rowSelected,
+                ]}
                 onPress={() =>
                   navigation.navigate('List', {
                     areaId: area.id,
@@ -90,6 +115,7 @@ export default function HomeScreen({ navigation }) {
                   project={p}
                   count={openProjectCount(p.id)}
                   progress={projectProgress(p.id)}
+                  selected={selectedKey === `project:${p.id}`}
                   onPress={() =>
                     navigation.navigate('List', {
                       projectId: p.id,
@@ -111,6 +137,7 @@ export default function HomeScreen({ navigation }) {
                 project={p}
                 count={openProjectCount(p.id)}
                 progress={projectProgress(p.id)}
+                selected={selectedKey === `project:${p.id}`}
                 onPress={() =>
                   navigation.navigate('List', { projectId: p.id, title: p.name })
                 }
@@ -121,14 +148,19 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <NewListSheet visible={sheet} onClose={() => setSheet(false)} navigation={navigation} />
+      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </View>
   );
 }
 
-function SidebarRow({ icon, color, title, badge, onPress }) {
+function SidebarRow({ icon, color, title, badge, onPress, selected }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.row,
+        selected && styles.rowSelected,
+        pressed && !selected && styles.rowPressed,
+      ]}
       onPress={onPress}
     >
       <View style={[styles.iconWrap, { backgroundColor: color }]}>
@@ -140,13 +172,17 @@ function SidebarRow({ icon, color, title, badge, onPress }) {
   );
 }
 
-function ProjectRow({ project, count, progress, onPress }) {
+function ProjectRow({ project, count, progress, onPress, selected }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.row,
+        selected && styles.rowSelected,
+        pressed && !selected && styles.rowPressed,
+      ]}
       onPress={onPress}
     >
-      <ProgressRing progress={progress} color={project.color} />
+      <ProgressPie progress={progress} color={project.color} size={16} />
       <Text style={styles.rowTitle} numberOfLines={1}>
         {project.name}
       </Text>
@@ -155,26 +191,9 @@ function ProjectRow({ project, count, progress, onPress }) {
   );
 }
 
-// A tiny pie-style progress indicator like Things uses next to projects.
-function ProgressRing({ progress, color }) {
-  return (
-    <View style={[styles.ring, { borderColor: color }]}>
-      <View
-        style={[
-          styles.ringFill,
-          {
-            backgroundColor: color,
-            width: 12 * Math.max(progress, 0),
-            opacity: progress > 0 ? 1 : 0,
-          },
-        ]}
-      />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  containerEmbedded: { backgroundColor: colors.groupedBackground },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -183,6 +202,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   appTitle: { ...typography.largeTitle, color: colors.text },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
   section: {
     marginBottom: spacing.lg,
     paddingHorizontal: spacing.sm,
@@ -195,7 +215,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     gap: spacing.md,
   },
-  rowPressed: { backgroundColor: colors.groupedBackground },
+  rowPressed: { backgroundColor: colors.separator },
+  rowSelected: { backgroundColor: colors.accentSoft },
   iconWrap: {
     width: 26,
     height: 26,
@@ -223,14 +244,4 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textTransform: 'none',
   },
-  ring: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  ringFill: { height: 12, borderRadius: 6 },
 });

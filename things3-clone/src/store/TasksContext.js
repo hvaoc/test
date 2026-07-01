@@ -14,6 +14,12 @@ import { buildSampleData } from './sampleData';
 
 const TasksContext = createContext(null);
 
+// User preferences (persisted alongside the data). Keep defaults here so older
+// saved payloads that predate a setting still get a sensible value on hydrate.
+const defaultSettings = {
+  showCompleted: true, // show the "completed" section inside projects
+};
+
 const initialState = {
   loaded: false,
   version: 1,
@@ -22,6 +28,7 @@ const initialState = {
   headings: [],
   tasks: [],
   tags: [],
+  settings: defaultSettings,
 };
 
 function newTask(partial = {}) {
@@ -47,7 +54,19 @@ function newTask(partial = {}) {
 function reducer(state, action) {
   switch (action.type) {
     case 'HYDRATE':
-      return { ...state, ...action.payload, loaded: true };
+      return {
+        ...state,
+        ...action.payload,
+        // Merge so a setting added after the user's data was saved still defaults.
+        settings: { ...defaultSettings, ...(action.payload.settings || {}) },
+        loaded: true,
+      };
+
+    case 'SET_SETTING':
+      return {
+        ...state,
+        settings: { ...state.settings, [action.key]: action.value },
+      };
 
     case 'ADD_TASK': {
       const task = newTask(action.payload);
@@ -93,6 +112,38 @@ function reducer(state, action) {
             : t
         ),
       };
+
+    case 'REORDER_TASKS': {
+      // action.ids is the new visual order of a single context's tasks.
+      // Write each task's `order` to its index so the sort reflects the drag.
+      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
+      return {
+        ...state,
+        tasks: state.tasks.map((t) =>
+          orderOf.has(t.id) ? { ...t, order: orderOf.get(t.id) } : t
+        ),
+      };
+    }
+
+    case 'SET_PROJECT_LAYOUT': {
+      // payload.tasks is [{ id, headingId }] in the project's new visual order;
+      // payload.headings is the heading ids in their new order (block reorder).
+      const { tasks: taskLayout, headings: headingOrder } = action.payload;
+      const headingOf = new Map(taskLayout.map((x) => [x.id, x.headingId]));
+      const taskOrderOf = new Map(taskLayout.map((x, i) => [x.id, i]));
+      const headingOrderOf = new Map((headingOrder || []).map((id, i) => [id, i]));
+      return {
+        ...state,
+        tasks: state.tasks.map((t) =>
+          taskOrderOf.has(t.id)
+            ? { ...t, headingId: headingOf.get(t.id), order: taskOrderOf.get(t.id) }
+            : t
+        ),
+        headings: state.headings.map((h) =>
+          headingOrderOf.has(h.id) ? { ...h, order: headingOrderOf.get(h.id) } : h
+        ),
+      };
+    }
 
     case 'DELETE_TASK':
       return {
@@ -222,7 +273,12 @@ function reducer(state, action) {
         ...state,
         headings: [
           ...state.headings,
-          { id: uid('head'), projectId: action.projectId, title: action.title || 'New Heading' },
+          {
+            id: uid('head'),
+            projectId: action.projectId,
+            title: action.title || 'New Heading',
+            order: Date.now(), // new headings sort to the bottom
+          },
         ],
       };
 
@@ -279,7 +335,7 @@ function reducer(state, action) {
       return { ...state, tags: [...state.tags, action.tag] };
 
     case 'RESET':
-      return { ...buildSampleData(), loaded: true };
+      return { ...buildSampleData(), settings: defaultSettings, loaded: true };
 
     default:
       return state;
@@ -323,6 +379,8 @@ export function TasksProvider({ children }) {
       addTask: (payload) => dispatch({ type: 'ADD_TASK', payload }),
       updateTask: (id, patch) => dispatch({ type: 'UPDATE_TASK', id, patch }),
       toggleTask: (id) => dispatch({ type: 'TOGGLE_TASK', id }),
+      reorderTasks: (ids) => dispatch({ type: 'REORDER_TASKS', ids }),
+      setProjectLayout: (payload) => dispatch({ type: 'SET_PROJECT_LAYOUT', payload }),
       setStatus: (id, status) => dispatch({ type: 'SET_STATUS', id, status }),
       deleteTask: (id) => dispatch({ type: 'DELETE_TASK', id }),
       restoreTask: (id) => dispatch({ type: 'RESTORE_TASK', id }),
@@ -350,6 +408,7 @@ export function TasksProvider({ children }) {
       deleteArea: (id) => dispatch({ type: 'DELETE_AREA', id }),
 
       addTag: (tag) => dispatch({ type: 'ADD_TAG', tag }),
+      setSetting: (key, value) => dispatch({ type: 'SET_SETTING', key, value }),
       reset: () => dispatch({ type: 'RESET' }),
     }),
     []
