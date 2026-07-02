@@ -45,6 +45,14 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   const ghostY = useSharedValue(0);
   const rootX = useSharedValue(0);
   const rootY = useSharedValue(0);
+  // Grid rect (window coords, captured at drag start) + live drop placeholder.
+  const gTop = useSharedValue(0);
+  const gLeft = useSharedValue(0);
+  const gW = useSharedValue(0);
+  const gH = useSharedValue(0);
+  const dropTop = useSharedValue(0);
+  const dropH = useSharedValue(HOUR_H);
+  const dropVisible = useSharedValue(0);
 
   const dayTasks = tasks.filter((t) => whenKey(t) === day);
   const timed = dayTasks
@@ -71,11 +79,19 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
         rootX.value = store.root.x;
         rootY.value = store.root.y;
       }
+      if (store.grid) {
+        gTop.value = store.grid.y;
+        gLeft.value = store.grid.x;
+        gW.value = store.grid.w;
+        gH.value = store.grid.h;
+      }
     });
   };
 
   const begin = (task) => {
     setDragTask(task);
+    dropH.value = ((task.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H;
+    dropVisible.value = 0;
     measureAll();
   };
 
@@ -96,7 +112,20 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     }
   };
 
-  const dragCtx = { ghostX, ghostY, rootX, rootY, begin, end };
+  const dragCtx = {
+    ghostX,
+    ghostY,
+    rootX,
+    rootY,
+    gTop,
+    gLeft,
+    gW,
+    gH,
+    dropTop,
+    dropVisible,
+    begin,
+    end,
+  };
 
   const isToday = day === todayKey();
   const now = new Date();
@@ -109,6 +138,11 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
   const ghostStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }],
+  }));
+  const placeholderStyle = useAnimatedStyle(() => ({
+    opacity: dropVisible.value,
+    top: dropTop.value,
+    height: dropH.value,
   }));
 
   const submitAdd = () => {
@@ -189,6 +223,8 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
                 <View style={styles.nowDot} />
               </View>
             )}
+
+            <Animated.View pointerEvents="none" style={[styles.dropPlaceholder, placeholderStyle]} />
 
             {timed.map((t) => {
               const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
@@ -272,22 +308,52 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 // the planner root) follows the pointer; the original stays put and the store
 // update on drop re-places it.
 function Draggable({ task, ctx, onOpen, style, children }) {
+  // A real drag also produces a trailing press on web — swallow that one so the
+  // drop doesn't also open the task detail.
+  const dragged = React.useRef(false);
+  const markDragged = () => {
+    dragged.current = true;
+  };
+  const handlePress = () => {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    onOpen(task.id);
+  };
   const pan = Gesture.Pan()
     .activateAfterLongPress(160)
     .onStart(() => {
+      runOnJS(markDragged)();
       runOnJS(ctx.begin)(task);
     })
     .onUpdate((e) => {
       ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 18;
       ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 14;
+      // Live drop placeholder: snap the pointer to a 15-min slot on the grid.
+      const inX = e.absoluteX >= ctx.gLeft.value && e.absoluteX <= ctx.gLeft.value + ctx.gW.value;
+      const inY = e.absoluteY >= ctx.gTop.value && e.absoluteY <= ctx.gTop.value + ctx.gH.value;
+      if (inX && inY) {
+        const rel = e.absoluteY - ctx.gTop.value;
+        let mins = START_HOUR * 60 + Math.round((rel / HOUR_H) * 60 / SNAP) * SNAP;
+        mins = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - SNAP, mins));
+        ctx.dropTop.value = ((mins - START_HOUR * 60) / 60) * HOUR_H;
+        ctx.dropVisible.value = 1;
+      } else {
+        ctx.dropVisible.value = 0;
+      }
     })
     .onEnd((e) => {
+      ctx.dropVisible.value = 0;
       runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY);
+    })
+    .onFinalize(() => {
+      ctx.dropVisible.value = 0;
     });
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={style}>
-        <Pressable onPress={() => onOpen(task.id)} style={styles.fill}>
+        <Pressable onPress={handlePress} style={styles.fill}>
           {children}
         </Pressable>
       </Animated.View>
@@ -356,15 +422,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   allDayLabel: { ...typography.caption, color: colors.textTertiary, width: 44, paddingTop: 4 },
-  allDayItems: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  allDayItems: { flex: 1, gap: 3 },
   allDayHint: { ...typography.caption, color: colors.separatorStrong, paddingTop: 4, fontStyle: 'italic' },
-  allDayChipWrap: { maxWidth: '100%' },
+  allDayChipWrap: { width: '100%' },
   allDayChip: {
     borderLeftWidth: 3,
     borderRadius: 4,
     backgroundColor: colors.groupedBackground,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    paddingVertical: 4,
   },
   allDayChipText: { ...typography.caption, color: colors.text },
   grid: { position: 'relative', marginTop: spacing.xs },
@@ -380,6 +446,17 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: colors.deadline,
+  },
+  dropPlaceholder: {
+    position: 'absolute',
+    left: 50,
+    right: 4,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.sm,
+    opacity: 0,
   },
   block: { position: 'absolute', left: 50, right: 4 },
   blockInner: {
