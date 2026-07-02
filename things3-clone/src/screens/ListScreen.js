@@ -28,6 +28,7 @@ import ProjectHeader from '../components/ProjectHeader';
 import ReorderableTaskList from '../components/ReorderableTaskList';
 import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
+import GanttView from '../components/GanttView';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -511,6 +512,7 @@ export default function ListScreen({
             { mode: 'list', icon: 'list' },
             { mode: 'board', icon: 'grid-outline' },
             { mode: 'calendar', icon: 'calendar-outline' },
+            { mode: 'gantt', icon: 'stats-chart-outline' },
             { mode: 'date', icon: 'calendar-number-outline' },
           ].map(({ mode, icon }) => {
             const active = projectView === mode;
@@ -574,6 +576,10 @@ export default function ListScreen({
               project={project}
               onOpenTask={setOpenTaskId}
             />
+          ) : projectView === 'gantt' ? (
+            // Gantt view: a timeline bar per task from its Date (start) to its
+            // Deadline (end), grouped by section.
+            <GanttView sections={sections} project={project} onOpenTask={setOpenTaskId} />
           ) : projectView === 'date' ? (
             // Date view: the project's open to-dos regrouped by scheduled date,
             // as collapsible buckets with draggable/reorderable rows.
