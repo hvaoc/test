@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, addDays, MONTHS_SHORT, WEEKDAYS_SHORT } from '../utils/date';
@@ -9,7 +11,9 @@ const START_HOUR = 6;
 const END_HOUR = 23;
 const HOUR_H = 44;
 const GUTTER = 46;
+const SNAP = 15;
 const DEFAULT_DUR = 60;
+const PANEL_W = 236;
 const GRID_H = (END_HOUR - START_HOUR) * HOUR_H;
 
 function whenKey(t) {
@@ -17,33 +21,85 @@ function whenKey(t) {
   if (!t.when || t.when === WHEN.SOMEDAY) return null;
   return t.when;
 }
-const fmt = (mins) =>
-  `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const fmt = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 function tint(hex) {
   const h = (hex || '').replace('#', '');
   if (h.length !== 6) return colors.accentSoft;
   return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, 0.16)`;
 }
 
-// A 7-day week grid: day columns over a shared hour axis, an all-day row on top,
-// and a "now" line on today. Prev/next/Today navigate weeks; tapping a block or
-// chip opens the task.
-export default function WeekView({ tasks, project, onOpenTask }) {
-  const today = keyToDate(todayKey());
-  const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay()); // back to Sunday
+// A 7-day week grid with a shared hour axis, an all-day row, and a now line.
+// Tasks drag (long-press) between days and times; the right "Unscheduled" Plan
+// panel holds undated tasks that can be dragged onto a day/time.
+export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
+  const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay());
   const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
+  const [showPanel, setShowPanel] = useState(true);
+  const [dragTask, setDragTask] = useState(null);
+  const [newTitle, setNewTitle] = useState('');
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const todayK = todayKey();
   const color = project?.color || colors.accent;
 
   const timedByDay = {};
   const allDayByDay = {};
+  const unscheduled = [];
   tasks.forEach((t) => {
     const k = whenKey(t);
-    if (!k || !days.includes(k)) return;
+    if (!k) { unscheduled.push(t); return; }
+    if (!days.includes(k)) return;
     if (t.startMinutes != null) (timedByDay[k] = timedByDay[k] || []).push(t);
     else (allDayByDay[k] = allDayByDay[k] || []).push(t);
   });
+
+  const rootRef = useRef(null);
+  const layerRef = useRef(null);
+  const allDayRef = useRef(null);
+  const panelRef = useRef(null);
+  const rectsRef = useRef(null);
+  const ghostX = useSharedValue(0);
+  const ghostY = useSharedValue(0);
+  const rootX = useSharedValue(0);
+  const rootY = useSharedValue(0);
+
+  const measureOnly = () => {
+    const grab = (ref, key, store) =>
+      new Promise((res) => {
+        const n = ref.current;
+        if (n && n.measureInWindow) n.measureInWindow((x, y, w, h) => { store[key] = { x, y, w, h }; res(); });
+        else res();
+      });
+    const store = {};
+    Promise.all([grab(layerRef, 'layer', store), grab(allDayRef, 'allday', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
+      rectsRef.current = store;
+      if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
+    });
+  };
+  const dayFromX = (rect, ax) => clamp(Math.floor(((ax - rect.x) / rect.w) * 7), 0, 6);
+  const computeDrop = (ax, ay) => {
+    const c = rectsRef.current || {};
+    if (c.panel) { const p = c.panel; if (ax >= p.x && ax <= p.x + p.w && ay >= p.y && ay <= p.y + p.h) return { mode: 'panel' }; }
+    if (c.allday) { const a = c.allday; if (ax >= a.x && ax <= a.x + a.w && ay >= a.y && ay <= a.y + a.h) return { mode: 'allday', dayKey: days[dayFromX(a, ax)] }; }
+    const l = c.layer;
+    if (!l || ax < l.x || ax > l.x + l.w || ay < l.y || ay > l.y + l.h) return null;
+    let mins = START_HOUR * 60 + Math.round(((ay - l.y) / HOUR_H) * 60 / SNAP) * SNAP;
+    mins = clamp(mins, START_HOUR * 60, END_HOUR * 60 - SNAP);
+    return { mode: 'grid', dayKey: days[dayFromX(l, ax)], mins };
+  };
+  const begin = (task) => setDragTask(task);
+  const cancelDrag = () => setDragTask(null);
+  const end = (taskId, ax, ay) => {
+    setDragTask(null);
+    const d = computeDrop(ax, ay);
+    const task = tasks.find((x) => x.id === taskId);
+    if (!d || !task) return;
+    if (d.mode === 'grid') onUpdateTask(taskId, { when: d.dayKey, startMinutes: d.mins, durationMinutes: task.durationMinutes || DEFAULT_DUR });
+    else if (d.mode === 'allday') onUpdateTask(taskId, { when: d.dayKey, startMinutes: null });
+    else if (d.mode === 'panel') onUpdateTask(taskId, { when: null, startMinutes: null });
+  };
+  const ctx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, end };
+  const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -58,11 +114,17 @@ export default function WeekView({ tasks, project, onOpenTask }) {
       ? `${MONTHS_SHORT[first.getMonth()]} ${first.getDate()} – ${last.getDate()}`
       : `${MONTHS_SHORT[first.getMonth()]} ${first.getDate()} – ${MONTHS_SHORT[last.getMonth()]} ${last.getDate()}`;
 
+  const submitAdd = () => { const t = newTitle.trim(); if (!t) return; onAddTask({ title: t }); setNewTitle(''); };
+
   return (
-    <View style={styles.container}>
+    <View ref={rootRef} collapsable={false} style={styles.root}>
       <View style={styles.nav}>
         <Text style={styles.rangeLabel}>{rangeLabel}</Text>
         <View style={styles.navBtns}>
+          <Pressable onPress={() => setShowPanel((v) => !v)} style={[styles.planBtn, showPanel && styles.planBtnActive]}>
+            <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
+            <Text style={[styles.planText, showPanel && { color: colors.accent }]}>Plan {unscheduled.length}</Text>
+          </Pressable>
           <Pressable onPress={() => setWeekStart(startOfWeek(todayKey()))} style={styles.todayBtn}>
             <Text style={styles.todayText}>Today</Text>
           </Pressable>
@@ -75,108 +137,156 @@ export default function WeekView({ tasks, project, onOpenTask }) {
         </View>
       </View>
 
-      {/* Day headers */}
-      <View style={styles.headerRow}>
-        <View style={{ width: GUTTER }} />
-        {days.map((k) => {
-          const d = keyToDate(k);
-          const isToday = k === todayK;
-          return (
-            <View key={k} style={styles.headCell}>
-              <Text style={[styles.headWeekday, isToday && styles.headToday]}>{WEEKDAYS_SHORT[d.getDay()]}</Text>
-              <View style={[styles.headDayBadge, isToday && styles.headDayBadgeToday]}>
-                <Text style={[styles.headDay, isToday && styles.headDayNumToday]}>{d.getDate()}</Text>
+      <View style={styles.body}>
+        <View style={styles.weekCol}>
+          {/* Day headers */}
+          <View style={styles.headerRow}>
+            <View style={{ width: GUTTER }} />
+            {days.map((k) => {
+              const d = keyToDate(k);
+              const isToday = k === todayK;
+              return (
+                <View key={k} style={styles.headCell}>
+                  <Text style={[styles.headWeekday, isToday && styles.headToday]}>{WEEKDAYS_SHORT[d.getDay()]}</Text>
+                  <View style={[styles.headDayBadge, isToday && styles.headDayBadgeToday]}>
+                    <Text style={[styles.headDay, isToday && styles.headDayNumToday]}>{d.getDate()}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* All-day row */}
+          <View style={styles.allDayRow}>
+            <View style={[styles.allDayGutter, { width: GUTTER }]}>
+              <Text style={styles.allDayLabel}>all-day</Text>
+            </View>
+            <View ref={allDayRef} collapsable={false} style={styles.allDayCells}>
+              {days.map((k) => (
+                <View key={k} style={styles.allDayCell}>
+                  {(allDayByDay[k] || []).slice(0, 3).map((t) => (
+                    <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={styles.allDayChipWrap}>
+                      <View style={[styles.allDayChip, { borderColor: color }]}>
+                        <Text style={styles.allDayChipText} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
+                      </View>
+                    </Draggable>
+                  ))}
+                  {(allDayByDay[k] || []).length > 3 && <Text style={styles.moreText}>+{(allDayByDay[k] || []).length - 3}</Text>}
+                </View>
+              ))}
+            </View>
+          </View>
+
+          <ScrollView style={styles.scroll} showsVerticalScrollIndicator>
+            <View style={[styles.grid, { height: GRID_H }]}>
+              {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
+                <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
+                  <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
+                  <View style={styles.hourLine} />
+                </View>
+              ))}
+              <View style={[styles.colLayer, { left: GUTTER }]} pointerEvents="none">
+                {days.map((k) => (
+                  <View key={k} style={[styles.colDivider, k === todayK && styles.colToday]} />
+                ))}
+              </View>
+
+              <View ref={layerRef} collapsable={false} style={[styles.blockLayer, { left: GUTTER }]}>
+                {showNow && nowCol >= 0 && (
+                  <View style={[styles.nowLine, { top: nowTop, left: `${(nowCol * 100) / 7}%`, width: `${100 / 7}%` }]} pointerEvents="none">
+                    <View style={styles.nowDot} />
+                  </View>
+                )}
+                {days.map((k, di) =>
+                  (timedByDay[k] || []).map((t) => {
+                    const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
+                    const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 2);
+                    const doneT = t.status !== STATUS.OPEN;
+                    return (
+                      <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={[styles.block, { top, height, left: `${(di * 100) / 7}%`, width: `${100 / 7}%` }]}>
+                        <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
+                          <Text style={[styles.blockTitle, doneT && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
+                          <Text style={styles.blockTime} numberOfLines={1}>{fmt(t.startMinutes)}</Text>
+                        </View>
+                      </Draggable>
+                    );
+                  })
+                )}
               </View>
             </View>
-          );
-        })}
-      </View>
-
-      {/* All-day row */}
-      <View style={styles.allDayRow}>
-        <View style={[styles.allDayGutter, { width: GUTTER }]}>
-          <Text style={styles.allDayLabel}>all-day</Text>
+          </ScrollView>
         </View>
-        {days.map((k) => (
-          <View key={k} style={styles.allDayCell}>
-            {(allDayByDay[k] || []).slice(0, 3).map((t) => (
-              <Pressable key={t.id} style={[styles.allDayChip, { borderColor: color }]} onPress={() => onOpenTask(t.id)}>
-                <Text style={styles.allDayChipText} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
-              </Pressable>
-            ))}
-            {(allDayByDay[k] || []).length > 3 && (
-              <Text style={styles.moreText}>+{(allDayByDay[k] || []).length - 3}</Text>
-            )}
-          </View>
-        ))}
-      </View>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator>
-        <View style={[styles.grid, { height: GRID_H }]}>
-          {/* Hour lines + labels */}
-          {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
-            <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
-              <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
-              <View style={styles.hourLine} />
-            </View>
-          ))}
-          {/* Day column dividers */}
-          <View style={[styles.colLayer, { left: GUTTER }]} pointerEvents="none">
-            {days.map((k, i) => (
-              <View key={k} style={[styles.colDivider, k === todayK && styles.colToday]} />
-            ))}
-          </View>
-
-          {/* Blocks + now line, positioned within the columns area */}
-          <View style={[styles.blockLayer, { left: GUTTER }]}>
-            {showNow && nowCol >= 0 && (
-              <View
-                style={[styles.nowLine, { top: nowTop, left: `${(nowCol * 100) / 7}%`, width: `${100 / 7}%` }]}
-                pointerEvents="none"
-              >
-                <View style={styles.nowDot} />
+        {showPanel && (
+          <View ref={panelRef} collapsable={false} style={styles.panel}>
+            <Text style={styles.panelTitle}>Unscheduled <Text style={styles.panelCount}>{unscheduled.length}</Text></Text>
+            <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
+              {unscheduled.map((t) => (
+                <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={styles.panelItemWrap}>
+                  <View style={styles.panelItem}>
+                    <View style={[styles.panelDot, { borderColor: color }]} />
+                    <Text style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={2}>{t.title || 'New To-Do'}</Text>
+                  </View>
+                </Draggable>
+              ))}
+              <View style={styles.addRow}>
+                <Ionicons name="add" size={18} color={colors.textTertiary} />
+                <TextInput style={styles.addInput} value={newTitle} onChangeText={setNewTitle} onSubmitEditing={submitAdd} blurOnSubmit={false} placeholder="Add task" placeholderTextColor={colors.placeholder} returnKeyType="done" />
               </View>
-            )}
-            {days.map((k, di) =>
-              (timedByDay[k] || []).map((t) => {
-                const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
-                const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 2);
-                const doneT = t.status !== STATUS.OPEN;
-                return (
-                  <Pressable
-                    key={t.id}
-                    onPress={() => onOpenTask(t.id)}
-                    style={[styles.block, { top, height, left: `${(di * 100) / 7}%`, width: `${100 / 7}%` }]}
-                  >
-                    <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
-                      <Text style={[styles.blockTitle, doneT && styles.done]} numberOfLines={1}>
-                        {t.title || 'New To-Do'}
-                      </Text>
-                      <Text style={styles.blockTime} numberOfLines={1}>{fmt(t.startMinutes)}</Text>
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
+            </ScrollView>
           </View>
-        </View>
-      </ScrollView>
+        )}
+      </View>
+
+      {dragTask && (
+        <Animated.View pointerEvents="none" style={[styles.ghost, ghostStyle]}>
+          <View style={[styles.ghostDot, { backgroundColor: color }]} />
+          <Text style={styles.ghostText} numberOfLines={1}>{dragTask.title || 'New To-Do'}</Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
 
+function Draggable({ task, ctx, onOpen, style, children }) {
+  const dragged = React.useRef(false);
+  const moved = useSharedValue(false);
+  const markDragged = () => { dragged.current = true; };
+  const handlePress = () => { if (dragged.current) { dragged.current = false; return; } onOpen(task.id); };
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(150)
+    .onStart(() => { moved.value = false; runOnJS(ctx.measureOnly)(); })
+    .onUpdate((e) => {
+      const far = Math.abs(e.translationX) + Math.abs(e.translationY) > 6;
+      if (far && !moved.value) { moved.value = true; runOnJS(markDragged)(); runOnJS(ctx.begin)(task); }
+      if (!moved.value) return;
+      ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 16;
+      ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 12;
+    })
+    .onEnd((e) => { if (moved.value) runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY); else runOnJS(ctx.cancelDrag)(); });
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={style}>
+        <Pressable onPress={handlePress} style={styles.fill}>{children}</Pressable>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: spacing.lg },
-  nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  root: { flex: 1, paddingLeft: spacing.lg },
+  fill: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: spacing.lg, marginBottom: spacing.sm },
   rangeLabel: { ...typography.heading, color: colors.text },
   navBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  todayBtn: {
-    paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, marginRight: spacing.xs,
-    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
-  },
+  planBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, marginRight: spacing.xs, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  planBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  planText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
+  todayBtn: { paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, marginRight: spacing.xs, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   todayText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
   navBtn: { padding: 2, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  body: { flex: 1, flexDirection: 'row' },
+  weekCol: { flex: 1, paddingRight: spacing.lg },
   headerRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator, paddingBottom: 4 },
   headCell: { flex: 1, alignItems: 'center', gap: 2 },
   headWeekday: { ...typography.caption, color: colors.textTertiary, textTransform: 'uppercase' },
@@ -188,7 +298,9 @@ const styles = StyleSheet.create({
   allDayRow: { flexDirection: 'row', minHeight: 26, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separatorStrong, paddingVertical: 3 },
   allDayGutter: { justifyContent: 'center' },
   allDayLabel: { ...typography.caption, color: colors.textTertiary, fontSize: 10 },
+  allDayCells: { flex: 1, flexDirection: 'row' },
   allDayCell: { flex: 1, gap: 2, paddingHorizontal: 2, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator },
+  allDayChipWrap: { width: '100%' },
   allDayChip: { borderLeftWidth: 3, borderRadius: 3, backgroundColor: colors.groupedBackground, paddingHorizontal: 4, paddingVertical: 1 },
   allDayChipText: { ...typography.caption, color: colors.text, fontSize: 10 },
   moreText: { ...typography.caption, color: colors.textTertiary, fontSize: 10, paddingLeft: 4 },
@@ -204,8 +316,21 @@ const styles = StyleSheet.create({
   nowLine: { position: 'absolute', height: 2, backgroundColor: colors.deadline },
   nowDot: { position: 'absolute', left: -3, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
   block: { position: 'absolute', paddingHorizontal: 1 },
-  blockInner: { flex: 1, borderLeftWidth: 3, borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1, overflow: 'hidden', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  blockInner: { flex: 1, borderLeftWidth: 3, borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1, overflow: 'hidden' },
   blockTitle: { ...typography.caption, color: colors.text, fontWeight: '600', fontSize: 10 },
   blockTime: { ...typography.caption, color: colors.textSecondary, fontSize: 9 },
   done: { color: colors.textTertiary, textDecorationLine: 'line-through' },
+  panel: { width: PANEL_W, backgroundColor: colors.groupedBackground, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator, paddingHorizontal: spacing.md, paddingTop: spacing.sm, marginRight: -spacing.lg },
+  panelScroll: { flex: 1 },
+  panelTitle: { ...typography.heading, color: colors.text, marginBottom: spacing.xs },
+  panelCount: { ...typography.subhead, color: colors.textTertiary },
+  panelItemWrap: {},
+  panelItem: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  panelDot: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.5, marginTop: 1 },
+  panelItemText: { flex: 1, ...typography.subhead, color: colors.text },
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm },
+  addInput: { flex: 1, ...typography.subhead, color: colors.text, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
+  ghost: { position: 'absolute', top: 0, left: 0, zIndex: 1000, flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 220, paddingVertical: 5, paddingHorizontal: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.background, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  ghostDot: { width: 8, height: 8, borderRadius: 4 },
+  ghostText: { ...typography.caption, color: colors.text, flexShrink: 1 },
 });
