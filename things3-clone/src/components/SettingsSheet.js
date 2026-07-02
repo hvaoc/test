@@ -4,12 +4,14 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomSheet from './BottomSheet';
 import { colors, spacing, typography, radius } from '../theme';
 import { useTasks } from '../store/TasksContext';
+import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
 
 // App preferences. Currently a single toggle for whether completed to-dos are
 // shown inside projects; structured as a list so more settings can slot in.
 export default function SettingsSheet({ visible, onClose }) {
   const { state, setSetting, reset } = useTasks();
-  const { showCompleted, centeredContent, dayStartHour } = state.settings;
+  const { showCompleted, centeredContent, dayStartHour, dateFormat } = state.settings;
+  const sampleKey = todayKey();
 
   return (
     <BottomSheet visible={visible} onClose={onClose} title="Settings">
@@ -72,6 +74,30 @@ export default function SettingsSheet({ visible, onClose }) {
       <View style={styles.divider} />
 
       <View style={styles.labelWrap}>
+        <Text style={styles.label}>Date format</Text>
+        <Text style={styles.hint}>Used for the date headers in the Calendar Day view.</Text>
+      </View>
+      <View style={styles.formatList}>
+        {DATE_FORMATS.map((id) => {
+          const active = (dateFormat || 'weekday-long') === id;
+          return (
+            <Pressable
+              key={id}
+              onPress={() => setSetting('dateFormat', id)}
+              style={[styles.formatRow, active && styles.formatRowActive]}
+            >
+              <Text style={[styles.formatText, active && styles.formatTextActive]}>
+                {formatDayKey(sampleKey, id)}
+              </Text>
+              {active && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.labelWrap}>
         <Text style={styles.label}>Sample data</Text>
         <Text style={styles.hint}>
           This build always starts from the demo data; reloading resets it. Use
@@ -118,6 +144,21 @@ const styles = StyleSheet.create({
   segmentBtnActive: { backgroundColor: colors.card },
   segmentText: { ...typography.subhead, color: colors.textSecondary },
   segmentTextActive: { color: colors.text, fontWeight: '600' },
+  formatList: { marginTop: spacing.sm, gap: 4 },
+  formatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  formatRowActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  formatText: { ...typography.body, color: colors.text, fontVariant: ['tabular-nums'] },
+  formatTextActive: { color: colors.accent, fontWeight: '600' },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.separator,

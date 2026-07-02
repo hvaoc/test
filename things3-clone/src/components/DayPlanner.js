@@ -5,7 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, keyToDate, addDays, WEEKDAYS, MONTHS_SHORT } from '../utils/date';
+import { todayKey, addDays, formatDayKey } from '../utils/date';
 
 const END_HOUR = 23;
 const HOUR_H = 46;
@@ -65,7 +65,7 @@ function layoutOverlaps(timed) {
 // grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
 // panel. Tasks drag (long-press) onto any day's hour to time-block them, onto a
 // day's all-day strip to clear the time, or back to the panel to unschedule.
-export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null }) {
+export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null, dateFormat = 'weekday-long' }) {
   const HOURS = END_HOUR - startHour;
   const GRID_H = HOURS * HOUR_H + GRID_BOTTOM_PAD;
   const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
@@ -81,9 +81,9 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   const [newTitle, setNewTitle] = useState('');
 
   const rootRef = useRef(null);
-  const contentRef = useRef(null);
   const panelRef = useRef(null);
   const scrollRef = useRef(null);
+  const scrollYRef = useRef(0);
   const rectsRef = useRef(null);
   const scrolledRef = useRef(false);
 
@@ -116,22 +116,24 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
         else res();
       });
     const store = {};
-    Promise.all([grab(contentRef, 'content', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
+    Promise.all([grab(scrollRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
       rectsRef.current = store;
       if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
   };
 
   // Resolve a pointer to a drop: which day, and grid time vs all-day vs panel.
+  // The scroll viewport is measured once; the day is derived analytically from
+  // the current scroll offset (each day is a fixed DAY_H).
   const computeDrop = (ax, ay) => {
     const c = rectsRef.current || {};
     if (c.panel) {
       const p = c.panel;
       if (ax >= p.x && ax <= p.x + p.w && ay >= p.y && ay <= p.y + p.h) return { mode: 'panel' };
     }
-    const content = c.content;
-    if (!content || ax < content.x || ax > content.x + content.w) return null;
-    const rel = ay - content.y;
+    const view = c.view;
+    if (!view || ax < view.x || ax > view.x + view.w || ay < view.y || ay > view.y + view.h) return null;
+    const rel = ay - view.y + scrollYRef.current;
     if (rel < 0 || rel >= NUM_DAYS * DAY_H) return null;
     const di = Math.floor(rel / DAY_H);
     const dayKey = days[di];
@@ -179,14 +181,14 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     if (ti >= 0) scrollRef.current?.scrollTo({ y: ti * DAY_H, animated: true });
     else setAnchor(todayKey()); // today is outside the window — recenter on it
   };
-  const onContentLayout = () => {
+  const onContentReady = () => {
     if (scrolledRef.current) return;
     scrolledRef.current = true;
     scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
   };
   // Recenter when the anchor changes (Today from out-of-range, or a tapped date).
   useEffect(() => {
-    if (!scrolledRef.current) return; // initial position handled by onContentLayout
+    if (!scrolledRef.current) return; // initial position handled by onContentReady
     scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
   }, [anchor]);
 
@@ -199,6 +201,33 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
   const dropH = ((dragTask?.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H;
   const color = project?.color || colors.accent;
+
+  // Flatten days into [header, body, header, body, ...] so each date header can
+  // be a sticky section header (scrolls with its day, pins while it's in view).
+  const items = [];
+  const stickyIndices = [];
+  days.forEach((k) => {
+    stickyIndices.push(items.length);
+    items.push(
+      <DayHeader key={`h${k}`} dayKey={k} isToday={k === todayK} height={DHEADER_H} dateFormat={dateFormat} />
+    );
+    items.push(
+      <DayBody
+        key={`b${k}`}
+        dayKey={k}
+        isToday={k === todayK}
+        timed={timedByDay[k] || []}
+        allDay={allDayByDay[k] || []}
+        color={color}
+        ctx={dragCtx}
+        onOpen={onOpenTask}
+        startHour={startHour}
+        gridH={GRID_H}
+        bodyH={ALLDAY_H + GRID_H}
+        placeholder={dropInfo && dropInfo.dayKey === k ? { top: dropInfo.top, h: dropH } : null}
+      />
+    );
+  });
 
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
@@ -219,25 +248,16 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
       </View>
 
       <View style={styles.row}>
-        <ScrollView ref={scrollRef} style={styles.scroll} showsVerticalScrollIndicator>
-          <View ref={contentRef} collapsable={false} onLayout={onContentLayout}>
-            {days.map((k) => (
-              <DaySection
-                key={k}
-                dayKey={k}
-                isToday={k === todayK}
-                timed={timedByDay[k] || []}
-                allDay={allDayByDay[k] || []}
-                color={color}
-                ctx={dragCtx}
-                onOpen={onOpenTask}
-                startHour={startHour}
-                gridH={GRID_H}
-                dayH={DAY_H}
-                placeholder={dropInfo && dropInfo.dayKey === k ? { top: dropInfo.top, h: dropH } : null}
-              />
-            ))}
-          </View>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          stickyHeaderIndices={stickyIndices}
+          scrollEventThrottle={16}
+          onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+          onContentSizeChange={onContentReady}
+        >
+          {items}
         </ScrollView>
 
         {showPanel && (
@@ -284,9 +304,20 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   );
 }
 
-// One day: fixed-height header + all-day strip + hour grid with its blocks.
-function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder, startHour, gridH, dayH }) {
-  const d = keyToDate(dayKey);
+// The sticky per-day date header. Pins to the top while its day is in view,
+// then the next day's header pushes it up (mirrors the Month view).
+function DayHeader({ dayKey, isToday, height, dateFormat }) {
+  return (
+    <View style={[styles.dayHeader, { height }, isToday && styles.dayHeaderToday]}>
+      <Text style={[styles.dayHeaderText, isToday && styles.dayHeaderTextToday]}>
+        {formatDayKey(dayKey, dateFormat)}
+      </Text>
+    </View>
+  );
+}
+
+// One day's body: the all-day strip over the hour grid with its blocks.
+function DayBody({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder, startHour, gridH, bodyH }) {
   const layout = layoutOverlaps(timed);
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -294,13 +325,7 @@ function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeh
   const nowTop = ((nowMins - startHour * 60) / 60) * HOUR_H;
 
   return (
-    <View style={{ height: dayH }}>
-      <View style={[styles.dayHeader, { height: DHEADER_H }, isToday && styles.dayHeaderToday]}>
-        <Text style={[styles.dayHeaderText, isToday && styles.dayHeaderTextToday]}>
-          {WEEKDAYS[d.getDay()]}, {MONTHS_SHORT[d.getMonth()]} {d.getDate()}
-        </Text>
-      </View>
-
+    <View style={{ height: bodyH }}>
       <View style={[styles.allDay, { height: ALLDAY_H }]}>
         {allDay.slice(0, 8).map((t) => (
           <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={styles.allDayChipWrap}>

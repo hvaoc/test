@@ -85,4 +85,38 @@ export function monthTitle(key) {
     : `${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// Predefined absolute-date formats, offered as a preference and used for the
+// Calendar Day-view date headers. 'weekday-long' matches the original default.
+export const DATE_FORMATS = [
+  'weekday-long', // Thursday, Jul 2
+  'weekday-short', // Thu, Jul 2
+  'month-day-year', // Jul 2, 2026
+  'us', // 07/02/2026
+  'iso', // 2026-07-02
+];
+
+export function formatDayKey(key, id = 'weekday-long') {
+  if (!key) return '';
+  const d = keyToDate(key);
+  const wd = d.getDay();
+  const mo = d.getMonth();
+  const day = d.getDate();
+  const yr = d.getFullYear();
+  switch (id) {
+    case 'weekday-short':
+      return `${WEEKDAYS_SHORT[wd]}, ${MONTHS_SHORT[mo]} ${day}`;
+    case 'month-day-year':
+      return `${MONTHS_SHORT[mo]} ${day}, ${yr}`;
+    case 'us':
+      return `${pad2(mo + 1)}/${pad2(day)}/${yr}`;
+    case 'iso':
+      return `${yr}-${pad2(mo + 1)}-${pad2(day)}`;
+    case 'weekday-long':
+    default:
+      return `${WEEKDAYS[wd]}, ${MONTHS_SHORT[mo]} ${day}`;
+  }
+}
+
 export { MONTHS, MONTHS_SHORT, WEEKDAYS, WEEKDAYS_SHORT };
