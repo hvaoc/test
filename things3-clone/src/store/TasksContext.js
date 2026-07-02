@@ -373,16 +373,17 @@ export function TasksProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const saveTimer = useRef(null);
 
-  // Hydrate from disk (or seed sample data) on mount.
+  // Hydrate from disk (or seed sample data) on mount. Re-seed when there's no
+  // saved data, or when it predates the current sample-data version (so an
+  // updated seed replaces stale local data instead of being ignored).
   useEffect(() => {
     let mounted = true;
     (async () => {
       const persisted = await loadState();
       if (!mounted) return;
-      dispatch({
-        type: 'HYDRATE',
-        payload: persisted || buildSampleData(),
-      });
+      const seed = buildSampleData();
+      const useSaved = persisted && persisted.version === seed.version;
+      dispatch({ type: 'HYDRATE', payload: useSaved ? persisted : seed });
     })();
     return () => {
       mounted = false;
