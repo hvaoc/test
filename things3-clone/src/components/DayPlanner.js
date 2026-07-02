@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -65,10 +65,15 @@ function layoutOverlaps(timed) {
 // grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
 // panel. Tasks drag (long-press) onto any day's hour to time-block them, onto a
 // day's all-day strip to clear the time, or back to the panel to unschedule.
-export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0 }) {
+export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null }) {
   const HOURS = END_HOUR - startHour;
   const GRID_H = HOURS * HOUR_H + GRID_BOTTOM_PAD;
   const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
+
+  // The timeline window is centered on an anchor date (today by default, or a
+  // date tapped in the Month view). Tapping "Today" re-centers on today.
+  const [anchor, setAnchor] = useState(focusDate || todayKey());
+  useEffect(() => { if (focusDate) setAnchor(focusDate); }, [focusDate]);
 
   const [dragTask, setDragTask] = useState(null);
   const [dropInfo, setDropInfo] = useState(null); // { dayKey, top }
@@ -87,7 +92,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   const rootX = useSharedValue(0);
   const rootY = useSharedValue(0);
 
-  const startKey = addDays(todayKey(), -RANGE_PAST);
+  const startKey = addDays(anchor, -RANGE_PAST);
   const days = Array.from({ length: NUM_DAYS }, (_, i) => addDays(startKey, i));
   const todayK = todayKey();
 
@@ -168,12 +173,22 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }],
   }));
 
-  const scrollToToday = () => scrollRef.current?.scrollTo({ y: TODAY_INDEX * DAY_H, animated: true });
+  // The anchor day always sits at index RANGE_PAST in the window.
+  const scrollToToday = () => {
+    const ti = days.indexOf(todayK);
+    if (ti >= 0) scrollRef.current?.scrollTo({ y: ti * DAY_H, animated: true });
+    else setAnchor(todayKey()); // today is outside the window — recenter on it
+  };
   const onContentLayout = () => {
     if (scrolledRef.current) return;
     scrolledRef.current = true;
-    scrollRef.current?.scrollTo({ y: TODAY_INDEX * DAY_H, animated: false });
+    scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
   };
+  // Recenter when the anchor changes (Today from out-of-range, or a tapped date).
+  useEffect(() => {
+    if (!scrolledRef.current) return; // initial position handled by onContentLayout
+    scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
+  }, [anchor]);
 
   const submitAdd = () => {
     const title = newTitle.trim();

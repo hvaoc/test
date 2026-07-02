@@ -31,7 +31,7 @@ const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).p
 // month and pins to the top while that month is the one in view. Task chips drag
 // between days (across months) to reschedule; the right "Unscheduled" panel holds
 // undated tasks that can be dragged onto a day.
-export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
+export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask, onOpenDay }) {
   const today = keyToDate(todayKey());
   const startY = today.getFullYear();
   const startM = today.getMonth() - RANGE_BACK; // may be negative; Date normalizes
@@ -179,6 +179,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         dropKey={dropKey}
         ctx={dragCtx}
         onOpen={onOpenTask}
+        onOpenDay={onOpenDay}
       />
     );
   });
@@ -259,7 +260,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   );
 }
 
-function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, onOpen }) {
+function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, onOpen, onOpenDay }) {
   const first = new Date(y, m, 1);
   const gridStart = new Date(y, m, 1 - first.getDay());
   const weeks = [];
@@ -279,7 +280,11 @@ function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, 
             const dayTasks = byDate[k] || [];
             const isDrop = dropKey === k;
             return (
-              <View key={k} style={[styles.cell, !inMonth && styles.cellDim, isDrop && styles.cellDrop]}>
+              <Pressable
+                key={k}
+                onPress={() => onOpenDay && onOpenDay(k)}
+                style={[styles.cell, !inMonth && styles.cellDim, isDrop && styles.cellDrop]}
+              >
                 <View style={[styles.dayBadge, isToday && styles.dayBadgeToday]}>
                   <Text style={[styles.dayNum, isToday && styles.dayNumToday, !inMonth && styles.dayNumDim]}>{dt.getDate()}</Text>
                 </View>
@@ -294,7 +299,7 @@ function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, 
                   </Draggable>
                 ))}
                 {dayTasks.length > MAX_CHIPS && <Text style={styles.more}>+{dayTasks.length - MAX_CHIPS}</Text>}
-              </View>
+              </Pressable>
             );
           })}
         </View>
@@ -308,7 +313,8 @@ function Draggable({ task, ctx, onOpen, style, children }) {
   const dragged = React.useRef(false);
   const moved = useSharedValue(false);
   const markDragged = () => { dragged.current = true; };
-  const handlePress = () => {
+  const handlePress = (e) => {
+    e?.stopPropagation?.(); // don't also trigger the day cell's open-day
     if (dragged.current) { dragged.current = false; return; }
     onOpen(task.id);
   };
@@ -361,7 +367,7 @@ const styles = StyleSheet.create({
   },
   weekday: { flex: 1, textAlign: 'center', ...typography.caption, color: colors.textTertiary, fontWeight: '600', textTransform: 'uppercase' },
   week: { flexDirection: 'row' },
-  cell: { flex: 1, borderTopWidth: StyleSheet.hairlineWidth, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.separator, padding: 3, gap: 2 },
+  cell: { flex: 1, borderTopWidth: StyleSheet.hairlineWidth, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.separator, padding: 3, gap: 2, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   cellDim: { backgroundColor: colors.groupedBackground },
   cellDrop: { backgroundColor: colors.accentSoft },
   dayBadge: { alignSelf: 'flex-start', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },

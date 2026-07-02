@@ -10,9 +10,15 @@ import MonthCalendar from './MonthCalendar';
 // view; all three fill the pane and manage their own scrolling.
 export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
   const [mode, setMode] = useState('day');
+  const [focusDate, setFocusDate] = useState(null);
   const { state } = useTasks();
   const startHour = state.settings.dayStartHour ?? 0;
   const common = { tasks, project, onOpenTask, onUpdateTask, onAddTask };
+
+  // Manually picking a view clears any focused date; tapping a day in Month
+  // view jumps to the Day view centered on that date.
+  const selectMode = (key) => { setFocusDate(null); setMode(key); };
+  const openDay = (dayKey) => { setFocusDate(dayKey); setMode('day'); };
   return (
     <View style={styles.wrap}>
       <View style={styles.modeRow}>
@@ -23,7 +29,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
         ].map((m) => (
           <Pressable
             key={m.key}
-            onPress={() => setMode(m.key)}
+            onPress={() => selectMode(m.key)}
             style={[styles.modeBtn, mode === m.key && styles.modeBtnActive]}
           >
             <Text style={[styles.modeText, mode === m.key && styles.modeTextActive]}>{m.label}</Text>
@@ -32,11 +38,11 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
       </View>
       <View style={styles.body}>
         {mode === 'day' ? (
-          <DayPlanner {...common} startHour={startHour} />
+          <DayPlanner {...common} startHour={startHour} focusDate={focusDate} />
         ) : mode === 'week' ? (
           <WeekView {...common} startHour={startHour} />
         ) : (
-          <MonthCalendar {...common} />
+          <MonthCalendar {...common} onOpenDay={openDay} />
         )}
       </View>
     </View>
