@@ -26,6 +26,7 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
 import ReorderableTaskList from '../components/ReorderableTaskList';
+import BoardView from '../components/BoardView';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -262,6 +263,37 @@ export default function ListScreen({
         )
       : [];
 
+  // Board view: one column per section. The "(No Section)" column is always
+  // present (even when empty), then each heading in order. Cards are the section's
+  // shown tasks (open + completed per the setting), same as the list/date views.
+  const boardColumns =
+    project && projectView === 'board'
+      ? (() => {
+          const main = sections.find((s) => !s.heading);
+          const cols = [
+            {
+              key: 'main',
+              title: '(No Section)',
+              headingId: null,
+              tasks: main ? main.data : [],
+              count: main ? main.data.length : 0,
+            },
+          ];
+          sections
+            .filter((s) => s.heading)
+            .forEach((s) =>
+              cols.push({
+                key: s.key,
+                title: s.title,
+                headingId: s.heading.id,
+                tasks: s.data,
+                count: s.data.length,
+              })
+            );
+          return cols;
+        })()
+      : [];
+
   // --- Shared date-grouped list (project date view + Upcoming) --------------
   // Both render date buckets as collapsible dividers with draggable/reorderable
   // task rows underneath. Dropping a task under a bucket adopts that date; the
@@ -476,6 +508,7 @@ export default function ListScreen({
         <View style={styles.viewToggle}>
           {[
             { mode: 'list', icon: 'list' },
+            { mode: 'board', icon: 'grid-outline' },
             { mode: 'date', icon: 'calendar-outline' },
           ].map(({ mode, icon }) => {
             const active = projectView === mode;
@@ -523,7 +556,16 @@ export default function ListScreen({
         <View style={[styles.contentCol, centered && styles.contentColCentered]}>
         {titleHeader}
         {project ? (
-          projectView === 'date' ? (
+          projectView === 'board' ? (
+            // Board view: a Kanban column per section, cards reuse the task rows.
+            <BoardView
+              columns={boardColumns}
+              onOpenTask={setOpenTaskId}
+              onAddTask={handleAddInSection}
+              onAddSection={handleAddSectionAfter}
+              onEditSection={setEditSectionId}
+            />
+          ) : projectView === 'date' ? (
             // Date view: the project's open to-dos regrouped by scheduled date,
             // as collapsible buckets with draggable/reorderable rows.
             renderDateList(projectDateSections, 'project-date')
