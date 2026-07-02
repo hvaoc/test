@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
@@ -54,8 +56,47 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
 
   const todayK = todayKey();
 
+  // --- Month drag-and-drop: drag a task chip onto another day to reschedule ---
+  const rootRef = useRef(null);
+  const gridRef = useRef(null);
+  const rectsRef = useRef(null);
+  const [dragTask, setDragTask] = useState(null);
+  const ghostX = useSharedValue(0);
+  const ghostY = useSharedValue(0);
+  const rootX = useSharedValue(0);
+  const rootY = useSharedValue(0);
+  const measureOnly = () => {
+    const grab = (ref, key, store) =>
+      new Promise((res) => {
+        const n = ref.current;
+        if (n && n.measureInWindow) n.measureInWindow((x, y, w, h) => { store[key] = { x, y, w, h }; res(); });
+        else res();
+      });
+    const store = {};
+    Promise.all([grab(rootRef, 'root', store), grab(gridRef, 'grid', store)]).then(() => {
+      rectsRef.current = store;
+      if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
+    });
+  };
+  const beginDrag = (task) => setDragTask(task);
+  const cancelDrag = () => setDragTask(null);
+  const endDrag = (taskId, ax, ay) => {
+    setDragTask(null);
+    const g = rectsRef.current?.grid;
+    if (!g || ax < g.x || ax > g.x + g.w || ay < g.y || ay > g.y + g.h) return;
+    const col = Math.max(0, Math.min(6, Math.floor(((ax - g.x) / g.w) * 7)));
+    const row = Math.max(0, Math.min(weeks.length - 1, Math.floor(((ay - g.y) / g.h) * weeks.length)));
+    const dt = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + row * 7 + col);
+    onUpdateTask &&
+      onUpdateTask(taskId, { when: dateKeyOf(dt.getFullYear(), dt.getMonth(), dt.getDate()) });
+  };
+  const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, beginDrag, cancelDrag, endDrag };
+  const ghostStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }],
+  }));
+
   return (
-    <View style={[styles.wrap, fillHeight && styles.wrapFill]}>
+    <View ref={rootRef} collapsable={false} style={[styles.wrap, fillHeight && styles.wrapFill]}>
       <View style={styles.modeRow}>
         {[
           { key: 'month', label: 'Month' },
@@ -107,7 +148,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
         ))}
       </View>
 
-      <View style={[styles.grid, fillHeight && styles.gridFill]}>
+      <View ref={gridRef} collapsable={false} style={[styles.grid, fillHeight && styles.gridFill]}>
         {weeks.map((days, wi) => (
           <View key={wi} style={[styles.week, fillHeight && styles.weekFill]}>
             {days.map((dt) => {
@@ -131,12 +172,12 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
                   {dayTasks.slice(0, MAX_CHIPS).map((t) => {
                     const done = t.status !== STATUS.OPEN;
                     return (
-                      <Pressable key={t.id} style={styles.chip} onPress={() => onOpenTask(t.id)}>
+                      <MonthDraggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask}>
                         <View style={[styles.chipDot, { backgroundColor: project?.color || colors.accent }]} />
                         <Text style={[styles.chipText, done && styles.chipTextDone]} numberOfLines={1}>
                           {t.title || 'New To-Do'}
                         </Text>
-                      </Pressable>
+                      </MonthDraggable>
                     );
                   })}
                   {dayTasks.length > MAX_CHIPS && (
@@ -156,7 +197,63 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
       )}
        </>
       )}
+
+      {dragTask && (
+        <Animated.View pointerEvents="none" style={[styles.ghost, ghostStyle]}>
+          <View style={[styles.chipDot, { backgroundColor: project?.color || colors.accent }]} />
+          <Text style={styles.ghostText} numberOfLines={1}>
+            {dragTask.title || 'New To-Do'}
+          </Text>
+        </Animated.View>
+      )}
     </View>
+  );
+}
+
+// A month task chip that opens on tap and reschedules on drag (long-press then
+// move). Only a real move drags; the ghost tracks the pointer to the drop day.
+function MonthDraggable({ task, ctx, onOpen, children }) {
+  const dragged = React.useRef(false);
+  const moved = useSharedValue(false);
+  const markDragged = () => {
+    dragged.current = true;
+  };
+  const handlePress = () => {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    onOpen(task.id);
+  };
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(150)
+    .onStart(() => {
+      moved.value = false;
+      runOnJS(ctx.measureOnly)();
+    })
+    .onUpdate((e) => {
+      const far = Math.abs(e.translationX) + Math.abs(e.translationY) > 6;
+      if (far && !moved.value) {
+        moved.value = true;
+        runOnJS(markDragged)();
+        runOnJS(ctx.beginDrag)(task);
+      }
+      if (!moved.value) return;
+      ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 18;
+      ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 12;
+    })
+    .onEnd((e) => {
+      if (moved.value) runOnJS(ctx.endDrag)(task.id, e.absoluteX, e.absoluteY);
+      else runOnJS(ctx.cancelDrag)();
+    });
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View>
+        <Pressable style={styles.chip} onPress={handlePress}>
+          {children}
+        </Pressable>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -257,4 +354,26 @@ const styles = StyleSheet.create({
   chipTextDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   more: { ...typography.caption, color: colors.textTertiary, paddingLeft: 4 },
   undated: { ...typography.caption, color: colors.textTertiary, marginTop: spacing.sm },
+  ghost: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 1000,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 220,
+    paddingVertical: 5,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.background,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  ghostText: { ...typography.caption, color: colors.text, flexShrink: 1 },
 });

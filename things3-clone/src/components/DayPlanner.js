@@ -88,11 +88,19 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     });
   };
 
+  // Measure drop zones as soon as a press is held (before any move is known).
+  const measureOnly = () => {
+    dropVisible.value = 0;
+    measureAll();
+  };
+  // Show the ghost only once a real move begins — so a plain tap never drags.
   const begin = (task) => {
     setDragTask(task);
     dropH.value = ((task.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H;
+  };
+  const cancelDrag = () => {
+    setDragTask(null);
     dropVisible.value = 0;
-    measureAll();
   };
 
   const end = (taskId, ax, ay) => {
@@ -123,8 +131,10 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     gH,
     dropTop,
     dropVisible,
+    measureOnly,
     begin,
     end,
+    cancelDrag,
   };
 
   const isToday = day === todayKey();
@@ -308,9 +318,10 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 // the planner root) follows the pointer; the original stays put and the store
 // update on drop re-places it.
 function Draggable({ task, ctx, onOpen, style, children }) {
-  // A real drag also produces a trailing press on web — swallow that one so the
-  // drop doesn't also open the task detail.
+  // Only a real move counts as a drag — a plain tap (even a long-held one) opens
+  // the task. `dragged` swallows the trailing press that follows a real drag.
   const dragged = React.useRef(false);
+  const moved = useSharedValue(false);
   const markDragged = () => {
     dragged.current = true;
   };
@@ -322,12 +333,19 @@ function Draggable({ task, ctx, onOpen, style, children }) {
     onOpen(task.id);
   };
   const pan = Gesture.Pan()
-    .activateAfterLongPress(160)
+    .activateAfterLongPress(150)
     .onStart(() => {
-      runOnJS(markDragged)();
-      runOnJS(ctx.begin)(task);
+      moved.value = false;
+      runOnJS(ctx.measureOnly)();
     })
     .onUpdate((e) => {
+      const far = Math.abs(e.translationX) + Math.abs(e.translationY) > 6;
+      if (far && !moved.value) {
+        moved.value = true;
+        runOnJS(markDragged)();
+        runOnJS(ctx.begin)(task);
+      }
+      if (!moved.value) return;
       ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 18;
       ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 14;
       // Live drop placeholder: snap the pointer to a 15-min slot on the grid.
@@ -345,7 +363,8 @@ function Draggable({ task, ctx, onOpen, style, children }) {
     })
     .onEnd((e) => {
       ctx.dropVisible.value = 0;
-      runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY);
+      if (moved.value) runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY);
+      else runOnJS(ctx.cancelDrag)();
     })
     .onFinalize(() => {
       ctx.dropVisible.value = 0;
