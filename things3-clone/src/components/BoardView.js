@@ -131,7 +131,11 @@ export default function BoardView({
   const [showDisplay, setShowDisplay] = useState(false);
   const [dragTask, setDragTask] = useState(null);
   const [dropTarget, setDropTarget] = useState(null); // { colKey, index }
+  const [scrollX, setScrollX] = useState(0);
+  const [viewW, setViewW] = useState(0);
+  const [contentW, setContentW] = useState(0);
 
+  const boardScrollRef = useRef(null);
   const rootRef = useRef(null);
   const colRefs = useRef(new Map());
   const cardRefs = useRef(new Map());
@@ -237,58 +241,87 @@ export default function BoardView({
       </View>
 
       <ScrollView
+        ref={boardScrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.boardScroll}
         contentContainerStyle={styles.board}
         keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={16}
+        onScroll={(e) => setScrollX(e.nativeEvent.contentOffset.x)}
+        onLayout={(e) => setViewW(e.nativeEvent.layout.width)}
+        onContentSizeChange={(w) => setContentW(w)}
       >
-        {columns.map((col) => (
-          <View
-            key={col.key}
-            ref={(n) => (n ? colRefs.current.set(col.key, n) : colRefs.current.delete(col.key))}
-            collapsable={false}
-            style={styles.column}
-          >
-            {/* Fixed header: stays put while the column's tasks scroll below it. */}
-            <Pressable
-              style={styles.colHeader}
-              onPress={() => col.headingId && onEditSection && onEditSection(col.headingId)}
-              disabled={!col.headingId}
+        {columns.map((col) => {
+          const isTarget = dropTarget && dropTarget.colKey === col.key;
+          return (
+            <View
+              key={col.key}
+              ref={(n) => (n ? colRefs.current.set(col.key, n) : colRefs.current.delete(col.key))}
+              collapsable={false}
+              style={[styles.column, isTarget && styles.columnTarget]}
             >
-              {col.color && <View style={[styles.colDot, { backgroundColor: col.color }]} />}
-              <Text style={styles.colTitle} numberOfLines={1}>
-                {col.title}
-              </Text>
-              <Text style={styles.colCount}>{col.tasks.length}</Text>
-            </Pressable>
+              {/* Fixed header: stays put while the column's tasks scroll below it. */}
+              <Pressable
+                style={styles.colHeader}
+                onPress={() => col.headingId && onEditSection && onEditSection(col.headingId)}
+                disabled={!col.headingId}
+              >
+                {col.color && <View style={[styles.colDot, { backgroundColor: col.color }]} />}
+                <Text style={styles.colTitle} numberOfLines={1}>
+                  {col.title}
+                </Text>
+                <Text style={styles.colCount}>{col.tasks.length}</Text>
+              </Pressable>
 
-            <ScrollView style={styles.colScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {col.tasks.map((task, i) => (
-                <React.Fragment key={task.id}>
-                  {dropTarget && dropTarget.colKey === col.key && dropTarget.index === i && (
-                    <View style={styles.placeholder} />
-                  )}
-                  <Card
-                    task={task}
-                    ctx={dragCtx}
-                    onOpen={onOpenTask}
-                    cardRefs={cardRefs}
-                    dimmed={dragTask?.id === task.id}
-                  />
-                </React.Fragment>
-              ))}
-              {dropTarget && dropTarget.colKey === col.key && dropTarget.index >= col.tasks.length && (
-                <View style={styles.placeholder} />
-              )}
+              {/* contentContainer grows to fill the column, so the empty area
+                  below a short column's tasks is still a valid drop zone. */}
+              <ScrollView
+                style={styles.colScroll}
+                contentContainerStyle={styles.colScrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {col.tasks.map((task, i) => (
+                  <React.Fragment key={task.id}>
+                    {isTarget && dropTarget.index === i && <View style={styles.placeholder} />}
+                    <Card
+                      task={task}
+                      ctx={dragCtx}
+                      onOpen={onOpenTask}
+                      cardRefs={cardRefs}
+                      dimmed={dragTask?.id === task.id}
+                    />
+                  </React.Fragment>
+                ))}
+                {isTarget && dropTarget.index >= col.tasks.length && <View style={styles.placeholder} />}
 
-              <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
-            </ScrollView>
-          </View>
-        ))}
+                <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
+              </ScrollView>
+            </View>
+          );
+        })}
 
         {grouping === 'section' && <AddColumn afterHeadingId={lastHeadingId} onAddSection={onAddSection} />}
       </ScrollView>
+
+      {/* Edge affordances: more columns exist beyond the visible area. */}
+      {scrollX > 4 && (
+        <Pressable
+          style={[styles.edge, styles.edgeLeft]}
+          onPress={() => boardScrollRef.current?.scrollTo({ x: Math.max(0, scrollX - (COL_W + 16) * 2), animated: true })}
+        >
+          <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+        </Pressable>
+      )}
+      {contentW > 0 && scrollX + viewW < contentW - 4 && (
+        <Pressable
+          style={[styles.edge, styles.edgeRight]}
+          onPress={() => boardScrollRef.current?.scrollTo({ x: scrollX + (COL_W + 16) * 2, animated: true })}
+        >
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+        </Pressable>
+      )}
 
       {showDisplay && (
         <>
@@ -482,8 +515,22 @@ const styles = StyleSheet.create({
   segTextActive: { color: colors.white, fontWeight: '600' },
   boardScroll: { flex: 1 },
   board: { paddingHorizontal: spacing.lg, alignItems: 'stretch' },
-  column: { width: COL_W, marginRight: spacing.lg },
+  column: { width: COL_W, marginRight: spacing.lg, borderRadius: radius.md },
+  columnTarget: { backgroundColor: colors.accentSoft },
   colScroll: { flex: 1 },
+  colScrollContent: { flexGrow: 1, paddingBottom: spacing.lg },
+  edge: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.86)',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  edgeLeft: { left: 0, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.separator },
+  edgeRight: { right: 0, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator },
   colHeader: {
     flexDirection: 'row',
     alignItems: 'center',
