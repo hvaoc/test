@@ -578,27 +578,34 @@ export default function ListScreen({
     </View>
   );
 
-  // The Calendar view fills the pane and manages its own scrolling (the month
-  // grid stretches; the day timeline scrolls internally), so it renders in a
-  // flex column rather than inside the page's vertical ScrollView.
-  const isCalendar = project && projectView === 'calendar';
-  const calendarEl = (
-    <CalendarView
-      tasks={sections.flatMap((s) => s.data)}
-      project={project}
-      onOpenTask={setOpenTaskId}
-      onUpdateTask={updateTask}
-      onAddTask={(opts) => handleAddInSection(null, opts)}
-      fillHeight
-    />
-  );
+  // The Calendar and Gantt views fill the pane and manage their own scrolling,
+  // so they render in a flex column rather than inside the page's ScrollView.
+  const isFullPane = project && (projectView === 'calendar' || projectView === 'gantt');
+  const fullPaneEl =
+    projectView === 'gantt' ? (
+      <GanttView
+        sections={sections}
+        project={project}
+        onUpdateTask={updateTask}
+        onOpenTask={setOpenTaskId}
+      />
+    ) : (
+      <CalendarView
+        tasks={sections.flatMap((s) => s.data)}
+        project={project}
+        onOpenTask={setOpenTaskId}
+        onUpdateTask={updateTask}
+        onAddTask={(opts) => handleAddInSection(null, opts)}
+        fillHeight
+      />
+    );
 
-  if (isCalendar) {
+  if (isFullPane) {
     return (
       <View style={styles.container}>
         {navBar}
         {titleHeader}
-        <View style={styles.fillCol}>{calendarEl}</View>
+        <View style={styles.fillCol}>{fullPaneEl}</View>
         <TaskDetailModal
           visible={!!openTaskId}
           taskId={openTaskId}
