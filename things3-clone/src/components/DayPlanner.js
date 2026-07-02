@@ -15,7 +15,7 @@ const DEFAULT_DUR = 60;
 const PANEL_W = 236;
 const GRID_BOTTOM_PAD = 12; // room below the 23:00 label before the next day header
 
-const DHEADER_H = 34;
+const DHEADER_H = 46; // tall sticky date header (matches the Month title band)
 const ALLDAY_H = 30;
 
 // Continuous range of days shown in the timeline (past .. future).
@@ -205,7 +205,6 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
       <View style={styles.toolbar}>
-        <Text style={styles.title}>Timeline</Text>
         <View style={styles.toolBtns}>
           <Pressable
             onPress={() => setShowPanel((v) => !v)}
@@ -404,12 +403,11 @@ const styles = StyleSheet.create({
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     paddingRight: spacing.lg,
     paddingTop: spacing.xs,
     marginBottom: spacing.sm,
   },
-  title: { ...typography.heading, color: colors.text },
   toolBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   planBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -431,11 +429,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.separatorStrong,
-    backgroundColor: colors.groupedBackground,
-    paddingLeft: 4,
+    backgroundColor: colors.background,
+    paddingLeft: 2,
   },
   dayHeaderToday: { backgroundColor: colors.accentSoft },
-  dayHeaderText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
+  dayHeaderText: { ...typography.title, color: colors.text },
   dayHeaderTextToday: { color: colors.accent },
   allDay: {
     flexDirection: 'row',
