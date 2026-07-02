@@ -10,7 +10,7 @@ import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
 // shown inside projects; structured as a list so more settings can slot in.
 export default function SettingsSheet({ visible, onClose }) {
   const { state, setSetting, reset } = useTasks();
-  const { showCompleted, centeredContent, dayStartHour, dateFormat } = state.settings;
+  const { showCompleted, centeredContent, dayStartHour, dateFormat, showWeekends } = state.settings;
   const sampleKey = todayKey();
 
   return (
@@ -69,6 +69,21 @@ export default function SettingsSheet({ visible, onClose }) {
             );
           })}
         </View>
+      </View>
+
+      <View style={styles.row}>
+        <View style={styles.labelWrap}>
+          <Text style={styles.label}>Show weekends</Text>
+          <Text style={styles.hint}>
+            Include Saturday and Sunday in the Calendar Week view.
+          </Text>
+        </View>
+        <Switch
+          value={showWeekends}
+          onValueChange={(v) => setSetting('showWeekends', v)}
+          trackColor={{ true: colors.accent, false: colors.separatorStrong }}
+          ios_backgroundColor={colors.separatorStrong}
+        />
       </View>
 
       <View style={styles.divider} />

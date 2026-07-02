@@ -14,6 +14,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
   const { state } = useTasks();
   const startHour = state.settings.dayStartHour ?? 0;
   const dateFormat = state.settings.dateFormat ?? 'weekday-long';
+  const showWeekends = state.settings.showWeekends ?? false;
   const common = { tasks, project, onOpenTask, onUpdateTask, onAddTask };
 
   // Manually picking a view clears any focused date; tapping a day in Month
@@ -41,9 +42,9 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
         {mode === 'day' ? (
           <DayPlanner {...common} startHour={startHour} focusDate={focusDate} dateFormat={dateFormat} />
         ) : mode === 'week' ? (
-          <WeekView {...common} startHour={startHour} />
+          <WeekView {...common} startHour={startHour} showWeekends={showWeekends} />
         ) : (
-          <MonthCalendar {...common} onOpenDay={openDay} />
+          <MonthCalendar {...common} onOpenDay={openDay} startHour={startHour} dateFormat={dateFormat} />
         )}
       </View>
     </View>

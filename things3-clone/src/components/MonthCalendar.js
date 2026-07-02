@@ -6,6 +6,7 @@ import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-nativ
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
+import DayPeekModal from './DayPeekModal';
 
 const TITLE_H = 46; // month title band
 const WEEKDAY_H = 24; // SUN–SAT row, sits under the title
@@ -31,7 +32,7 @@ const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).p
 // month and pins to the top while that month is the one in view. Task chips drag
 // between days (across months) to reschedule; the right "Unscheduled" panel holds
 // undated tasks that can be dragged onto a day.
-export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask, onOpenDay }) {
+export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask, onOpenDay, startHour = 0, dateFormat = 'weekday-long' }) {
   const today = keyToDate(todayKey());
   const startY = today.getFullYear();
   const startM = today.getMonth() - RANGE_BACK; // may be negative; Date normalizes
@@ -52,6 +53,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const [dragTask, setDragTask] = useState(null);
   const [dropKey, setDropKey] = useState(null); // day being hovered
   const [newTitle, setNewTitle] = useState('');
+  const [peekDay, setPeekDay] = useState(null); // date tapped -> inline day dialog
   const [viewH, setViewH] = useState(0);
 
   // Each month fills the full viewport height (title + weekday row + weeks), so
@@ -179,7 +181,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         dropKey={dropKey}
         ctx={dragCtx}
         onOpen={onOpenTask}
-        onOpenDay={onOpenDay}
+        onDayPress={setPeekDay}
       />
     );
   });
@@ -256,11 +258,23 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
           <Text style={styles.ghostText} numberOfLines={1}>{dragTask.title || 'New To-Do'}</Text>
         </Animated.View>
       )}
+
+      <DayPeekModal
+        visible={!!peekDay}
+        dayKey={peekDay}
+        dayTasks={peekDay ? byDate[peekDay] || [] : []}
+        color={color}
+        startHour={startHour}
+        dateFormat={dateFormat}
+        onClose={() => setPeekDay(null)}
+        onOpenTask={(id) => { setPeekDay(null); onOpenTask(id); }}
+        onOpenFull={onOpenDay ? () => { const k = peekDay; setPeekDay(null); onOpenDay(k); } : null}
+      />
     </View>
   );
 }
 
-function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, onOpen, onOpenDay }) {
+function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, onOpen, onDayPress }) {
   const first = new Date(y, m, 1);
   const gridStart = new Date(y, m, 1 - first.getDay());
   const weeks = [];
@@ -282,7 +296,7 @@ function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, 
             return (
               <Pressable
                 key={k}
-                onPress={() => onOpenDay && onOpenDay(k)}
+                onPress={() => onDayPress && onDayPress(k)}
                 style={[styles.cell, !inMonth && styles.cellDim, isDrop && styles.cellDrop]}
               >
                 <View style={[styles.dayBadge, isToday && styles.dayBadgeToday]}>

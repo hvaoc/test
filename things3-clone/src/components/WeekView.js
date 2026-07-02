@@ -6,6 +6,7 @@ import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-nativ
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, addDays, MONTHS_SHORT, WEEKDAYS_SHORT } from '../utils/date';
+import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
 const DEFAULT_SCROLL_HOUR = 6; // open on the morning; user can scroll up to the day start
@@ -33,7 +34,7 @@ function tint(hex) {
 // A 7-day week grid with a shared hour axis, an all-day row, and a now line.
 // Tasks drag (long-press) between days and times; the right "Unscheduled" Plan
 // panel holds undated tasks that can be dragged onto a day/time.
-export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0 }) {
+export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, showWeekends = false }) {
   const HOURS = END_HOUR - startHour;
   const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay());
   const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
@@ -41,7 +42,11 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   const [dragTask, setDragTask] = useState(null);
   const [newTitle, setNewTitle] = useState('');
   const [gridViewH, setGridViewH] = useState(0);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  // Optionally drop Sat/Sun so weekdays get wider, cleaner columns.
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter(
+    (k) => showWeekends || (keyToDate(k).getDay() % 6 !== 0)
+  );
+  const N = days.length; // number of day columns (7 or 5)
   const todayK = todayKey();
   const color = project?.color || colors.accent;
 
@@ -94,7 +99,7 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
       if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
   };
-  const dayFromX = (rect, ax) => clamp(Math.floor(((ax - rect.x) / rect.w) * 7), 0, 6);
+  const dayFromX = (rect, ax) => clamp(Math.floor(((ax - rect.x) / rect.w) * N), 0, N - 1);
   const computeDrop = (ax, ay) => {
     const c = rectsRef.current || {};
     if (c.panel) { const p = c.panel; if (ax >= p.x && ax <= p.x + p.w && ay >= p.y && ay <= p.y + p.h) return { mode: 'panel' }; }
@@ -126,7 +131,7 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   const nowCol = days.indexOf(todayK);
 
   const first = keyToDate(days[0]);
-  const last = keyToDate(days[6]);
+  const last = keyToDate(days[N - 1]);
   const rangeLabel =
     first.getMonth() === last.getMonth()
       ? `${MONTHS_SHORT[first.getMonth()]} ${first.getDate()} – ${last.getDate()}`
@@ -211,25 +216,32 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
 
               <View ref={layerRef} collapsable={false} style={[styles.blockLayer, { left: GUTTER }]}>
                 {showNow && nowCol >= 0 && (
-                  <View style={[styles.nowLine, { top: nowTop, left: `${(nowCol * 100) / 7}%`, width: `${100 / 7}%` }]} pointerEvents="none">
+                  <View style={[styles.nowLine, { top: nowTop, left: `${(nowCol * 100) / N}%`, width: `${100 / N}%` }]} pointerEvents="none">
                     <View style={styles.nowDot} />
                   </View>
                 )}
-                {days.map((k, di) =>
-                  (timedByDay[k] || []).map((t) => {
+                {days.map((k, di) => {
+                  // Split overlapping events within a day into side-by-side
+                  // sub-columns so every parallel session stays readable.
+                  const layout = layoutOverlaps(timedByDay[k] || []);
+                  return (timedByDay[k] || []).map((t) => {
                     const top = ((t.startMinutes - startHour * 60) / 60) * hourH;
-                    const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * hourH - 2);
+                    const height = Math.max(16, ((t.durationMinutes || DEFAULT_DUR) / 60) * hourH - 2);
                     const doneT = t.status !== STATUS.OPEN;
+                    const { col = 0, count = 1 } = layout.get(t.id) || {};
+                    const colW = 100 / N / count;
+                    const left = `${(di * 100) / N + col * colW}%`;
+                    const width = `${colW}%`;
                     return (
-                      <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={[styles.block, { top, height, left: `${(di * 100) / 7}%`, width: `${100 / 7}%` }]}>
+                      <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={[styles.block, { top, height, left, width }]}>
                         <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
-                          <Text style={[styles.blockTitle, doneT && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
-                          <Text style={styles.blockTime} numberOfLines={1}>{fmt(t.startMinutes)}</Text>
+                          <Text style={[styles.blockTitle, doneT && styles.done]} numberOfLines={count > 1 ? 2 : 1}>{t.title || 'New To-Do'}</Text>
+                          {count < 3 && <Text style={styles.blockTime} numberOfLines={1}>{fmt(t.startMinutes)}</Text>}
                         </View>
                       </Draggable>
                     );
-                  })
-                )}
+                  });
+                })}
               </View>
             </View>
           </ScrollView>

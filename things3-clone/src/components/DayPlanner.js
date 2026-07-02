@@ -6,6 +6,7 @@ import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-nativ
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, addDays, formatDayKey } from '../utils/date';
+import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
 const HOUR_H = 46;
@@ -31,34 +32,6 @@ function whenKey(t) {
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmt = (mins) =>
   `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-
-// Lay out overlapping blocks side by side (like a calendar): tasks that overlap
-// in time form a cluster and are split into equal-width columns. Returns a Map
-// of task.id -> { col, count }.
-function layoutOverlaps(timed) {
-  const items = timed
-    .map((t) => ({ id: t.id, s: t.startMinutes, e: t.startMinutes + (t.durationMinutes || DEFAULT_DUR) }))
-    .sort((a, b) => a.s - b.s || a.e - b.e);
-  const out = new Map();
-  let cluster = [];
-  let clusterEnd = -1;
-  const flush = () => {
-    const count = cluster.reduce((m, c) => Math.max(m, c.col + 1), 1);
-    cluster.forEach((c) => out.set(c.id, { col: c.col, count }));
-    cluster = [];
-    clusterEnd = -1;
-  };
-  items.forEach((it) => {
-    if (cluster.length && it.s >= clusterEnd) flush();
-    const used = new Set(cluster.filter((c) => c.e > it.s).map((c) => c.col));
-    let col = 0;
-    while (used.has(col)) col += 1;
-    cluster.push({ id: it.id, e: it.e, col });
-    clusterEnd = Math.max(clusterEnd, it.e);
-  });
-  if (cluster.length) flush();
-  return out;
-}
 
 // A day-planner timeline that scrolls continuously across many dates (past and
 // future). Each day is a fixed-height section: an all-day strip over an hour
