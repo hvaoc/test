@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -7,13 +7,12 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
 
-const HEADER_H = 34;
-const WEEKDAY_H = 20;
-const WEEK_H = 88;
+const HEADER_H = 40;
+const WEEKDAY_H = 22;
 const WEEKS = 6;
-const MONTH_H = HEADER_H + WEEKDAY_H + WEEKS * WEEK_H;
+const FALLBACK_H = 640; // used until the viewport height is measured
 const PANEL_W = 236;
-const MAX_CHIPS = 3;
+const MAX_CHIPS = 5;
 const RANGE_BACK = 6;
 const RANGE_FWD = 12;
 const NUM_MONTHS = RANGE_BACK + RANGE_FWD + 1;
@@ -50,6 +49,12 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const [dragTask, setDragTask] = useState(null);
   const [dropKey, setDropKey] = useState(null); // day being hovered
   const [newTitle, setNewTitle] = useState('');
+  const [viewH, setViewH] = useState(0);
+
+  // Each month fills the full viewport height (like a single-month view); the
+  // list scrolls/pages between months.
+  const monthH = viewH > 0 ? viewH : FALLBACK_H;
+  const weekH = (monthH - HEADER_H - WEEKDAY_H) / WEEKS;
 
   const rootRef = useRef(null);
   const contentRef = useRef(null);
@@ -89,11 +94,11 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
     const content = c.content;
     if (!content || ax < content.x || ax > content.x + content.w) return null;
     const rel = ay - content.y;
-    if (rel < 0 || rel >= NUM_MONTHS * MONTH_H) return null;
-    const mi = Math.floor(rel / MONTH_H);
-    const within = rel - mi * MONTH_H - (HEADER_H + WEEKDAY_H);
+    if (rel < 0 || rel >= NUM_MONTHS * monthH) return null;
+    const mi = Math.floor(rel / monthH);
+    const within = rel - mi * monthH - (HEADER_H + WEEKDAY_H);
     if (within < 0) return null;
-    const row = Math.min(WEEKS - 1, Math.floor(within / WEEK_H));
+    const row = Math.min(WEEKS - 1, Math.floor(within / weekH));
     const col = Math.max(0, Math.min(6, Math.floor(((ax - content.x) / content.w) * 7)));
     const { y, m } = months[mi];
     const gridStart = new Date(y, m, 1 - new Date(y, m, 1).getDay());
@@ -122,12 +127,12 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, updateDrop, end };
   const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
-  const scrollToMonth = (i, animated) => scrollRef.current?.scrollTo({ y: i * MONTH_H, animated });
-  const onContentLayout = () => {
-    if (scrolledRef.current) return;
-    scrolledRef.current = true;
-    scrollToMonth(RANGE_BACK, false);
-  };
+  const scrollToMonth = (i, animated) => scrollRef.current?.scrollTo({ y: i * monthH, animated });
+  // Land on the current month once the viewport height is known (and keep it in
+  // view if the height changes, e.g. a resize).
+  useEffect(() => {
+    if (viewH > 0) scrollRef.current?.scrollTo({ y: RANGE_BACK * viewH, animated: false });
+  }, [viewH]);
   const submitAdd = () => {
     const title = newTitle.trim();
     if (!title) return;
@@ -153,13 +158,23 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
       </View>
 
       <View style={styles.row}>
-        <ScrollView ref={scrollRef} style={styles.scroll} showsVerticalScrollIndicator>
-          <View ref={contentRef} collapsable={false} onLayout={onContentLayout}>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          showsVerticalScrollIndicator
+          onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
+          snapToInterval={monthH}
+          decelerationRate="fast"
+          snapToAlignment="start"
+        >
+          <View ref={contentRef} collapsable={false}>
             {months.map(({ y, m }) => (
               <MonthGrid
                 key={`${y}-${m}`}
                 y={y}
                 m={m}
+                monthH={monthH}
+                weekH={weekH}
                 byDate={byDate}
                 todayK={todayK}
                 color={color}
@@ -215,7 +230,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   );
 }
 
-function MonthGrid({ y, m, byDate, todayK, color, dropKey, ctx, onOpen }) {
+function MonthGrid({ y, m, monthH, weekH, byDate, todayK, color, dropKey, ctx, onOpen }) {
   const first = new Date(y, m, 1);
   const gridStart = new Date(y, m, 1 - first.getDay());
   const weeks = [];
@@ -226,7 +241,7 @@ function MonthGrid({ y, m, byDate, todayK, color, dropKey, ctx, onOpen }) {
   }
   const sameYear = y === new Date().getFullYear();
   return (
-    <View style={{ height: MONTH_H }}>
+    <View style={{ height: monthH }}>
       <View style={[styles.monthHeader, { height: HEADER_H }]}>
         <Text style={styles.monthTitle}>{MONTHS[m]}{sameYear ? '' : ` ${y}`}</Text>
       </View>
@@ -236,7 +251,7 @@ function MonthGrid({ y, m, byDate, todayK, color, dropKey, ctx, onOpen }) {
         ))}
       </View>
       {weeks.map((days, wi) => (
-        <View key={wi} style={[styles.week, { height: WEEK_H }]}>
+        <View key={wi} style={[styles.week, { height: weekH }]}>
           {days.map((dt) => {
             const k = keyOf(dt.getFullYear(), dt.getMonth(), dt.getDate());
             const inMonth = dt.getMonth() === m;
