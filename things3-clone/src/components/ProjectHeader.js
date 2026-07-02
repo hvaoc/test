@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
@@ -41,7 +42,15 @@ export default function ProjectHeader({ project, navigation }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.titleRow}>
-        <ProgressPie progress={progress} color={project.color} size={22} />
+        {/* Optional emoji icon (used in the sidebar too); "#" when empty. */}
+        <TextInput
+          style={styles.emoji}
+          value={project.emoji || ''}
+          onChangeText={(v) => updateProject(project.id, { emoji: [...v].slice(0, 2).join('') })}
+          placeholder="#"
+          placeholderTextColor={colors.textTertiary}
+          maxLength={4}
+        />
         <TextInput
           style={styles.title}
           value={project.name}
@@ -49,6 +58,14 @@ export default function ProjectHeader({ project, navigation }) {
           placeholder="Project name"
           placeholderTextColor={colors.placeholder}
         />
+        {total > 0 && (
+          <View style={styles.progressWrap}>
+            <Text style={styles.progressCount}>
+              {done}/{total}
+            </Text>
+            <ProgressPie progress={progress} color={project.color} size={16} />
+          </View>
+        )}
       </View>
 
       <TextInput
@@ -77,7 +94,17 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  emoji: {
+    width: 34,
+    fontSize: 26,
+    textAlign: 'center',
+    color: colors.text,
+    padding: 0,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+  },
   title: { flex: 1, ...typography.largeTitle, fontSize: 28, color: colors.text, padding: 0 },
+  progressWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  progressCount: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
   notes: {
     ...typography.body,
     color: colors.textSecondary,

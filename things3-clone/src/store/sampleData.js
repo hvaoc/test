@@ -17,6 +17,7 @@ export function buildSampleData() {
   const projLaunch = {
     id: uid('proj'),
     name: 'Launch Website',
+    emoji: '🚀',
     notes: 'Ship the new marketing site before the conference.',
     areaId: areaWork.id,
     color: '#2b6fff',
@@ -29,6 +30,7 @@ export function buildSampleData() {
   const projTrip = {
     id: uid('proj'),
     name: 'Weekend Trip',
+    emoji: '🏔️',
     notes: 'Long weekend in the mountains.',
     areaId: areaPersonal.id,
     color: '#1f9d55',
@@ -157,7 +159,7 @@ export function buildSampleData() {
 
   // ---- DevConf 2026: one busy day, multiple rooms, parallel tracks -------
   const projConf = {
-    id: uid('proj'), name: 'DevConf 2026',
+    id: uid('proj'), name: 'DevConf 2026', emoji: '🎤',
     notes: 'One-day developer conference — multiple rooms, parallel tracks.',
     areaId: areaWork.id, color: '#e84393', when: null, deadline: t,
     status: STATUS.OPEN, createdAt: now, completedAt: null,

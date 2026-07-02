@@ -49,14 +49,9 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
     (p) => !p.areaId && p.status === 'open'
   );
 
-  const openProjectCount = (projectId) =>
-    selectProjectTasks(state.tasks, projectId).filter(isOpen).length;
-
-  const projectProgress = (projectId) => {
+  const projectStats = (projectId) => {
     const tasks = selectProjectTasks(state.tasks, projectId);
-    if (tasks.length === 0) return 0;
-    const done = tasks.filter((t) => !isOpen(t)).length;
-    return done / tasks.length;
+    return { done: tasks.filter((t) => !isOpen(t)).length, total: tasks.length };
   };
 
   return (
@@ -145,8 +140,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
                 >
                   <ProjectRow
                     project={p}
-                    count={openProjectCount(p.id)}
-                    progress={projectProgress(p.id)}
+                    stats={projectStats(p.id)}
                     selected={selectedKey === `project:${p.id}`}
                     onPress={() =>
                       navigation.navigate('List', {
@@ -172,8 +166,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
               >
                 <ProjectRow
                   project={p}
-                  count={openProjectCount(p.id)}
-                  progress={projectProgress(p.id)}
+                  stats={projectStats(p.id)}
                   selected={selectedKey === `project:${p.id}`}
                   onPress={() =>
                     navigation.navigate('List', { projectId: p.id, title: p.name })
@@ -210,7 +203,8 @@ function SidebarRow({ icon, color, title, badge, onPress, selected }) {
   );
 }
 
-function ProjectRow({ project, count, progress, onPress, selected }) {
+function ProjectRow({ project, stats, onPress, selected }) {
+  const { done, total } = stats;
   return (
     <Pressable
       style={({ pressed }) => [
@@ -220,11 +214,23 @@ function ProjectRow({ project, count, progress, onPress, selected }) {
       ]}
       onPress={onPress}
     >
-      <ProgressPie progress={progress} color={project.color} size={16} />
+      {/* Emoji as the icon if the project has one; otherwise a "#" glyph. */}
+      {project.emoji ? (
+        <Text style={styles.projEmoji}>{project.emoji}</Text>
+      ) : (
+        <Text style={[styles.projHash, { color: project.color }]}>#</Text>
+      )}
       <Text style={styles.rowTitle} numberOfLines={1}>
         {project.name}
       </Text>
-      {count > 0 && <Text style={styles.badgeMuted}>{count}</Text>}
+      {total > 0 && (
+        <View style={styles.projProgress}>
+          <Text style={styles.badgeMuted}>
+            {done}/{total}
+          </Text>
+          <ProgressPie progress={total ? done / total : 0} color={project.color} size={14} />
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -268,7 +274,11 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontVariant: ['tabular-nums'],
   },
-  badgeMuted: { ...typography.subhead, color: colors.textTertiary },
+  badgeMuted: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+  // Emoji / hash icon column, sized like the smart-list icon so rows line up.
+  projEmoji: { width: 26, textAlign: 'center', fontSize: 17 },
+  projHash: { width: 26, textAlign: 'center', ...typography.body, fontWeight: '700' },
+  projProgress: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   areaHeader: {
     flexDirection: 'row',
     alignItems: 'center',
