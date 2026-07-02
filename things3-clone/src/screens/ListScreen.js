@@ -276,36 +276,12 @@ export default function ListScreen({
         )
       : [];
 
-  // Board view: one column per section. The "(No Section)" column is always
-  // present (even when empty), then each heading in order. Cards are the section's
-  // shown tasks (open + completed per the setting), same as the list/date views.
-  const boardColumns =
-    project && projectView === 'board'
-      ? (() => {
-          const main = sections.find((s) => !s.heading);
-          const cols = [
-            {
-              key: 'main',
-              title: '(No Section)',
-              headingId: null,
-              tasks: main ? main.data : [],
-              count: main ? main.data.length : 0,
-            },
-          ];
-          sections
-            .filter((s) => s.heading)
-            .forEach((s) =>
-              cols.push({
-                key: s.key,
-                title: s.title,
-                headingId: s.heading.id,
-                tasks: s.data,
-                count: s.data.length,
-              })
-            );
-          return cols;
-        })()
-      : [];
+  // Board view: the project's shown top-level tasks + its headings; BoardView
+  // groups/sorts them itself and re-assigns fields on drag between columns.
+  const boardTasks = project && projectView === 'board' ? sections.flatMap((s) => s.data) : [];
+  const projectHeadings = project
+    ? state.headings.filter((h) => h.projectId === project.id).sort(byOrder)
+    : [];
 
   // --- Shared date-grouped list (project date view + Upcoming) --------------
   // Both render date buckets as collapsible dividers with draggable/reorderable
@@ -641,10 +617,15 @@ export default function ListScreen({
         {titleHeader}
         {project ? (
           projectView === 'board' ? (
-            // Board view: a Kanban column per section, cards reuse the task rows.
+            // Board view: Kanban with user-changeable grouping/sort and cards
+            // draggable between columns.
             <BoardView
-              columns={boardColumns}
+              tasks={boardTasks}
+              headings={projectHeadings}
+              project={project}
               onOpenTask={setOpenTaskId}
+              onUpdateTask={updateTask}
+              onReorder={reorderTasks}
               onAddTask={handleAddInSection}
               onAddSection={handleAddSectionAfter}
               onEditSection={setEditSectionId}
