@@ -5,17 +5,26 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, keyToDate, addDays, MONTHS_SHORT, WEEKDAYS } from '../utils/date';
+import { todayKey, keyToDate, addDays, WEEKDAYS, MONTHS_SHORT } from '../utils/date';
 
 const START_HOUR = 6;
 const END_HOUR = 23;
-const HOUR_H = 52;
-const SNAP = 15; // minutes
+const HOUR_H = 46;
+const SNAP = 15;
 const DEFAULT_DUR = 60;
 const PANEL_W = 236;
-const GRID_H = (END_HOUR - START_HOUR) * HOUR_H;
 
-// Concrete day a task sits on (its When date), or null if unscheduled/someday.
+const GRID_H = (END_HOUR - START_HOUR) * HOUR_H;
+const DHEADER_H = 34;
+const ALLDAY_H = 30;
+const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
+
+// Continuous range of days shown in the timeline (past .. future).
+const RANGE_PAST = 30;
+const RANGE_FUTURE = 60;
+const TODAY_INDEX = RANGE_PAST;
+const NUM_DAYS = RANGE_PAST + RANGE_FUTURE + 1;
+
 function whenKey(t) {
   if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return todayKey();
   if (!t.when || t.when === WHEN.SOMEDAY) return null;
@@ -25,42 +34,46 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmt = (mins) =>
   `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 
-// A day-planner timeline: timed tasks are blocks on an hour grid; untimed tasks
-// live in the "All day" strip and the right "Unscheduled" panel. Tasks can be
-// dragged (long-press) onto an hour to time-block them, moved between hours, or
-// dropped on the all-day/unscheduled zones to clear their time.
+// A day-planner timeline that scrolls continuously across many dates (past and
+// future). Each day is a fixed-height section: an all-day strip over an hour
+// grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
+// panel. Tasks drag (long-press) onto any day's hour to time-block them, onto a
+// day's all-day strip to clear the time, or back to the panel to unschedule.
 export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
-  const [day, setDay] = useState(todayKey());
   const [dragTask, setDragTask] = useState(null);
-  const [newTitle, setNewTitle] = useState('');
+  const [dropInfo, setDropInfo] = useState(null); // { dayKey, top }
   const [showPanel, setShowPanel] = useState(true);
+  const [newTitle, setNewTitle] = useState('');
 
   const rootRef = useRef(null);
-  const gridRef = useRef(null);
-  const allDayRef = useRef(null);
+  const contentRef = useRef(null);
   const panelRef = useRef(null);
+  const scrollRef = useRef(null);
   const rectsRef = useRef(null);
+  const scrolledRef = useRef(false);
 
   const ghostX = useSharedValue(0);
   const ghostY = useSharedValue(0);
   const rootX = useSharedValue(0);
   const rootY = useSharedValue(0);
-  // Grid rect (window coords, captured at drag start) + live drop placeholder.
-  const gTop = useSharedValue(0);
-  const gLeft = useSharedValue(0);
-  const gW = useSharedValue(0);
-  const gH = useSharedValue(0);
-  const dropTop = useSharedValue(0);
-  const dropH = useSharedValue(HOUR_H);
-  const dropVisible = useSharedValue(0);
 
-  const dayTasks = tasks.filter((t) => whenKey(t) === day);
-  const timed = dayTasks
-    .filter((t) => t.startMinutes != null)
-    .sort((a, b) => a.startMinutes - b.startMinutes);
-  const untimed = dayTasks.filter((t) => t.startMinutes == null);
+  const startKey = addDays(todayKey(), -RANGE_PAST);
+  const days = Array.from({ length: NUM_DAYS }, (_, i) => addDays(startKey, i));
+  const todayK = todayKey();
 
-  const measureAll = () => {
+  // Bucket tasks: by day for scheduled ones, split timed vs all-day; undated go
+  // to the panel.
+  const timedByDay = {};
+  const allDayByDay = {};
+  const unscheduled = [];
+  tasks.forEach((t) => {
+    const k = whenKey(t);
+    if (!k) { unscheduled.push(t); return; }
+    if (t.startMinutes != null) (timedByDay[k] = timedByDay[k] || []).push(t);
+    else (allDayByDay[k] = allDayByDay[k] || []).push(t);
+  });
+
+  const measureOnly = () => {
     const grab = (ref, key, store) =>
       new Promise((res) => {
         const n = ref.current;
@@ -68,217 +81,128 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
         else res();
       });
     const store = {};
-    Promise.all([
-      grab(rootRef, 'root', store),
-      grab(gridRef, 'grid', store),
-      grab(allDayRef, 'allDay', store),
-      grab(panelRef, 'panel', store),
-    ]).then(() => {
+    Promise.all([grab(contentRef, 'content', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
       rectsRef.current = store;
-      if (store.root) {
-        rootX.value = store.root.x;
-        rootY.value = store.root.y;
-      }
-      if (store.grid) {
-        gTop.value = store.grid.y;
-        gLeft.value = store.grid.x;
-        gW.value = store.grid.w;
-        gH.value = store.grid.h;
-      }
+      if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
   };
 
-  // Measure drop zones as soon as a press is held (before any move is known).
-  const measureOnly = () => {
-    dropVisible.value = 0;
-    measureAll();
-  };
-  // Show the ghost only once a real move begins — so a plain tap never drags.
-  const begin = (task) => {
-    setDragTask(task);
-    dropH.value = ((task.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H;
-  };
-  const cancelDrag = () => {
-    setDragTask(null);
-    dropVisible.value = 0;
+  // Resolve a pointer to a drop: which day, and grid time vs all-day vs panel.
+  const computeDrop = (ax, ay) => {
+    const c = rectsRef.current || {};
+    if (c.panel) {
+      const p = c.panel;
+      if (ax >= p.x && ax <= p.x + p.w && ay >= p.y && ay <= p.y + p.h) return { mode: 'panel' };
+    }
+    const content = c.content;
+    if (!content || ax < content.x || ax > content.x + content.w) return null;
+    const rel = ay - content.y;
+    if (rel < 0 || rel >= NUM_DAYS * DAY_H) return null;
+    const di = Math.floor(rel / DAY_H);
+    const dayKey = days[di];
+    const within = rel - di * DAY_H;
+    if (within < DHEADER_H + ALLDAY_H) return { mode: 'allday', dayKey };
+    const gy = within - (DHEADER_H + ALLDAY_H);
+    let mins = START_HOUR * 60 + Math.round((gy / HOUR_H) * 60 / SNAP) * SNAP;
+    mins = clamp(mins, START_HOUR * 60, END_HOUR * 60 - SNAP);
+    return { mode: 'grid', dayKey, mins, top: ((mins - START_HOUR * 60) / 60) * HOUR_H };
   };
 
+  const begin = (task) => setDragTask(task);
+  const cancelDrag = () => { setDragTask(null); setDropInfo(null); };
+  const updateDrop = (ax, ay) => {
+    const d = computeDrop(ax, ay);
+    if (d && d.mode === 'grid') {
+      setDropInfo((prev) => (prev && prev.dayKey === d.dayKey && prev.top === d.top ? prev : { dayKey: d.dayKey, top: d.top }));
+    } else {
+      setDropInfo((prev) => (prev ? null : prev));
+    }
+  };
   const end = (taskId, ax, ay) => {
     setDragTask(null);
-    const r = rectsRef.current;
+    setDropInfo(null);
+    const d = computeDrop(ax, ay);
     const task = tasks.find((t) => t.id === taskId);
-    if (!r || !task) return;
-    const inside = (rect) => rect && ax >= rect.x && ax <= rect.x + rect.w && ay >= rect.y && ay <= rect.y + rect.h;
-    if (inside(r.grid)) {
-      const rel = ay - r.grid.y;
-      const dur = task.durationMinutes || DEFAULT_DUR;
-      let mins = START_HOUR * 60 + Math.round((rel / HOUR_H) * 60 / SNAP) * SNAP;
-      mins = clamp(mins, START_HOUR * 60, END_HOUR * 60 - dur);
-      onUpdateTask(taskId, { startMinutes: mins, durationMinutes: dur, when: day });
-    } else if (inside(r.allDay) || inside(r.panel)) {
-      onUpdateTask(taskId, { startMinutes: null, when: day });
+    if (!d || !task) return;
+    if (d.mode === 'grid') {
+      onUpdateTask(taskId, { when: d.dayKey, startMinutes: d.mins, durationMinutes: task.durationMinutes || DEFAULT_DUR });
+    } else if (d.mode === 'allday') {
+      onUpdateTask(taskId, { when: d.dayKey, startMinutes: null });
+    } else if (d.mode === 'panel') {
+      onUpdateTask(taskId, { when: null, startMinutes: null });
     }
   };
 
-  const dragCtx = {
-    ghostX,
-    ghostY,
-    rootX,
-    rootY,
-    gTop,
-    gLeft,
-    gW,
-    gH,
-    dropTop,
-    dropVisible,
-    measureOnly,
-    begin,
-    end,
-    cancelDrag,
-  };
-
-  const isToday = day === todayKey();
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const nowTop = ((nowMins - START_HOUR * 60) / 60) * HOUR_H;
-  const showNow = isToday && nowMins >= START_HOUR * 60 && nowMins <= END_HOUR * 60;
-
-  const d = keyToDate(day);
-  const dayLabel = `${WEEKDAYS[d.getDay()]}, ${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
-
+  const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, updateDrop, end };
   const ghostStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }],
   }));
-  const placeholderStyle = useAnimatedStyle(() => ({
-    opacity: dropVisible.value,
-    top: dropTop.value,
-    height: dropH.value,
-  }));
+
+  const scrollToToday = () => scrollRef.current?.scrollTo({ y: TODAY_INDEX * DAY_H, animated: true });
+  const onContentLayout = () => {
+    if (scrolledRef.current) return;
+    scrolledRef.current = true;
+    scrollRef.current?.scrollTo({ y: TODAY_INDEX * DAY_H, animated: false });
+  };
 
   const submitAdd = () => {
     const title = newTitle.trim();
     if (!title) return;
-    onAddTask({ title, when: day });
+    onAddTask({ title });
     setNewTitle('');
   };
 
+  const dropH = ((dragTask?.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H;
+  const color = project?.color || colors.accent;
+
   return (
-    <View ref={rootRef} style={styles.root} collapsable={false}>
-      {/* Day navigation */}
-      <View style={styles.dayNav}>
-        <Text style={styles.dayLabel}>{dayLabel}</Text>
-        <View style={styles.dayNavBtns}>
+    <View ref={rootRef} collapsable={false} style={styles.root}>
+      <View style={styles.toolbar}>
+        <Text style={styles.title}>Timeline</Text>
+        <View style={styles.toolBtns}>
           <Pressable
             onPress={() => setShowPanel((v) => !v)}
             style={[styles.planBtn, showPanel && styles.planBtnActive]}
           >
-            <Ionicons
-              name="albums-outline"
-              size={15}
-              color={showPanel ? colors.accent : colors.textSecondary}
-            />
-            <Text style={[styles.planText, showPanel && { color: colors.accent }]}>
-              Plan {untimed.length}
-            </Text>
+            <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
+            <Text style={[styles.planText, showPanel && { color: colors.accent }]}>Plan {unscheduled.length}</Text>
           </Pressable>
-          <Pressable onPress={() => setDay(todayKey())} style={styles.todayBtn}>
+          <Pressable onPress={scrollToToday} style={styles.todayBtn}>
             <Text style={styles.todayText}>Today</Text>
-          </Pressable>
-          <Pressable onPress={() => setDay(addDays(day, -1))} hitSlop={8} style={styles.navBtn}>
-            <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
-          </Pressable>
-          <Pressable onPress={() => setDay(addDays(day, 1))} hitSlop={8} style={styles.navBtn}>
-            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
           </Pressable>
         </View>
       </View>
 
       <View style={styles.row}>
-        {/* Left: all-day strip + hour grid (only the grid scrolls) */}
-        <View style={styles.leftCol}>
-          <View ref={allDayRef} collapsable={false} style={styles.allDay}>
-            <Text style={styles.allDayLabel}>All day</Text>
-            <View style={styles.allDayItems}>
-              {untimed.length === 0 ? (
-                <Text style={styles.allDayHint}>Drop here for all-day</Text>
-              ) : (
-                untimed.map((t) => (
-                  <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.allDayChipWrap}>
-                    <View style={[styles.allDayChip, { borderColor: project?.color || colors.accent }]}>
-                      <Text style={styles.allDayChipText} numberOfLines={1}>
-                        {t.title || 'New To-Do'}
-                      </Text>
-                    </View>
-                  </Draggable>
-                ))
-              )}
-            </View>
-          </View>
-
-          <ScrollView
-            style={styles.gridScroll}
-            contentContainerStyle={{ height: GRID_H }}
-            showsVerticalScrollIndicator={false}
-          >
-          <View ref={gridRef} collapsable={false} style={[styles.grid, { height: GRID_H }]}>
-            {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
-              <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
-                <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
-                <View style={styles.hourLine} />
-              </View>
+        <ScrollView ref={scrollRef} style={styles.scroll} showsVerticalScrollIndicator>
+          <View ref={contentRef} collapsable={false} onLayout={onContentLayout}>
+            {days.map((k) => (
+              <DaySection
+                key={k}
+                dayKey={k}
+                isToday={k === todayK}
+                timed={timedByDay[k] || []}
+                allDay={allDayByDay[k] || []}
+                color={color}
+                ctx={dragCtx}
+                onOpen={onOpenTask}
+                placeholder={dropInfo && dropInfo.dayKey === k ? { top: dropInfo.top, h: dropH } : null}
+              />
             ))}
-
-            {showNow && (
-              <View style={[styles.nowLine, { top: nowTop }]} pointerEvents="none">
-                <View style={styles.nowDot} />
-              </View>
-            )}
-
-            <Animated.View pointerEvents="none" style={[styles.dropPlaceholder, placeholderStyle]} />
-
-            {timed.map((t) => {
-              const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
-              const height = Math.max(22, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 3);
-              const done = t.status !== STATUS.OPEN;
-              const color = project?.color || colors.accent;
-              return (
-                <Draggable
-                  key={t.id}
-                  task={t}
-                  ctx={dragCtx}
-                  onOpen={onOpenTask}
-                  style={[styles.block, { top, height }]}
-                >
-                  <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
-                    <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={1}>
-                      {t.title || 'New To-Do'}
-                    </Text>
-                    <Text style={styles.blockTime}>
-                      {fmt(t.startMinutes)}–{fmt(t.startMinutes + (t.durationMinutes || DEFAULT_DUR))}
-                    </Text>
-                  </View>
-                </Draggable>
-              );
-            })}
           </View>
-          </ScrollView>
-        </View>
+        </ScrollView>
 
-        {/* Right: unscheduled panel (toggled by the Plan button) */}
         {showPanel && (
           <View ref={panelRef} collapsable={false} style={styles.panel}>
             <Text style={styles.panelTitle}>
-              Unscheduled <Text style={styles.panelCount}>{untimed.length}</Text>
+              Unscheduled <Text style={styles.panelCount}>{unscheduled.length}</Text>
             </Text>
             <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
-              {untimed.map((t) => (
+              {unscheduled.map((t) => (
                 <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
                   <View style={styles.panelItem}>
-                    <View style={[styles.panelDot, { borderColor: project?.color || colors.accent }]} />
-                    <Text
-                      style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]}
-                      numberOfLines={2}
-                    >
+                    <View style={[styles.panelDot, { borderColor: color }]} />
+                    <Text style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={2}>
                       {t.title || 'New To-Do'}
                     </Text>
                   </View>
@@ -304,32 +228,83 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
       {dragTask && (
         <Animated.View pointerEvents="none" style={[styles.ghost, ghostStyle]}>
-          <View style={[styles.ghostDot, { borderColor: project?.color || colors.accent }]} />
-          <Text style={styles.ghostText} numberOfLines={1}>
-            {dragTask.title || 'New To-Do'}
-          </Text>
+          <View style={[styles.ghostDot, { borderColor: color }]} />
+          <Text style={styles.ghostText} numberOfLines={1}>{dragTask.title || 'New To-Do'}</Text>
         </Animated.View>
       )}
     </View>
   );
 }
 
-// Long-press to drag; a plain tap still opens the task. The ghost (rendered at
-// the planner root) follows the pointer; the original stays put and the store
-// update on drop re-places it.
+// One day: fixed-height header + all-day strip + hour grid with its blocks.
+function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder }) {
+  const d = keyToDate(dayKey);
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const showNow = isToday && nowMins >= START_HOUR * 60 && nowMins <= END_HOUR * 60;
+  const nowTop = ((nowMins - START_HOUR * 60) / 60) * HOUR_H;
+
+  return (
+    <View style={{ height: DAY_H }}>
+      <View style={[styles.dayHeader, { height: DHEADER_H }, isToday && styles.dayHeaderToday]}>
+        <Text style={[styles.dayHeaderText, isToday && styles.dayHeaderTextToday]}>
+          {WEEKDAYS[d.getDay()]}, {MONTHS_SHORT[d.getMonth()]} {d.getDate()}
+        </Text>
+      </View>
+
+      <View style={[styles.allDay, { height: ALLDAY_H }]}>
+        {allDay.slice(0, 8).map((t) => (
+          <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={styles.allDayChipWrap}>
+            <View style={[styles.allDayChip, { borderColor: color }]}>
+              <Text style={styles.allDayChipText} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
+            </View>
+          </Draggable>
+        ))}
+        {allDay.length > 8 && <Text style={styles.moreText}>+{allDay.length - 8}</Text>}
+      </View>
+
+      <View style={[styles.grid, { height: GRID_H }]}>
+        {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
+          <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
+            <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
+            <View style={styles.hourLine} />
+          </View>
+        ))}
+        {showNow && (
+          <View style={[styles.nowLine, { top: nowTop }]} pointerEvents="none">
+            <View style={styles.nowDot} />
+          </View>
+        )}
+        {placeholder && (
+          <View style={[styles.dropPlaceholder, { top: placeholder.top, height: placeholder.h }]} pointerEvents="none" />
+        )}
+        {timed.map((t) => {
+          const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
+          const height = Math.max(20, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 3);
+          const done = t.status !== STATUS.OPEN;
+          return (
+            <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={[styles.block, { top, height }]}>
+              <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
+                <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
+                <Text style={styles.blockTime}>
+                  {fmt(t.startMinutes)}–{fmt(t.startMinutes + (t.durationMinutes || DEFAULT_DUR))}
+                </Text>
+              </View>
+            </Draggable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// Long-press to drag; a plain tap opens. Only a real move starts a drag.
 function Draggable({ task, ctx, onOpen, style, children }) {
-  // Only a real move counts as a drag — a plain tap (even a long-held one) opens
-  // the task. `dragged` swallows the trailing press that follows a real drag.
   const dragged = React.useRef(false);
   const moved = useSharedValue(false);
-  const markDragged = () => {
-    dragged.current = true;
-  };
+  const markDragged = () => { dragged.current = true; };
   const handlePress = () => {
-    if (dragged.current) {
-      dragged.current = false;
-      return;
-    }
+    if (dragged.current) { dragged.current = false; return; }
     onOpen(task.id);
   };
   const pan = Gesture.Pan()
@@ -348,199 +323,124 @@ function Draggable({ task, ctx, onOpen, style, children }) {
       if (!moved.value) return;
       ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 18;
       ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 14;
-      // Live drop placeholder: snap the pointer to a 15-min slot on the grid.
-      const inX = e.absoluteX >= ctx.gLeft.value && e.absoluteX <= ctx.gLeft.value + ctx.gW.value;
-      const inY = e.absoluteY >= ctx.gTop.value && e.absoluteY <= ctx.gTop.value + ctx.gH.value;
-      if (inX && inY) {
-        const rel = e.absoluteY - ctx.gTop.value;
-        let mins = START_HOUR * 60 + Math.round((rel / HOUR_H) * 60 / SNAP) * SNAP;
-        mins = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - SNAP, mins));
-        ctx.dropTop.value = ((mins - START_HOUR * 60) / 60) * HOUR_H;
-        ctx.dropVisible.value = 1;
-      } else {
-        ctx.dropVisible.value = 0;
-      }
+      runOnJS(ctx.updateDrop)(e.absoluteX, e.absoluteY);
     })
     .onEnd((e) => {
-      ctx.dropVisible.value = 0;
       if (moved.value) runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY);
       else runOnJS(ctx.cancelDrag)();
-    })
-    .onFinalize(() => {
-      ctx.dropVisible.value = 0;
     });
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={style}>
-        <Pressable onPress={handlePress} style={styles.fill}>
-          {children}
-        </Pressable>
+        <Pressable onPress={handlePress} style={styles.fill}>{children}</Pressable>
       </Animated.View>
     </GestureDetector>
   );
 }
 
-// A soft tinted fill from the project color for a block background.
 function tint(hex) {
-  const h = hex.replace('#', '');
+  const h = (hex || '').replace('#', '');
   if (h.length !== 6) return colors.accentSoft;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, 0.14)`;
+  return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, 0.14)`;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, paddingLeft: spacing.lg, paddingRight: spacing.lg },
+  root: { flex: 1, paddingLeft: spacing.lg },
   fill: { flex: 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  dayNav: {
+  toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
+    paddingRight: spacing.lg,
     paddingTop: spacing.xs,
+    marginBottom: spacing.sm,
   },
+  title: { ...typography.heading, color: colors.text },
+  toolBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   planBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separatorStrong,
-    marginRight: spacing.sm,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   planBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   planText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
-  dayLabel: { ...typography.heading, color: colors.text },
-  dayNavBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   todayBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separatorStrong,
-    marginRight: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   todayText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
-  navBtn: { padding: 2, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  row: { flex: 1, flexDirection: 'row', gap: spacing.lg },
-  leftCol: { flex: 1 },
-  gridScroll: { flex: 1 },
+  row: { flex: 1, flexDirection: 'row' },
+  scroll: { flex: 1 },
+  dayHeader: {
+    justifyContent: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separatorStrong,
+    backgroundColor: colors.groupedBackground,
+    paddingLeft: 4,
+  },
+  dayHeaderToday: { backgroundColor: colors.accentSoft },
+  dayHeaderText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
+  dayHeaderTextToday: { color: colors.accent },
   allDay: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    minHeight: 34,
-    paddingVertical: 4,
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 48,
+    paddingRight: 4,
+    overflow: 'hidden',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.separator,
-    marginBottom: spacing.xs,
   },
-  allDayLabel: { ...typography.caption, color: colors.textTertiary, width: 44, paddingTop: 4 },
-  allDayItems: { flex: 1, gap: 3 },
-  allDayHint: { ...typography.caption, color: colors.separatorStrong, paddingTop: 4, fontStyle: 'italic' },
-  allDayChipWrap: { width: '100%' },
+  allDayChipWrap: { maxWidth: 180 },
   allDayChip: {
-    borderLeftWidth: 3,
-    borderRadius: 4,
-    backgroundColor: colors.groupedBackground,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    borderLeftWidth: 3, borderRadius: 4, backgroundColor: colors.groupedBackground,
+    paddingHorizontal: spacing.sm, paddingVertical: 3,
   },
   allDayChipText: { ...typography.caption, color: colors.text },
-  grid: { position: 'relative', marginTop: spacing.xs },
+  moreText: { ...typography.caption, color: colors.textTertiary },
+  grid: { position: 'relative' },
   hourRow: { position: 'absolute', left: 0, right: 0, height: HOUR_H, flexDirection: 'row', alignItems: 'flex-start' },
   hourLabel: { ...typography.caption, color: colors.textTertiary, width: 44, marginTop: -6, fontVariant: ['tabular-nums'] },
-  hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginTop: 0 },
+  hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
   nowLine: { position: 'absolute', left: 44, right: 0, height: 2, backgroundColor: colors.deadline },
-  nowDot: {
-    position: 'absolute',
-    left: -4,
-    top: -3,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.deadline,
-  },
+  nowDot: { position: 'absolute', left: -4, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
   dropPlaceholder: {
-    position: 'absolute',
-    left: 50,
-    right: 4,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.sm,
-    opacity: 0,
+    position: 'absolute', left: 50, right: 4,
+    borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.accent,
+    backgroundColor: colors.accentSoft, borderRadius: radius.sm,
   },
   block: { position: 'absolute', left: 50, right: 4 },
   blockInner: {
-    flex: 1,
-    borderLeftWidth: 3,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    overflow: 'hidden',
+    flex: 1, borderLeftWidth: 3, borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm, paddingVertical: 3, overflow: 'hidden',
   },
   blockTitle: { ...typography.caption, color: colors.text, fontWeight: '600' },
   blockTime: { ...typography.caption, color: colors.textSecondary, fontSize: 10 },
   done: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   panel: {
-    width: PANEL_W,
-    backgroundColor: colors.groupedBackground,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: colors.separator,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    // Bleed to the pane's right edge so it reads as a sidebar like the app's.
-    marginRight: -spacing.lg,
+    width: PANEL_W, backgroundColor: colors.groupedBackground,
+    borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator,
+    paddingHorizontal: spacing.md, paddingTop: spacing.sm, marginRight: -spacing.lg,
   },
   panelScroll: { flex: 1 },
   panelTitle: { ...typography.heading, color: colors.text, marginBottom: spacing.xs },
   panelCount: { ...typography.subhead, color: colors.textTertiary },
   panelItemWrap: {},
   panelItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.separator,
+    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator,
   },
   panelDot: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.5, marginTop: 1 },
   panelItemText: { flex: 1, ...typography.subhead, color: colors.text },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm },
-  addInput: {
-    flex: 1,
-    ...typography.subhead,
-    color: colors.text,
-    padding: 0,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
-  },
+  addInput: { flex: 1, ...typography.subhead, color: colors.text, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
   ghost: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 1000,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    maxWidth: 240,
-    paddingVertical: 6,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.sm,
-    backgroundColor: colors.background,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separatorStrong,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    position: 'absolute', top: 0, left: 0, zIndex: 1000, flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    maxWidth: 240, paddingVertical: 6, paddingHorizontal: spacing.md, borderRadius: radius.sm,
+    backgroundColor: colors.background, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong,
+    shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
   ghostDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
   ghostText: { ...typography.subhead, color: colors.text, flexShrink: 1 },
