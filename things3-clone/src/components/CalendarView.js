@@ -7,6 +7,7 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
 import DayPlanner from './DayPlanner';
+import WeekView from './WeekView';
 
 // The calendar day a task belongs on — its When date. Today/This Evening fold
 // into today; Someday/undated tasks aren't placed on the grid.
@@ -100,6 +101,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
       <View style={styles.modeRow}>
         {[
           { key: 'month', label: 'Month' },
+          { key: 'week', label: 'Week' },
           { key: 'day', label: 'Day' },
         ].map((m) => (
           <Pressable
@@ -121,6 +123,8 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
           onAddTask={onAddTask}
           fillHeight={fillHeight}
         />
+      ) : mode === 'week' ? (
+        <WeekView tasks={tasks} project={project} onOpenTask={onOpenTask} />
       ) : (
        <>
       <View style={styles.header}>
