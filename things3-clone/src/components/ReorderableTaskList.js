@@ -30,6 +30,8 @@ import { colors, spacing, typography, radius } from '../theme';
 const FALLBACK_H = 48;
 // A short, non-bouncy ease — subtle settle, no spring overshoot.
 const EASE = { duration: 140 };
+// Max preview shift when dragging a row right to nest it under the row above.
+const NEST_SHIFT = 26;
 
 // While a drag is in progress on web, suppress native text selection so the
 // pointer sweeping across rows (and the sidebar) doesn't select text.
@@ -629,6 +631,8 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
     .onStart((e) => {
       activeId.value = itemKey;
       dragging.value = true;
+      ctx.dragKey.value = itemKey;
+      ctx.dragDX.value = 0;
       startTop.value = topForIndex(orderedKeys(positions.value), heights.value, positions.value[itemKey]);
       startPositions.value = positions.value;
       if (measureTargets) runOnJS(measureTargets)();
@@ -646,6 +650,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
         ghostX.value = e.absoluteX;
         ghostY.value = e.absoluteY;
       }
+      ctx.dragDX.value = e.translationX;
       // Cross-pane hit-test: find the hovered drop target (for highlight/drop)
       // and whether the pointer is anywhere over the sidebar (to freeze).
       let hit = null;
@@ -734,6 +739,8 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
     // While hovering the sidebar the list is frozen; show the dragged row in
     // its slot (the ghost carries it) so there's no gap.
     const onSidebar = !!(overSidebar && overSidebar.value);
+    // Rightward drag previews nesting: shift the active row by up to one indent.
+    const nestShift = isActive && !onSidebar ? Math.max(0, Math.min(NEST_SHIFT, ctx.dragDX.value)) : 0;
     return {
       position: 'absolute',
       left: 0,
@@ -743,7 +750,10 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
       // When a ghost is present it stands in for the dragged row, so hide the
       // original (it's clipped to the pane anyway). Native/phone keeps the row.
       opacity: hasGhost && isActive && !onSidebar ? 0 : 1,
-      transform: [{ scale: withTiming(isActive && !onSidebar ? 1.02 : 1, EASE) }],
+      transform: [
+        { translateX: nestShift },
+        { scale: withTiming(isActive && !onSidebar ? 1.02 : 1, EASE) },
+      ],
     };
   });
 
@@ -894,6 +904,10 @@ export default function ReorderableTaskList({
     // True only while a drag is in progress — reflow animates during a drag,
     // but collapse/expand/add/remove snap into place with no animation.
     dragging: useSharedValue(false),
+    // The active row's horizontal drag distance + key, read at commit to decide
+    // nesting: dragging a row rightward drops it as a child of the row above.
+    dragDX: useSharedValue(0),
+    dragKey: useSharedValue(null),
     showHandle,
   };
   const { positions, heights, kinds } = ctx;
@@ -917,7 +931,7 @@ export default function ReorderableTaskList({
     const map = positions.value;
     const arr = new Array(items.length);
     for (const key in map) arr[map[key]] = key;
-    onCommitKeys(arr.filter(Boolean));
+    onCommitKeys(arr.filter(Boolean), { draggedKey: ctx.dragKey.value, dx: ctx.dragDX.value });
   };
 
   const containerStyle = useAnimatedStyle(() => ({

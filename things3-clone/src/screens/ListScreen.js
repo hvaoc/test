@@ -464,7 +464,9 @@ export default function ListScreen({
   const depthByKey = new Map(
     projectItems.filter((i) => i.kind === 'task').map((i) => [i.key, i.depth || 0])
   );
-  const commitProjectLayout = (keys) => {
+  const NEST_THRESHOLD = 18; // drag this far right to nest under the row above
+  const commitProjectLayout = (keys, meta = {}) => {
+    const { draggedKey, dx = 0 } = meta;
     let currentHeading = null;
     const tasks = [];
     const headings = [];
@@ -477,7 +479,17 @@ export default function ListScreen({
         stack.length = 0;
         return;
       }
-      const depth = depthByKey.get(k) || 0;
+      // stack.length-1 is the depth of the task immediately above this one.
+      const aboveDepth = stack.length - 1;
+      let depth = depthByKey.get(k) || 0;
+      if (k === draggedKey) {
+        // Dropped at the top of a section → top level. Dragged rightward onto the
+        // row above → become its child. Otherwise keep its level (capped so it
+        // can't skip past a valid parent).
+        if (aboveDepth < 0) depth = 0;
+        else if (dx > NEST_THRESHOLD) depth = aboveDepth + 1;
+        else depth = Math.min(depth, aboveDepth + 1);
+      }
       const parentId = depth > 0 ? stack[depth - 1] || null : null;
       tasks.push({ id: k, parentId, headingId: parentId ? null : currentHeading });
       stack[depth] = k;
