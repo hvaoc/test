@@ -373,33 +373,15 @@ export function TasksProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const saveTimer = useRef(null);
 
-  // Hydrate from disk (or seed sample data) on mount. Re-seed when there's no
-  // saved data, or when it predates the current sample-data version (so an
-  // updated seed replaces stale local data instead of being ignored).
+  // Testing mode: always start from the rich sample data so interactive-feature
+  // tests are reproducible. Edits live in memory for the session (and can be
+  // reset any time from Settings), but a reload starts fresh from the seed.
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const persisted = await loadState();
-      if (!mounted) return;
-      const seed = buildSampleData();
-      const useSaved = persisted && persisted.version === seed.version;
-      dispatch({ type: 'HYDRATE', payload: useSaved ? persisted : seed });
-    })();
-    return () => {
-      mounted = false;
-    };
+    dispatch({ type: 'HYDRATE', payload: buildSampleData() });
   }, []);
 
-  // Debounced persistence whenever the data changes.
-  useEffect(() => {
-    if (!state.loaded) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const { loaded, ...persistable } = state;
-      saveState(persistable);
-    }, 400);
-    return () => saveTimer.current && clearTimeout(saveTimer.current);
-  }, [state]);
+  // Persistence is intentionally disabled in this testing build so every reload
+  // starts from the same seed. (Re-enable by saving `state` here to restore it.)
 
   // Stable action creators.
   const actions = useMemo(
