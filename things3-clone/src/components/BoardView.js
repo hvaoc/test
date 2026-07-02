@@ -104,6 +104,7 @@ export default function BoardView({
   const [sort, setSort] = useState('manual');
   const [showDisplay, setShowDisplay] = useState(false);
   const [dragTask, setDragTask] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null); // { colKey, index }
 
   const rootRef = useRef(null);
   const colRefs = useRef(new Map());
@@ -141,34 +142,57 @@ export default function BoardView({
     });
   };
   const beginDrag = (task) => setDragTask(task);
-  const cancelDrag = () => setDragTask(null);
-  const endDrag = (taskId, ax, ay) => {
+  const cancelDrag = () => {
     setDragTask(null);
+    setDropTarget(null);
+  };
+  // Which column + insertion index (among that column's displayed cards) the
+  // pointer is over. Shared by the live placeholder and the drop commit.
+  const computeDrop = (ax, ay) => {
     const { cols, cards } = rectsRef.current || {};
-    if (!cols) return;
-    // Target column by pointer x.
-    let targetKey = null;
+    if (!cols) return null;
+    let colKey = null;
     for (const key in cols) {
       const r = cols[key];
-      if (ax >= r.x && ax <= r.x + r.w) { targetKey = key; break; }
+      if (ax >= r.x && ax <= r.x + r.w) { colKey = key; break; }
     }
-    const col = columns.find((c) => c.key === targetKey);
-    if (!col) return;
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    // Re-assign the grouped field if it changed.
-    if (!col.match(task)) onUpdateTask(taskId, col.field);
-    // Reorder within the target column by pointer y.
-    const ids = col.tasks.map((t) => t.id).filter((id) => id !== taskId);
-    let idx = ids.length;
+    const col = columns.find((c) => c.key === colKey);
+    if (!col) return null;
+    const ids = col.tasks.map((t) => t.id);
+    let index = ids.length;
     for (let i = 0; i < ids.length; i++) {
       const cr = cards[ids[i]];
-      if (cr && ay < cr.y + cr.h / 2) { idx = i; break; }
+      if (cr && ay < cr.y + cr.h / 2) { index = i; break; }
     }
-    ids.splice(idx, 0, taskId);
-    if (onReorder) onReorder(ids);
+    return { colKey, index };
   };
-  const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, beginDrag, cancelDrag, endDrag };
+  const updateDrop = (ax, ay) => {
+    const dt = computeDrop(ax, ay);
+    setDropTarget((prev) => {
+      if (dt === prev) return prev;
+      if (dt && prev && dt.colKey === prev.colKey && dt.index === prev.index) return prev;
+      return dt;
+    });
+  };
+  const endDrag = (taskId, ax, ay) => {
+    setDragTask(null);
+    setDropTarget(null);
+    const dt = computeDrop(ax, ay);
+    if (!dt) return;
+    const col = columns.find((c) => c.key === dt.colKey);
+    const task = tasks.find((t) => t.id === taskId);
+    if (!col || !task) return;
+    if (!col.match(task)) onUpdateTask(taskId, col.field);
+    // Insert at the placeholder index, adjusting for the dragged card's own slot.
+    const ids = col.tasks.map((t) => t.id);
+    const from = ids.indexOf(taskId);
+    let insert = dt.index;
+    if (from >= 0 && from < insert) insert -= 1;
+    const next = ids.filter((id) => id !== taskId);
+    next.splice(insert, 0, taskId);
+    if (onReorder) onReorder(next);
+  };
+  const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, beginDrag, cancelDrag, updateDrop, endDrag };
   const ghostStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }],
   }));
@@ -211,15 +235,23 @@ export default function BoardView({
               <Text style={styles.colCount}>{col.tasks.length}</Text>
             </Pressable>
 
-            {col.tasks.map((task) => (
-              <Card
-                key={task.id}
-                task={task}
-                ctx={dragCtx}
-                onOpen={onOpenTask}
-                cardRefs={cardRefs}
-              />
+            {col.tasks.map((task, i) => (
+              <React.Fragment key={task.id}>
+                {dropTarget && dropTarget.colKey === col.key && dropTarget.index === i && (
+                  <View style={styles.placeholder} />
+                )}
+                <Card
+                  task={task}
+                  ctx={dragCtx}
+                  onOpen={onOpenTask}
+                  cardRefs={cardRefs}
+                  dimmed={dragTask?.id === task.id}
+                />
+              </React.Fragment>
             ))}
+            {dropTarget && dropTarget.colKey === col.key && dropTarget.index >= col.tasks.length && (
+              <View style={styles.placeholder} />
+            )}
 
             <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
           </View>
@@ -270,7 +302,7 @@ export default function BoardView({
 }
 
 // A board card: opens on tap, drags (long-press + move) to another column.
-function Card({ task, ctx, onOpen, cardRefs }) {
+function Card({ task, ctx, onOpen, cardRefs, dimmed }) {
   const dragged = React.useRef(false);
   const moved = useSharedValue(false);
   const markDragged = () => {
@@ -299,6 +331,7 @@ function Card({ task, ctx, onOpen, cardRefs }) {
       if (!moved.value) return;
       ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 18;
       ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 16;
+      runOnJS(ctx.updateDrop)(e.absoluteX, e.absoluteY);
     })
     .onEnd((e) => {
       if (moved.value) runOnJS(ctx.endDrag)(task.id, e.absoluteX, e.absoluteY);
@@ -306,7 +339,7 @@ function Card({ task, ctx, onOpen, cardRefs }) {
     });
   return (
     <GestureDetector gesture={pan}>
-      <Animated.View style={styles.card}>
+      <Animated.View style={[styles.card, dimmed && styles.cardDimmed]}>
         <View
           ref={(n) => (n ? cardRefs.current.set(task.id, n) : cardRefs.current.delete(task.id))}
           collapsable={false}
@@ -443,6 +476,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
+  },
+  cardDimmed: { opacity: 0.35 },
+  placeholder: {
+    height: 44,
+    marginBottom: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
   },
   cardPress: { ...(Platform.OS === 'web' ? { cursor: 'grab' } : null) },
   addBtn: {
