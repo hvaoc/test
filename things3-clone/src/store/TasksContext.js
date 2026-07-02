@@ -46,6 +46,9 @@ function newTask(partial = {}) {
     projectId: null,
     areaId: null,
     headingId: null,
+    // Tasks can nest under another task (unlimited depth). Checklist items are
+    // separate lightweight entries and are unaffected by this.
+    parentId: null,
     status: STATUS.OPEN,
     createdAt: Date.now(),
     completedAt: null,

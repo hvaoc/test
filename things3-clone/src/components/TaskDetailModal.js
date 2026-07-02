@@ -22,7 +22,8 @@ import LocationSheet from './LocationSheet';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel } from '../utils/date';
-import { useTasks } from '../store/TasksContext';
+import { useTasks, newTask } from '../store/TasksContext';
+import { selectSubtasks } from '../store/selectors';
 import WailsTitleBar, { useIsWails } from './WailsTitleBar';
 import { useIsWide } from '../navigation/responsive';
 
@@ -36,17 +37,33 @@ function whenMeta(when) {
 }
 
 // Full-screen to-do editor. Receives the task id; reads live data from context.
-export default function TaskDetailModal({ visible, taskId, onClose }) {
+export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }) {
   const insets = useSafeAreaInsets();
   const isWails = useIsWails();
   const isWide = useIsWide();
-  const { state, updateTask, toggleTask, setStatus, deleteTask, addCheck, toggleCheck, updateCheck, deleteCheck } = useTasks();
+  const { state, addTask, updateTask, toggleTask, setStatus, deleteTask, addCheck, toggleCheck, updateCheck, deleteCheck } = useTasks();
   const task = state.tasks.find((t) => t.id === taskId);
 
   const [sheet, setSheet] = useState(null); // 'when' | 'deadline' | 'move' | 'tags'
   const [newCheck, setNewCheck] = useState('');
+  const [newSub, setNewSub] = useState('');
 
   if (!task) return null;
+
+  const subtasks = selectSubtasks(state.tasks, task.id);
+  const submitSub = () => {
+    const title = newSub.trim();
+    if (!title) return;
+    addTask(
+      newTask({
+        parentId: task.id,
+        projectId: task.projectId,
+        areaId: task.areaId,
+        title,
+      })
+    );
+    setNewSub('');
+  };
 
   const project = task.projectId
     ? state.projects.find((p) => p.id === task.projectId)
@@ -138,6 +155,53 @@ export default function TaskDetailModal({ visible, taskId, onClose }) {
               onChangeText={(text) => updateTask(task.id, { notes: text })}
               multiline
             />
+
+            {/* Sub-tasks — nested tasks (distinct from the lightweight checklist) */}
+            <View style={styles.subtasks}>
+              {subtasks.map((s) => {
+                const sDone = s.status !== STATUS.OPEN;
+                const kids = selectSubtasks(state.tasks, s.id);
+                return (
+                  <Pressable
+                    key={s.id}
+                    style={styles.subRow}
+                    onPress={() => onOpenTask && onOpenTask(s.id)}
+                  >
+                    <Checkbox
+                      status={s.status}
+                      color={project?.color}
+                      onPress={() => toggleTask(s.id)}
+                      size={20}
+                    />
+                    <Text style={[styles.subText, sDone && styles.subTextDone]} numberOfLines={1}>
+                      {s.title || 'New To-Do'}
+                    </Text>
+                    {kids.length > 0 && (
+                      <View style={styles.subBadge}>
+                        <Ionicons name="git-branch-outline" size={12} color={colors.textTertiary} />
+                        <Text style={styles.subBadgeText}>
+                          {kids.filter((k) => k.status !== STATUS.OPEN).length}/{kids.length}
+                        </Text>
+                      </View>
+                    )}
+                    <Ionicons name="chevron-forward" size={16} color={colors.separatorStrong} />
+                  </Pressable>
+                );
+              })}
+              <View style={styles.subRow}>
+                <Ionicons name="add-circle-outline" size={20} color={colors.textTertiary} />
+                <TextInput
+                  style={styles.subText}
+                  value={newSub}
+                  placeholder="Add sub-task"
+                  placeholderTextColor={colors.placeholder}
+                  onChangeText={setNewSub}
+                  onSubmitEditing={submitSub}
+                  blurOnSubmit={false}
+                  returnKeyType="done"
+                />
+              </View>
+            </View>
 
             {/* Checklist */}
             {task.checklist.length > 0 && (
@@ -341,6 +405,12 @@ const styles = StyleSheet.create({
     minHeight: 24,
     padding: 0,
   },
+  subtasks: { marginTop: spacing.lg, marginLeft: spacing.xl + spacing.md },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },
+  subText: { flex: 1, ...typography.body, color: colors.text, padding: 0 },
+  subTextDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
+  subBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  subBadgeText: { ...typography.caption, color: colors.textTertiary },
   checklist: { marginTop: spacing.lg, marginLeft: spacing.xl + spacing.md },
   checkRow: {
     flexDirection: 'row',

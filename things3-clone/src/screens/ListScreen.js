@@ -39,7 +39,8 @@ function useSections(state, route) {
   return useMemo(() => {
     // ---- Project view: group by heading ----
     if (projectId) {
-      const tasks = selectProjectTasks(state.tasks, projectId);
+      // Only top-level tasks form the rows; subtasks render nested under them.
+      const tasks = selectProjectTasks(state.tasks, projectId).filter((t) => !t.parentId);
       const open = tasks.filter(isOpen);
       const done = tasks.filter(
         (t) => t.status === STATUS.COMPLETED || t.status === STATUS.CANCELED
@@ -83,7 +84,7 @@ function useSections(state, route) {
 
     // ---- Area view ----
     if (areaId) {
-      const direct = selectAreaTasks(state.tasks, areaId).filter(isOpen);
+      const direct = selectAreaTasks(state.tasks, areaId).filter((t) => isOpen(t) && !t.parentId);
       return [{ key: 'area', title: null, data: direct }];
     }
 
@@ -592,6 +593,7 @@ export default function ListScreen({
               items={projectItems}
               showProject={false}
               inProject
+              showSubtasks
               onOpenTask={setOpenTaskId}
               onCommitKeys={commitProjectLayout}
               onDeleteHeading={deleteHeading}
@@ -651,6 +653,7 @@ export default function ListScreen({
         visible={!!openTaskId}
         taskId={openTaskId}
         onClose={() => setOpenTaskId(null)}
+        onOpenTask={setOpenTaskId}
       />
 
       {/* Mobile: editing a section title/description is a full-page view. */}

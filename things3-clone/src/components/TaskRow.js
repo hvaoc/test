@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Checkbox from './Checkbox';
@@ -6,11 +6,26 @@ import { colors, spacing, typography } from '../theme';
 import { STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel, isPast, isToday } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
+import { selectSubtasks } from '../store/selectors';
 
-// A single to-do row. Shows the checkbox, title, and a set of metadata badges
-// (project dot, notes glyph, checklist progress, tags, deadline).
-export default function TaskRow({ task, onPress, showProject = false, inProject = false }) {
+const CHEVRON_W = 20;
+const INDENT = 26;
+
+// A single to-do row. Shows the checkbox, title, and metadata badges (project
+// dot, notes glyph, checklist progress, subtask progress, tags, deadline).
+// When `showSubtasks` is set (the list view), a task with child tasks gets a
+// disclosure chevron and renders its subtasks nested underneath — recursively,
+// so nesting is unlimited. Checklist items are separate and unaffected.
+export default function TaskRow({
+  task,
+  onPress,
+  onOpenTask,
+  showProject = false,
+  inProject = false,
+  showSubtasks = false,
+}) {
   const { state, toggleTask } = useTasks();
+  const [expanded, setExpanded] = useState(false);
   const done = task.status !== STATUS.OPEN;
 
   const project = task.projectId
@@ -24,97 +39,139 @@ export default function TaskRow({ task, onPress, showProject = false, inProject 
   const checkTotal = task.checklist?.length || 0;
   const checkDone = task.checklist?.filter((c) => c.done).length || 0;
 
+  const subtasks = selectSubtasks(state.tasks, task.id);
+  const subTotal = subtasks.length;
+  const subDone = subtasks.filter((s) => s.status !== STATUS.OPEN).length;
+
   const deadlineOverdue =
     task.deadline && (isPast(task.deadline) || isToday(task.deadline));
 
-  // In the project view, an open task's checkbox outline takes on its priority
-  // color (if any) as an at-a-glance urgency cue.
   const priorityBorder =
     inProject && task.priority ? PRIORITY_MAP[task.priority]?.color : undefined;
 
+  const hasMeta =
+    (showProject && (project || area)) ||
+    task.notes ||
+    checkTotal > 0 ||
+    subTotal > 0 ||
+    task.tags?.length > 0 ||
+    task.deadline;
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
-      <Checkbox
-        status={task.status}
-        color={project?.color}
-        borderColor={priorityBorder}
-        onPress={() => toggleTask(task.id)}
-      />
+    <View>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      >
+        {showSubtasks &&
+          (subTotal > 0 ? (
+            <Pressable
+              hitSlop={6}
+              onPress={() => setExpanded((e) => !e)}
+              style={styles.chevron}
+            >
+              <Ionicons
+                name={expanded ? 'chevron-down' : 'chevron-forward'}
+                size={16}
+                color={colors.textSecondary}
+              />
+            </Pressable>
+          ) : (
+            <View style={styles.chevron} />
+          ))}
 
-      <View style={styles.body}>
-        <Text
-          numberOfLines={1}
-          style={[styles.title, done && styles.titleDone]}
-        >
-          {task.title || 'New To-Do'}
-        </Text>
+        <Checkbox
+          status={task.status}
+          color={project?.color}
+          borderColor={priorityBorder}
+          onPress={() => toggleTask(task.id)}
+        />
 
-        {(showProject && (project || area)) ||
-        task.notes ||
-        checkTotal > 0 ||
-        task.tags?.length > 0 ||
-        task.deadline ? (
-          <View style={styles.meta}>
-            {showProject && project && (
-              <View style={styles.metaItem}>
-                <View style={[styles.dot, { backgroundColor: project.color }]} />
-                <Text style={styles.metaText} numberOfLines={1}>
-                  {project.name}
-                </Text>
-              </View>
-            )}
-            {showProject && area && (
-              <View style={styles.metaItem}>
-                <Ionicons name="cube-outline" size={12} color={colors.textTertiary} />
-                <Text style={styles.metaText} numberOfLines={1}>
-                  {area.name}
-                </Text>
-              </View>
-            )}
-            {!!task.notes && (
-              <Ionicons name="reorder-four-outline" size={14} color={colors.textTertiary} />
-            )}
-            {checkTotal > 0 && (
-              <View style={styles.metaItem}>
-                <Ionicons name="list-outline" size={13} color={colors.textTertiary} />
-                <Text style={styles.metaText}>
-                  {checkDone}/{checkTotal}
-                </Text>
-              </View>
-            )}
-            {task.tags?.map((tag) => (
-              <View key={tag} style={styles.tagChip}>
-                <Text style={styles.tagText}>{tag}</Text>
-              </View>
-            ))}
-            {!!task.deadline && (
-              <View style={styles.metaItem}>
-                <Ionicons
-                  name="flag"
-                  size={12}
-                  color={deadlineOverdue ? colors.deadline : colors.textTertiary}
-                />
-                <Text
-                  style={[
-                    styles.metaText,
-                    deadlineOverdue && { color: colors.deadline },
-                  ]}
-                >
-                  {relativeLabel(task.deadline)}
-                </Text>
-              </View>
-            )}
-          </View>
-        ) : null}
-      </View>
+        <View style={styles.body}>
+          <Text numberOfLines={1} style={[styles.title, done && styles.titleDone]}>
+            {task.title || 'New To-Do'}
+          </Text>
 
-      {task.when === 'evening' && (
-        <Ionicons name="moon" size={14} color={colors.textTertiary} />
+          {hasMeta ? (
+            <View style={styles.meta}>
+              {showProject && project && (
+                <View style={styles.metaItem}>
+                  <View style={[styles.dot, { backgroundColor: project.color }]} />
+                  <Text style={styles.metaText} numberOfLines={1}>
+                    {project.name}
+                  </Text>
+                </View>
+              )}
+              {showProject && area && (
+                <View style={styles.metaItem}>
+                  <Ionicons name="cube-outline" size={12} color={colors.textTertiary} />
+                  <Text style={styles.metaText} numberOfLines={1}>
+                    {area.name}
+                  </Text>
+                </View>
+              )}
+              {!!task.notes && (
+                <Ionicons name="reorder-four-outline" size={14} color={colors.textTertiary} />
+              )}
+              {subTotal > 0 && (
+                <View style={styles.metaItem}>
+                  <Ionicons name="git-branch-outline" size={13} color={colors.textTertiary} />
+                  <Text style={styles.metaText}>
+                    {subDone}/{subTotal}
+                  </Text>
+                </View>
+              )}
+              {checkTotal > 0 && (
+                <View style={styles.metaItem}>
+                  <Ionicons name="list-outline" size={13} color={colors.textTertiary} />
+                  <Text style={styles.metaText}>
+                    {checkDone}/{checkTotal}
+                  </Text>
+                </View>
+              )}
+              {task.tags?.map((tag) => (
+                <View key={tag} style={styles.tagChip}>
+                  <Text style={styles.tagText}>{tag}</Text>
+                </View>
+              ))}
+              {!!task.deadline && (
+                <View style={styles.metaItem}>
+                  <Ionicons
+                    name="flag"
+                    size={12}
+                    color={deadlineOverdue ? colors.deadline : colors.textTertiary}
+                  />
+                  <Text
+                    style={[styles.metaText, deadlineOverdue && { color: colors.deadline }]}
+                  >
+                    {relativeLabel(task.deadline)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : null}
+        </View>
+
+        {task.when === 'evening' && (
+          <Ionicons name="moon" size={14} color={colors.textTertiary} />
+        )}
+      </Pressable>
+
+      {showSubtasks && subTotal > 0 && expanded && (
+        <View style={styles.children}>
+          {subtasks.map((child) => (
+            <TaskRow
+              key={child.id}
+              task={child}
+              showSubtasks
+              inProject={inProject}
+              onOpenTask={onOpenTask}
+              onPress={() => onOpenTask && onOpenTask(child.id)}
+            />
+          ))}
+        </View>
       )}
-    </Pressable>
+    </View>
   );
 }
 
@@ -128,6 +185,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   pressed: { backgroundColor: colors.groupedBackground },
+  // Disclosure gutter to the left of the checkbox; a bare View keeps checkboxes
+  // aligned on rows without subtasks.
+  chevron: { width: CHEVRON_W, paddingTop: 2, marginRight: -spacing.sm, alignItems: 'center' },
+  // Nested subtasks step in one indent per level (compounds through recursion).
+  children: { marginLeft: INDENT },
   body: { flex: 1, paddingTop: 1 },
   title: { ...typography.body, color: colors.text },
   titleDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },

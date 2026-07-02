@@ -38,6 +38,14 @@ function isScheduledFuture(t) {
 
 const isSomeday = (t) => t.when === WHEN.SOMEDAY;
 const hasContainer = (t) => Boolean(t.projectId || t.areaId);
+// Top-level tasks only — subtasks (parentId set) are shown nested under their
+// parent, never as standalone rows in the smart lists / project groupings.
+const isTopLevel = (t) => !t.parentId;
+
+// A task's direct child tasks, in manual order.
+export function selectSubtasks(tasks, parentId) {
+  return tasks.filter((t) => t.parentId === parentId && !isTrashed(t)).sort(byOrder);
+}
 
 // ---------------------------------------------------------------------------
 // Smart-list selectors. Each returns the tasks belonging in that built-in list.
@@ -47,20 +55,20 @@ const hasContainer = (t) => Boolean(t.projectId || t.areaId);
 // scheduled or filed away.
 export function selectInbox(tasks) {
   return tasks
-    .filter((t) => isOpen(t) && !hasContainer(t) && !t.when)
+    .filter((t) => isOpen(t) && isTopLevel(t) && !hasContainer(t) && !t.when)
     .sort(byOrder);
 }
 
 // Today: everything due today or overdue (the heart of Things). Sorted by the
 // manual `order` so drag-to-reorder persists.
 export function selectToday(tasks) {
-  return tasks.filter((t) => isOpen(t) && isDueToday(t)).sort(byOrder);
+  return tasks.filter((t) => isOpen(t) && isTopLevel(t) && isDueToday(t)).sort(byOrder);
 }
 
 // Upcoming: open tasks scheduled for a future date (grouped by date in the UI).
 export function selectUpcoming(tasks) {
   return tasks
-    .filter((t) => isOpen(t) && isScheduledFuture(t))
+    .filter((t) => isOpen(t) && isTopLevel(t) && isScheduledFuture(t))
     .sort((a, b) => (a.when < b.when ? -1 : a.when > b.when ? 1 : 0));
 }
 
@@ -71,6 +79,7 @@ export function selectAnytime(tasks) {
     .filter(
       (t) =>
         isOpen(t) &&
+        isTopLevel(t) &&
         !isSomeday(t) &&
         !isScheduledFuture(t) &&
         (hasContainer(t) || isDueToday(t))
@@ -80,7 +89,7 @@ export function selectAnytime(tasks) {
 
 // Someday: tasks deliberately deferred with no date.
 export function selectSomeday(tasks) {
-  return tasks.filter((t) => isOpen(t) && isSomeday(t)).sort(byOrder);
+  return tasks.filter((t) => isOpen(t) && isTopLevel(t) && isSomeday(t)).sort(byOrder);
 }
 
 // Logbook: completed & canceled tasks, newest first.

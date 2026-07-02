@@ -581,7 +581,7 @@ function RowActions({ visible, onEdit, onDate, onPriority, priority }) {
   );
 }
 
-function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCommit, ctx }) {
+function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, onOpenTask, onCommit, ctx }) {
   const { positions, heights, kinds, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
   const { updateTask } = useTasks();
   // Cross-pane drop onto sidebar projects/areas (two-pane layout only).
@@ -810,7 +810,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCom
       <View style={styles.rowHandled} onLayout={measure(heights, itemKey)} {...hoverProps}>
         <Handle gesture={pan} style={styles.taskHandle} visible={handleVisible} />
         <View style={styles.rowBody}>
-          <TaskRow task={task} showProject={showProject} inProject={inProject} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} onOpenTask={onOpenTask} onPress={handlePress} />
         </View>
         <RowActions
           visible={actionsVisible}
@@ -826,7 +826,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCom
     <GestureDetector gesture={pan}>
       <Animated.View style={style}>
         <View style={styles.row} onLayout={measure(heights, itemKey)}>
-          <TaskRow task={task} showProject={showProject} inProject={inProject} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} onOpenTask={onOpenTask} onPress={handlePress} />
         </View>
       </Animated.View>
     </GestureDetector>
@@ -866,6 +866,7 @@ export default function ReorderableTaskList({
   items,
   showProject,
   inProject,
+  showSubtasks,
   onOpenTask,
   onCommitKeys,
   onDeleteHeading,
@@ -985,6 +986,7 @@ export default function ReorderableTaskList({
             task={item.task}
             showProject={showProject}
             inProject={inProject}
+            showSubtasks={showSubtasks}
             onOpenTask={onOpenTask}
             onCommit={commit}
             ctx={ctx}
