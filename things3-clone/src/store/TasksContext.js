@@ -49,6 +49,11 @@ function newTask(partial = {}) {
     // Tasks can nest under another task (unlimited depth). Checklist items are
     // separate lightweight entries and are unaffected by this.
     parentId: null,
+    // Time-blocking on the scheduled day (`when`): startMinutes = minutes from
+    // midnight for the block start, durationMinutes = its length. When
+    // startMinutes is null the task is "all day" for that date.
+    startMinutes: null,
+    durationMinutes: null,
     status: STATUS.OPEN,
     createdAt: Date.now(),
     completedAt: null,

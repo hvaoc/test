@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
+import DayPlanner from './DayPlanner';
 
 // The calendar day a task belongs on — its When date. Today/This Evening fold
 // into today; Someday/undated tasks aren't placed on the grid.
@@ -22,8 +23,9 @@ const MAX_CHIPS = 4;
 // Month grid for a project: each day cell lists the tasks scheduled that day
 // (by their When date). Prev/next/Today navigate the months; tapping a chip
 // opens the task. Undated tasks are surfaced in a footer count.
-export default function CalendarView({ tasks, project, onOpenTask }) {
+export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
   const today = keyToDate(todayKey());
+  const [mode, setMode] = useState('day');
   const [cursor, setCursor] = useState({ y: today.getFullYear(), m: today.getMonth() });
 
   const byDate = {};
@@ -54,6 +56,31 @@ export default function CalendarView({ tasks, project, onOpenTask }) {
 
   return (
     <View style={styles.wrap}>
+      <View style={styles.modeRow}>
+        {[
+          { key: 'month', label: 'Month' },
+          { key: 'day', label: 'Day' },
+        ].map((m) => (
+          <Pressable
+            key={m.key}
+            onPress={() => setMode(m.key)}
+            style={[styles.modeBtn, mode === m.key && styles.modeBtnActive]}
+          >
+            <Text style={[styles.modeText, mode === m.key && styles.modeTextActive]}>{m.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {mode === 'day' ? (
+        <DayPlanner
+          tasks={tasks}
+          project={project}
+          onOpenTask={onOpenTask}
+          onUpdateTask={onUpdateTask}
+          onAddTask={onAddTask}
+        />
+      ) : (
+       <>
       <View style={styles.header}>
         <Text style={styles.monthTitle}>
           {MONTHS[cursor.m]} {cursor.y}
@@ -126,12 +153,32 @@ export default function CalendarView({ tasks, project, onOpenTask }) {
           {undated} unscheduled to-do{undated > 1 ? 's' : ''} not shown
         </Text>
       )}
+       </>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
+  modeRow: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.separator,
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+    marginBottom: spacing.md,
+  },
+  modeBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: 6,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  modeBtnActive: { backgroundColor: colors.card },
+  modeText: { ...typography.subhead, color: colors.textSecondary },
+  modeTextActive: { color: colors.text, fontWeight: '600' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

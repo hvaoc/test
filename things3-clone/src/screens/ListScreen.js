@@ -571,11 +571,13 @@ export default function ListScreen({
               onEditSection={setEditSectionId}
             />
           ) : projectView === 'calendar' ? (
-            // Calendar view: a month grid placing tasks on their When date.
+            // Calendar view: Month grid or a Day planner (time-blocking timeline).
             <CalendarView
               tasks={sections.flatMap((s) => s.data)}
               project={project}
               onOpenTask={setOpenTaskId}
+              onUpdateTask={updateTask}
+              onAddTask={(opts) => handleAddInSection(null, opts)}
             />
           ) : projectView === 'gantt' ? (
             // Gantt view: a timeline bar per task from its Date (start) to its
