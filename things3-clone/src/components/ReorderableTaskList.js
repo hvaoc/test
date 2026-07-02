@@ -581,7 +581,7 @@ function RowActions({ visible, onEdit, onDate, onPriority, priority }) {
   );
 }
 
-function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, onOpenTask, onCommit, ctx }) {
+function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, depth, hasChildren, expanded, onToggleExpand, onOpenTask, onCommit, ctx }) {
   const { positions, heights, kinds, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
   const { updateTask } = useTasks();
   // Cross-pane drop onto sidebar projects/areas (two-pane layout only).
@@ -810,7 +810,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, onO
       <View style={styles.rowHandled} onLayout={measure(heights, itemKey)} {...hoverProps}>
         <Handle gesture={pan} style={styles.taskHandle} visible={handleVisible} />
         <View style={styles.rowBody}>
-          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} onOpenTask={onOpenTask} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} depth={depth} hasChildren={hasChildren} expanded={expanded} onToggleExpand={onToggleExpand} onOpenTask={onOpenTask} onPress={handlePress} />
         </View>
         <RowActions
           visible={actionsVisible}
@@ -826,7 +826,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, onO
     <GestureDetector gesture={pan}>
       <Animated.View style={style}>
         <View style={styles.row} onLayout={measure(heights, itemKey)}>
-          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} onOpenTask={onOpenTask} onPress={handlePress} />
+          <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} depth={depth} hasChildren={hasChildren} expanded={expanded} onToggleExpand={onToggleExpand} onOpenTask={onOpenTask} onPress={handlePress} />
         </View>
       </Animated.View>
     </GestureDetector>
@@ -867,6 +867,7 @@ export default function ReorderableTaskList({
   showProject,
   inProject,
   showSubtasks,
+  onToggleExpand,
   onOpenTask,
   onCommitKeys,
   onDeleteHeading,
@@ -987,6 +988,10 @@ export default function ReorderableTaskList({
             showProject={showProject}
             inProject={inProject}
             showSubtasks={showSubtasks}
+            depth={item.depth}
+            hasChildren={item.hasChildren}
+            expanded={item.expanded}
+            onToggleExpand={onToggleExpand}
             onOpenTask={onOpenTask}
             onCommit={commit}
             ctx={ctx}

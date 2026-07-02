@@ -17,6 +17,7 @@ import {
   selectForList,
   selectProjectTasks,
   selectAreaTasks,
+  selectSubtasks,
   isOpen,
   byOrder,
 } from '../store/selectors';
@@ -199,6 +200,15 @@ export default function ListScreen({
   const [editSectionId, setEditSectionId] = useState(null);
   // Projects can be viewed as the manual heading list, or grouped by date.
   const [projectView, setProjectView] = useState('list');
+  // Expanded parent tasks (by id) — controls whether their subtasks are shown
+  // as nested rows in the project list.
+  const [expandedTasks, setExpandedTasks] = useState(() => new Set());
+  const toggleTaskExpand = (id) =>
+    setExpandedTasks((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   // Collapsed date sections (by date key) for the date views (project + Upcoming).
   const [collapsedDates, setCollapsedDates] = useState(() => new Set());
   const toggleDate = (key) =>
@@ -383,7 +393,22 @@ export default function ListScreen({
         });
       }
       if (!collapsed) {
-        s.data.forEach((t) => projectItems.push({ key: t.id, kind: 'task', task: t }));
+        // Emit a task and, when expanded, its subtasks nested beneath it — each
+        // as its own draggable row carrying a depth (for indentation) so nesting
+        // is unlimited.
+        const emit = (t, depth) => {
+          const kids = selectSubtasks(state.tasks, t.id);
+          projectItems.push({
+            key: t.id,
+            kind: 'task',
+            task: t,
+            depth,
+            hasChildren: kids.length > 0,
+            expanded: expandedTasks.has(t.id),
+          });
+          if (kids.length > 0 && expandedTasks.has(t.id)) kids.forEach((k) => emit(k, depth + 1));
+        };
+        s.data.forEach((t) => emit(t, 0));
         // Inline "+ Add task" only on wide layouts — phones use the floating
         // add button to save the vertical space.
         if (isWide) {
@@ -431,21 +456,32 @@ export default function ListScreen({
     addHeading(projectId, { title, description, order });
   };
 
-  // Walk the dropped order; each task adopts the heading divider above it, and
-  // the heading dividers themselves record their new order (block reorder).
-  // The static "+ Add task" rows (add:*) are ignored.
+  // Walk the dropped order. Each task adopts the heading above it; a task keeps
+  // its rendered depth, so its parent becomes the nearest preceding task one
+  // level up (a subtask stays a sibling of the rows at its indent, and lands
+  // top-level when there's no shallower task above it). The static add rows are
+  // ignored. Heading dividers record their new block order.
+  const depthByKey = new Map(
+    projectItems.filter((i) => i.kind === 'task').map((i) => [i.key, i.depth || 0])
+  );
   const commitProjectLayout = (keys) => {
     let currentHeading = null;
     const tasks = [];
     const headings = [];
+    const stack = []; // stack[d] = last task id seen at depth d
     keys.forEach((k) => {
       if (k.startsWith('add:') || k.startsWith('sec:')) return;
       if (k.startsWith('h:')) {
         currentHeading = k.slice(2);
         headings.push(currentHeading);
-      } else {
-        tasks.push({ id: k, headingId: currentHeading });
+        stack.length = 0;
+        return;
       }
+      const depth = depthByKey.get(k) || 0;
+      const parentId = depth > 0 ? stack[depth - 1] || null : null;
+      tasks.push({ id: k, parentId, headingId: parentId ? null : currentHeading });
+      stack[depth] = k;
+      stack.length = depth + 1;
     });
     setProjectLayout({ tasks, headings });
   };
@@ -627,6 +663,7 @@ export default function ListScreen({
               showProject={false}
               inProject
               showSubtasks
+              onToggleExpand={toggleTaskExpand}
               onOpenTask={setOpenTaskId}
               onCommitKeys={commitProjectLayout}
               onDeleteHeading={deleteHeading}

@@ -85,13 +85,14 @@ export function DragProvider({ children }) {
       if (!entry || !taskId) return;
       const m = entry.meta;
       if (m.kind === 'project') {
-        updateTask(taskId, { projectId: m.id, areaId: m.areaId || null, headingId: null });
+        // Dropping onto a project promotes a subtask to a top-level to-do there.
+        updateTask(taskId, { projectId: m.id, areaId: m.areaId || null, headingId: null, parentId: null });
       } else if (m.kind === 'list' && m.id === 'inbox') {
         // Inbox: unfiled and unscheduled.
-        updateTask(taskId, { projectId: null, areaId: null, headingId: null, when: null });
+        updateTask(taskId, { projectId: null, areaId: null, headingId: null, parentId: null, when: null });
       } else if (m.kind === 'list' && m.id === 'today') {
-        // Today: scheduled for today, keeps its project/area.
-        updateTask(taskId, { when: WHEN.TODAY });
+        // Today: scheduled for today, keeps its project/area but leaves its parent.
+        updateTask(taskId, { when: WHEN.TODAY, parentId: null });
       }
     },
     [updateTask]

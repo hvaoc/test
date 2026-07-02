@@ -141,13 +141,19 @@ function reducer(state, action) {
       // payload.headings is the heading ids in their new order (block reorder).
       const { tasks: taskLayout, headings: headingOrder } = action.payload;
       const headingOf = new Map(taskLayout.map((x) => [x.id, x.headingId]));
+      const parentOf = new Map(taskLayout.map((x) => [x.id, x.parentId ?? null]));
       const taskOrderOf = new Map(taskLayout.map((x, i) => [x.id, i]));
       const headingOrderOf = new Map((headingOrder || []).map((id, i) => [id, i]));
       return {
         ...state,
         tasks: state.tasks.map((t) =>
           taskOrderOf.has(t.id)
-            ? { ...t, headingId: headingOf.get(t.id), order: taskOrderOf.get(t.id) }
+            ? {
+                ...t,
+                headingId: headingOf.get(t.id),
+                parentId: parentOf.get(t.id),
+                order: taskOrderOf.get(t.id),
+              }
             : t
         ),
         headings: state.headings.map((h) =>

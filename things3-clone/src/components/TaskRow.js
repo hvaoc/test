@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Checkbox from './Checkbox';
@@ -23,9 +23,12 @@ export default function TaskRow({
   showProject = false,
   inProject = false,
   showSubtasks = false,
+  depth = 0,
+  hasChildren = false,
+  expanded = false,
+  onToggleExpand,
 }) {
   const { state, toggleTask } = useTasks();
-  const [expanded, setExpanded] = useState(false);
   const done = task.status !== STATUS.OPEN;
 
   const project = task.projectId
@@ -58,7 +61,7 @@ export default function TaskRow({
     task.deadline;
 
   return (
-    <View>
+    <View style={showSubtasks && depth > 0 ? { marginLeft: depth * INDENT } : null}>
       <Pressable
         onPress={onPress}
         style={({ pressed }) => [styles.row, pressed && styles.pressed]}
@@ -67,7 +70,7 @@ export default function TaskRow({
           (subTotal > 0 ? (
             <Pressable
               hitSlop={6}
-              onPress={() => setExpanded((e) => !e)}
+              onPress={() => onToggleExpand && onToggleExpand(task.id)}
               style={styles.chevron}
             >
               <Ionicons
@@ -156,21 +159,6 @@ export default function TaskRow({
           <Ionicons name="moon" size={14} color={colors.textTertiary} />
         )}
       </Pressable>
-
-      {showSubtasks && subTotal > 0 && expanded && (
-        <View style={styles.children}>
-          {subtasks.map((child) => (
-            <TaskRow
-              key={child.id}
-              task={child}
-              showSubtasks
-              inProject={inProject}
-              onOpenTask={onOpenTask}
-              onPress={() => onOpenTask && onOpenTask(child.id)}
-            />
-          ))}
-        </View>
-      )}
     </View>
   );
 }
