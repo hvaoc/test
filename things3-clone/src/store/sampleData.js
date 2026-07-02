@@ -155,12 +155,71 @@ export function buildSampleData() {
   mk({ title: 'Submit expense report', areaId: areaWork.id, ...done(2) });
   mk({ title: 'Cancel unused subscription', areaId: areaPersonal.id, status: STATUS.CANCELED, completedAt: now - 5 * day });
 
+  // ---- Generated projects ------------------------------------------------
+  // Five more projects, each with 5-7 sections and many tasks whose dates are
+  // spread across ~4 months, so the list/board/calendar/gantt/upcoming views
+  // have real volume to work with. Deterministic (index-derived, no randomness).
+  const genProjects = [];
+  const genHeadings = [];
+  const areaFor = (i) => (i % 2 === 0 ? areaWork : areaPersonal);
+  const PROJECT_DEFS = [
+    { name: 'Mobile App v2', color: '#9b59b6', sections: ['Discovery', 'Design', 'iOS', 'Android', 'Backend', 'QA', 'Release'] },
+    { name: 'Marketing Q3', color: '#e8554e', sections: ['Strategy', 'Content', 'Social', 'Email', 'Paid Ads', 'Analytics'] },
+    { name: 'Office Move', color: '#f5a623', sections: ['Planning', 'Vendors', 'Packing', 'IT Setup', 'Furniture'] },
+    { name: 'Annual Conference', color: '#16a4a4', sections: ['Venue', 'Speakers', 'Sponsors', 'Logistics', 'Marketing', 'Catering', 'Run of Show'] },
+    { name: 'Home Renovation', color: '#5b6b7b', sections: ['Budget', 'Kitchen', 'Bathroom', 'Painting', 'Landscaping'] },
+  ];
+  const VERBS = ['Draft', 'Review', 'Finalize', 'Ship', 'Test', 'Plan', 'Schedule', 'Update', 'Research', 'Design', 'Build', 'Fix', 'Coordinate', 'Order', 'Confirm', 'Prepare', 'Write', 'Approve', 'Send', 'Book', 'Audit', 'Refine', 'Estimate', 'Migrate'];
+  const NOUNS = ['the spec', 'the mockups', 'vendor quotes', 'the deck', 'the API', 'user flows', 'the budget', 'the timeline', 'the invite list', 'the layout', 'the copy', 'the tests', 'the report', 'the assets', 'the contract', 'the schedule', 'the demo', 'feedback', 'the checklist', 'the rollout', 'the roadmap', 'the metrics', 'the backlog', 'the release notes'];
+  const GTAGS = ['Design', 'Frontend', 'Backend', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Important', 'Errand'];
+  const GPRI = ['high', 'medium', 'low'];
+
+  let g = 0;
+  PROJECT_DEFS.forEach((def, pi) => {
+    const proj = {
+      id: uid('proj'), name: def.name, notes: '', areaId: areaFor(pi).id, color: def.color,
+      when: null, deadline: addDays(t, 20 + pi * 15), status: STATUS.OPEN, createdAt: now, completedAt: null,
+    };
+    genProjects.push(proj);
+    def.sections.forEach((sTitle, si) => {
+      const h = { id: uid('head'), projectId: proj.id, title: sTitle, order: si };
+      genHeadings.push(h);
+      const count = 7 + ((g + si) % 6); // 7-12 per section
+      for (let k = 0; k < count; k++) {
+        g += 1;
+        const over = {
+          projectId: proj.id,
+          areaId: proj.areaId,
+          headingId: h.id,
+          title: `${VERBS[g % VERBS.length]} ${NOUNS[(g * 7) % NOUNS.length]}`,
+        };
+        if (g % 10 < 7) {
+          over.when = addDays(t, ((g * 13) % 110) - 25); // ~ -25 .. +85 days
+          if (g % 5 < 2) over.deadline = addDays(over.when, 3 + (g % 8));
+        } else if (g % 10 === 7) {
+          over.when = WHEN.SOMEDAY;
+        }
+        if (g % 3 === 0) over.priority = GPRI[g % 3];
+        if (g % 2 === 0) {
+          const two = g % 4 === 0;
+          over.tags = [...new Set([GTAGS[g % GTAGS.length], ...(two ? [GTAGS[(g * 3) % GTAGS.length]] : [])])];
+        }
+        if (g % 9 === 0) { over.status = STATUS.COMPLETED; over.completedAt = now - (g % 20) * day; }
+        const parentId = mk(over);
+        if (g % 11 === 0 && over.status !== STATUS.COMPLETED) {
+          mk({ projectId: proj.id, areaId: proj.areaId, parentId, title: 'Sub-task A' });
+          mk({ projectId: proj.id, areaId: proj.areaId, parentId, title: 'Sub-task B', ...(g % 22 === 0 ? { status: STATUS.COMPLETED, completedAt: now - day } : {}) });
+        }
+      }
+    });
+  });
+
   return {
-    version: 2,
+    version: 3,
     areas: [areaWork, areaPersonal],
-    projects: [projLaunch, projTrip],
-    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack],
+    projects: [projLaunch, projTrip, ...genProjects],
+    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack, ...genHeadings],
     tasks,
-    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Travel', 'Errand', 'Home', 'Important'],
+    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Travel', 'Errand', 'Home', 'Important'],
   };
 }

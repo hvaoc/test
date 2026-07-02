@@ -4,9 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
-import { PRIORITIES, PRIORITY_MAP, STATUS } from '../store/constants';
+import { PRIORITIES, PRIORITY_MAP, STATUS, WHEN } from '../store/constants';
 import { byOrder } from '../store/selectors';
-import { isPast, isToday } from '../utils/date';
+import { todayKey, addDays } from '../utils/date';
 import TaskRow from './TaskRow';
 import TaskComposer from './TaskComposer';
 import SectionEditor from './SectionEditor';
@@ -16,9 +16,33 @@ const COL_W = 300;
 const GROUPINGS = [
   { key: 'section', label: 'Section' },
   { key: 'priority', label: 'Priority' },
+  { key: 'date', label: 'Date' },
+  { key: 'deadline', label: 'Deadline' },
   { key: 'label', label: 'Label' },
   { key: 'none', label: 'None' },
 ];
+
+const whenKey = (t) => {
+  if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return todayKey();
+  if (!t.when || t.when === WHEN.SOMEDAY) return null;
+  return t.when;
+};
+
+// Relative date buckets, shared by the Date (When) and Deadline groupings. A card
+// dropped into a bucket adopts a representative date for that bucket.
+function dateColumns(kind) {
+  const tk = todayKey();
+  const get = kind === 'deadline' ? (t) => t.deadline || null : whenKey;
+  const field = kind === 'deadline' ? (v) => ({ deadline: v }) : (v) => ({ when: v });
+  return [
+    { key: 'd-over', title: 'Overdue', match: (t) => { const d = get(t); return d && d < tk; }, field: field(addDays(tk, -1)) },
+    { key: 'd-today', title: 'Today', match: (t) => get(t) === tk, field: field(tk) },
+    { key: 'd-tom', title: 'Tomorrow', match: (t) => get(t) === addDays(tk, 1), field: field(addDays(tk, 1)) },
+    { key: 'd-week', title: 'This Week', match: (t) => { const d = get(t); return d && d > addDays(tk, 1) && d <= addDays(tk, 7); }, field: field(addDays(tk, 3)) },
+    { key: 'd-later', title: 'Later', match: (t) => { const d = get(t); return d && d > addDays(tk, 7); }, field: field(addDays(tk, 14)) },
+    { key: 'd-none', title: kind === 'deadline' ? 'No Deadline' : 'No Date', match: (t) => !get(t), field: field(null) },
+  ];
+}
 const SORTS = [
   { key: 'manual', label: 'Manual' },
   { key: 'name', label: 'Name' },
@@ -57,6 +81,8 @@ function buildColumns(grouping, tasks, headings) {
     cols.push({ key: 'l:none', title: 'No Label', field: { tags: [] }, match: (t) => !(t.tags || []).length });
     return cols;
   }
+  if (grouping === 'date') return dateColumns('when');
+  if (grouping === 'deadline') return dateColumns('deadline');
   if (grouping === 'none') {
     return [{ key: 'all', title: 'All', field: {}, match: () => true }];
   }
@@ -356,10 +382,10 @@ function Card({ task, ctx, onOpen, cardRefs, dimmed }) {
 
 function AddInColumn({ col, grouping, onAddTask }) {
   const [adding, setAdding] = useState(false);
-  // Only sections carry a natural "add here" target; other groupings add a plain
-  // task pre-set to that column's field.
+  // Sections add into that heading; other groupings add a plain task pre-set to
+  // the column's field (its priority / date / deadline / label).
   const addField = grouping === 'section' ? col.headingId : null;
-  const extra = grouping === 'priority' && col.field.priority ? { priority: col.field.priority } : {};
+  const extra = grouping === 'section' ? {} : col.field;
   return adding ? (
     <TaskComposer
       submitLabel="Add task"
