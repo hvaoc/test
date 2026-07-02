@@ -578,11 +578,24 @@ export default function ListScreen({
     </View>
   );
 
-  // The Calendar and Gantt views fill the pane and manage their own scrolling,
-  // so they render in a flex column rather than inside the page's ScrollView.
-  const isFullPane = project && (projectView === 'calendar' || projectView === 'gantt');
+  // The Board, Calendar and Gantt views fill the pane and manage their own
+  // scrolling, so they render in a flex column rather than the page ScrollView.
+  const isFullPane =
+    project && (projectView === 'board' || projectView === 'calendar' || projectView === 'gantt');
   const fullPaneEl =
-    projectView === 'gantt' ? (
+    projectView === 'board' ? (
+      <BoardView
+        tasks={boardTasks}
+        headings={projectHeadings}
+        project={project}
+        onOpenTask={setOpenTaskId}
+        onUpdateTask={updateTask}
+        onReorder={reorderTasks}
+        onAddTask={handleAddInSection}
+        onAddSection={handleAddSectionAfter}
+        onEditSection={setEditSectionId}
+      />
+    ) : projectView === 'gantt' ? (
       <GanttView
         sections={sections}
         project={project}

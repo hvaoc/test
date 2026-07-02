@@ -239,6 +239,7 @@ export default function BoardView({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.boardScroll}
         contentContainerStyle={styles.board}
         keyboardShouldPersistTaps="handled"
       >
@@ -249,6 +250,7 @@ export default function BoardView({
             collapsable={false}
             style={styles.column}
           >
+            {/* Fixed header: stays put while the column's tasks scroll below it. */}
             <Pressable
               style={styles.colHeader}
               onPress={() => col.headingId && onEditSection && onEditSection(col.headingId)}
@@ -261,25 +263,27 @@ export default function BoardView({
               <Text style={styles.colCount}>{col.tasks.length}</Text>
             </Pressable>
 
-            {col.tasks.map((task, i) => (
-              <React.Fragment key={task.id}>
-                {dropTarget && dropTarget.colKey === col.key && dropTarget.index === i && (
-                  <View style={styles.placeholder} />
-                )}
-                <Card
-                  task={task}
-                  ctx={dragCtx}
-                  onOpen={onOpenTask}
-                  cardRefs={cardRefs}
-                  dimmed={dragTask?.id === task.id}
-                />
-              </React.Fragment>
-            ))}
-            {dropTarget && dropTarget.colKey === col.key && dropTarget.index >= col.tasks.length && (
-              <View style={styles.placeholder} />
-            )}
+            <ScrollView style={styles.colScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {col.tasks.map((task, i) => (
+                <React.Fragment key={task.id}>
+                  {dropTarget && dropTarget.colKey === col.key && dropTarget.index === i && (
+                    <View style={styles.placeholder} />
+                  )}
+                  <Card
+                    task={task}
+                    ctx={dragCtx}
+                    onOpen={onOpenTask}
+                    cardRefs={cardRefs}
+                    dimmed={dragTask?.id === task.id}
+                  />
+                </React.Fragment>
+              ))}
+              {dropTarget && dropTarget.colKey === col.key && dropTarget.index >= col.tasks.length && (
+                <View style={styles.placeholder} />
+              )}
 
-            <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
+              <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
+            </ScrollView>
           </View>
         ))}
 
@@ -476,8 +480,10 @@ const styles = StyleSheet.create({
   segActive: { backgroundColor: colors.accent },
   segText: { ...typography.subhead, color: colors.textSecondary },
   segTextActive: { color: colors.white, fontWeight: '600' },
-  board: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, alignItems: 'flex-start' },
+  boardScroll: { flex: 1 },
+  board: { paddingHorizontal: spacing.lg, alignItems: 'stretch' },
   column: { width: COL_W, marginRight: spacing.lg },
+  colScroll: { flex: 1 },
   colHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -485,6 +491,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.xs,
     marginBottom: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+    backgroundColor: colors.background,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   colDot: { width: 9, height: 9, borderRadius: 5 },
