@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const KEY = 'things3clone:data:v1';
+// Bump this when the seed data changes in a way that should replace stale local
+// data on next load (older keys are simply ignored).
+const KEY = 'things3clone:data:v2';
 
 export async function loadState() {
   try {
