@@ -27,6 +27,7 @@ import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
 import ReorderableTaskList from '../components/ReorderableTaskList';
 import BoardView from '../components/BoardView';
+import CalendarView from '../components/CalendarView';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -509,7 +510,8 @@ export default function ListScreen({
           {[
             { mode: 'list', icon: 'list' },
             { mode: 'board', icon: 'grid-outline' },
-            { mode: 'date', icon: 'calendar-outline' },
+            { mode: 'calendar', icon: 'calendar-outline' },
+            { mode: 'date', icon: 'calendar-number-outline' },
           ].map(({ mode, icon }) => {
             const active = projectView === mode;
             return (
@@ -564,6 +566,13 @@ export default function ListScreen({
               onAddTask={handleAddInSection}
               onAddSection={handleAddSectionAfter}
               onEditSection={setEditSectionId}
+            />
+          ) : projectView === 'calendar' ? (
+            // Calendar view: a month grid placing tasks on their When date.
+            <CalendarView
+              tasks={sections.flatMap((s) => s.data)}
+              project={project}
+              onOpenTask={setOpenTaskId}
             />
           ) : projectView === 'date' ? (
             // Date view: the project's open to-dos regrouped by scheduled date,
