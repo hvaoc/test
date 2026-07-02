@@ -1,3 +1,4 @@
+import './setup-globals'; // macOS: install RN core globals before Expo's runtime
 import 'react-native-gesture-handler';
 import { registerRootComponent } from 'expo';
 

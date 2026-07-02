@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,8 @@ import { selectionKey } from '../navigation/responsive';
 import NewListSheet from '../components/NewListSheet';
 import SettingsSheet from '../components/SettingsSheet';
 import ProgressPie from '../components/ProgressPie';
+import DropTarget from '../components/DropTarget';
+import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 
 // The Things sidebar / home: smart lists at the top, then your Areas and
 // Projects. Tapping any entry drills into the matching list.
@@ -29,6 +31,16 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
   const { state } = useTasks();
   const [sheet, setSheet] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Register the whole sidebar as a drag "zone" so a task drag can tell when
+  // the pointer is anywhere over the sidebar (not just over a drop target).
+  const drag = useDrag();
+  const sidebarRef = useRef(null);
+  useEffect(() => {
+    if (!drag || !embedded) return undefined;
+    drag.register(SIDEBAR_ZONE_KEY, sidebarRef, { kind: 'zone' });
+    return () => drag.unregister(SIDEBAR_ZONE_KEY);
+  }, [drag, embedded]);
 
   const badge = useMemo(() => counts(state.tasks), [state.tasks]);
 
@@ -49,6 +61,8 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
 
   return (
     <View
+      ref={sidebarRef}
+      collapsable={false}
       style={[
         styles.container,
         // Two-tone master/detail: a light-gray sidebar against the white detail
@@ -70,21 +84,35 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-        {/* Smart lists */}
+        {/* Smart lists. Only Inbox and Today accept dropped tasks; the rest
+            (Upcoming, Anytime, Someday, Logbook, Trash) are not drop targets. */}
         <View style={styles.section}>
-          {SMART_LISTS.map((list) => (
-            <SidebarRow
-              key={list.id}
-              icon={list.icon}
-              color={list.color}
-              title={list.title}
-              badge={badge[list.id]}
-              selected={selectedKey === `list:${list.id}`}
-              onPress={() =>
-                navigation.navigate('List', { listId: list.id, title: list.title })
-              }
-            />
-          ))}
+          {SMART_LISTS.map((list) => {
+            const row = (
+              <SidebarRow
+                icon={list.icon}
+                color={list.color}
+                title={list.title}
+                badge={badge[list.id]}
+                selected={selectedKey === `list:${list.id}`}
+                onPress={() =>
+                  navigation.navigate('List', { listId: list.id, title: list.title })
+                }
+              />
+            );
+            const droppable = list.id === 'inbox' || list.id === 'today';
+            return droppable ? (
+              <DropTarget
+                key={list.id}
+                targetKey={`list:${list.id}`}
+                meta={{ kind: 'list', id: list.id }}
+              >
+                {row}
+              </DropTarget>
+            ) : (
+              <React.Fragment key={list.id}>{row}</React.Fragment>
+            );
+          })}
         </View>
 
         {/* Areas with their projects */}
@@ -110,19 +138,24 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
                 <Text style={styles.areaTitle}>{area.name}</Text>
               </Pressable>
               {projects.map((p) => (
-                <ProjectRow
+                <DropTarget
                   key={p.id}
-                  project={p}
-                  count={openProjectCount(p.id)}
-                  progress={projectProgress(p.id)}
-                  selected={selectedKey === `project:${p.id}`}
-                  onPress={() =>
-                    navigation.navigate('List', {
-                      projectId: p.id,
-                      title: p.name,
-                    })
-                  }
-                />
+                  targetKey={`project:${p.id}`}
+                  meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
+                >
+                  <ProjectRow
+                    project={p}
+                    count={openProjectCount(p.id)}
+                    progress={projectProgress(p.id)}
+                    selected={selectedKey === `project:${p.id}`}
+                    onPress={() =>
+                      navigation.navigate('List', {
+                        projectId: p.id,
+                        title: p.name,
+                      })
+                    }
+                  />
+                </DropTarget>
               ))}
             </View>
           );
@@ -132,16 +165,21 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
         {looseProjects.length > 0 && (
           <View style={styles.section}>
             {looseProjects.map((p) => (
-              <ProjectRow
+              <DropTarget
                 key={p.id}
-                project={p}
-                count={openProjectCount(p.id)}
-                progress={projectProgress(p.id)}
-                selected={selectedKey === `project:${p.id}`}
-                onPress={() =>
-                  navigation.navigate('List', { projectId: p.id, title: p.name })
-                }
-              />
+                targetKey={`project:${p.id}`}
+                meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
+              >
+                <ProjectRow
+                  project={p}
+                  count={openProjectCount(p.id)}
+                  progress={projectProgress(p.id)}
+                  selected={selectedKey === `project:${p.id}`}
+                  onPress={() =>
+                    navigation.navigate('List', { projectId: p.id, title: p.name })
+                  }
+                />
+              </DropTarget>
             ))}
           </View>
         )}

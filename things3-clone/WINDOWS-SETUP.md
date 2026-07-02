@@ -68,16 +68,47 @@ Expo modules resolve the same as on mobile.
 
 ---
 
-## macOS — run on this Mac (needs Xcode + CocoaPods)
+## macOS — build/run on this Mac
 
+**Already scaffolded in this repo** (done, committed):
+
+- `react-native-macos@0.81.8` in `dependencies` (matches core `react-native@0.81.5`,
+  installed with `--legacy-peer-deps` — same React-19 patch mismatch as Windows).
+- `.npmrc` with `legacy-peer-deps=true` so every install (incl. nested tooling)
+  resolves against the single `react@19.1.0`.
+- `macos/` — the generated Xcode project (`things3-clone.xcodeproj`, `Podfile`,
+  `AppDelegate.mm`, storyboard, entitlements, Info.plist).
+- `macos/.../AppDelegate.mm` → `self.moduleName = @"main"` (Expo's
+  `registerRootComponent` registers the root as **main**, not the app name).
+- `macos/Podfile` → `use_expo_modules!` added so `expo-font` / `expo-asset` /
+  `expo-modules-core` autolink into the native build.
+
+**What's left (needs full Xcode — the blocker):** this machine has only the
+Command Line Tools, so `pod install` fails at the glog build with
+`xcrun: error: SDK "iphoneos" cannot be located` / `Unexpected XCode version string ''`.
+CocoaPods and a macOS app target require the full **Xcode.app**.
+
+### Finish the build
 ```bash
+# 1. Install Xcode from the App Store (~10 GB), then point the toolchain at it:
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+
+# 2. Install pods + run (Metro auto-starts via metro.config.js = Expo config)
 cd things3-clone
-npx react-native-macos-init            # generates macos/  (use the 0.81 line)
-npx install-expo-modules@latest        # adds use_expo_modules! to the Podfile
-cd macos && pod install && cd ..
-# set MainComponentName to "main" in macos/<AppName>/AppDelegate (same reason as step 4)
+export LANG=en_US.UTF-8
+pod install --project-directory=macos
 npx react-native run-macos
 ```
+`run-macos` produces `macos/build/.../things3-clone-macOS.app` and launches it.
+
+> ⚠️ **Risk area — Expo modules on react-native-macos.** `expo-modules-core`
+> supports macOS, but if `expo-font`/`expo-asset` fail to build against the
+> out-of-tree macOS platform, the fixes are: (a) drop them from the Podfile's
+> `use_expo_modules!` and load `@expo/vector-icons` fonts via the RN asset
+> system, or (b) guard the calls with `Platform.OS`. The pure-JS + community
+> native modules (gesture-handler, reanimated, svg, screens, safe-area-context,
+> async-storage) autolink via `use_native_modules!` and are the lower-risk path.
 
 ---
 

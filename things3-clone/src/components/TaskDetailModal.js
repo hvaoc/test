@@ -23,6 +23,8 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
+import WailsTitleBar, { useIsWails } from './WailsTitleBar';
+import { useIsWide } from '../navigation/responsive';
 
 // Maps a "when" value to the chip label/icon shown on the schedule button.
 function whenMeta(when) {
@@ -36,6 +38,8 @@ function whenMeta(when) {
 // Full-screen to-do editor. Receives the task id; reads live data from context.
 export default function TaskDetailModal({ visible, taskId, onClose }) {
   const insets = useSafeAreaInsets();
+  const isWails = useIsWails();
+  const isWide = useIsWide();
   const { state, updateTask, toggleTask, setStatus, deleteTask, addCheck, toggleCheck, updateCheck, deleteCheck } = useTasks();
   const task = state.tasks.find((t) => t.id === taskId);
 
@@ -63,9 +67,12 @@ export default function TaskDetailModal({ visible, taskId, onClose }) {
     setNewCheck('');
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+  const body = (
       <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* Full-screen (mobile / narrow) Wails windows need a draggable strip to
+            clear the native traffic lights. When wide, the detail opens inside
+            the content pane, which already sits below the app-level strip. */}
+        {!isWide && isWails && <WailsTitleBar />}
         {/* Top bar */}
         <View style={styles.topBar}>
           <Pressable hitSlop={10} onPress={onClose} style={styles.topBtn}>
@@ -266,6 +273,20 @@ export default function TaskDetailModal({ visible, taskId, onClose }) {
           onChange={(location) => updateTask(task.id, { location })}
         />
       </View>
+  );
+
+  // Wide (iPad / desktop): open the detail inside the content pane only, so the
+  // sidebar stays visible. It's an absolute overlay filling the ListScreen
+  // container (the detail pane), not a full-screen Modal.
+  if (isWide) {
+    if (!visible) return null;
+    return <View style={styles.paneOverlay}>{body}</View>;
+  }
+
+  // Mobile / narrow: full-screen modal.
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      {body}
     </Modal>
   );
 }
@@ -285,6 +306,12 @@ function ToolButton({ icon, color, label, onPress, active }) {
 }
 
 const styles = StyleSheet.create({
+  // Wide layout: fills the content pane (over the list), leaving the sidebar.
+  paneOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.background,
+    zIndex: 20,
+  },
   container: { flex: 1, backgroundColor: colors.background },
   topBar: {
     flexDirection: 'row',

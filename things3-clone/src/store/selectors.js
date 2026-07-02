@@ -51,9 +51,10 @@ export function selectInbox(tasks) {
     .sort(byOrder);
 }
 
-// Today: everything due today or overdue (the heart of Things).
+// Today: everything due today or overdue (the heart of Things). Sorted by the
+// manual `order` so drag-to-reorder persists.
 export function selectToday(tasks) {
-  return tasks.filter((t) => isOpen(t) && isDueToday(t));
+  return tasks.filter((t) => isOpen(t) && isDueToday(t)).sort(byOrder);
 }
 
 // Upcoming: open tasks scheduled for a future date (grouped by date in the UI).

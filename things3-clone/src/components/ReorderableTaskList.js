@@ -22,6 +22,7 @@ import TaskComposer from './TaskComposer';
 import WhenSheet from './WhenSheet';
 import PrioritySheet from './PrioritySheet';
 import { useTasks } from '../store/TasksContext';
+import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 import { PRIORITY_MAP } from '../store/constants';
 import { colors, spacing, typography, radius } from '../theme';
 
@@ -29,6 +30,23 @@ import { colors, spacing, typography, radius } from '../theme';
 const FALLBACK_H = 48;
 // A short, non-bouncy ease — subtle settle, no spring overshoot.
 const EASE = { duration: 140 };
+
+// While a drag is in progress on web, suppress native text selection so the
+// pointer sweeping across rows (and the sidebar) doesn't select text.
+function beginBodyDrag() {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  document.body.style.userSelect = 'none';
+  document.body.style.webkitUserSelect = 'none';
+  document.body.style.cursor = 'grabbing';
+  const sel = window.getSelection && window.getSelection();
+  if (sel) sel.removeAllRanges();
+}
+function endBodyDrag() {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  document.body.style.userSelect = '';
+  document.body.style.webkitUserSelect = '';
+  document.body.style.cursor = '';
+}
 
 // --- worklet layout helpers (variable row heights) -------------------------
 
@@ -229,6 +247,81 @@ function AddSectionRow({ itemKey, afterHeadingId, onAddSection, ctx }) {
   );
 }
 
+// A fixed, non-draggable group header (e.g. "This Evening" in Today). Tasks can
+// be dragged across it; on commit the caller decides each task's group from
+// which side of the divider it landed on. The icon sits in the checkbox column
+// and the title aligns with task titles.
+function DividerRow({ itemKey, title, icon, ctx }) {
+  const { heights, showHandle } = ctx;
+  const top = useRowTop(itemKey, ctx);
+  const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
+  return (
+    <Animated.View style={style}>
+      {/* The measured wrapper includes a spacer below the border line, so the
+          first task in the group sits clear of the divider. A bare margin here
+          wouldn't count toward the row height and the task would overlap it. */}
+      <View onLayout={measure(heights, itemKey)}>
+        <View style={styles.dividerRow}>
+          {showHandle && <View style={styles.rowGutter} />}
+          <View style={styles.dividerInner}>
+            <View style={styles.rowCheckCol}>
+              {icon && <Ionicons name={icon} size={15} color={colors.textTertiary} />}
+            </View>
+            <Text style={styles.dividerTitle}>{title}</Text>
+          </View>
+        </View>
+        <View style={styles.dividerSpacer} />
+      </View>
+    </Animated.View>
+  );
+}
+
+// A placeholder that reserves droppable space for an empty group (e.g. an empty
+// "This Evening"). Shows a faint "no tasks" message when idle. During a drag it
+// collapses to nothing: the row being dropped into the group already fills this
+// space, and the divider above defines the group boundary — so keeping the
+// placeholder would leave a phantom second slot below the dropped task. Not
+// committed.
+function EmptySlotRow({ itemKey, label, ctx }) {
+  const { heights, showHandle, dragging } = ctx;
+  const top = useRowTop(itemKey, ctx);
+  const measuredH = useSharedValue(FALLBACK_H);
+  const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
+  const collapse = useAnimatedStyle(() => ({
+    height: dragging.value ? 0 : measuredH.value,
+    overflow: 'hidden',
+    opacity: dragging.value ? 0 : 1,
+  }));
+  // Feed the collapsed height into the shared layout so sibling rows reflow
+  // correctly: 0 while a drag is active, the real measured height when idle.
+  useAnimatedReaction(
+    () => dragging.value,
+    (d, prev) => {
+      if (d === prev) return;
+      heights.value = { ...heights.value, [itemKey]: d ? 0 : measuredH.value };
+    }
+  );
+  const onMeasure = (e) => {
+    const h = e.nativeEvent.layout.height;
+    measuredH.value = h;
+    if (!dragging.value && heights.value[itemKey] !== h) {
+      heights.value = { ...heights.value, [itemKey]: h };
+    }
+  };
+  return (
+    <Animated.View style={style}>
+      <Animated.View style={collapse}>
+        <View style={styles.emptySlot} onLayout={onMeasure}>
+          {showHandle && <View style={styles.rowGutter} />}
+          <View style={styles.emptySlotInner}>
+            <Text style={styles.emptySlotText}>{label}</Text>
+          </View>
+        </View>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
 // --- heading (draggable as a block with its child tasks) -------------------
 
 function HeadingRow({
@@ -281,6 +374,7 @@ function HeadingRow({
       blockStartTops.value = starts;
       blockTranslate.value = 0;
       dragging.value = true;
+      runOnJS(beginBodyDrag)();
     })
     .onUpdate((e) => {
       blockTranslate.value = e.translationY;
@@ -316,6 +410,7 @@ function HeadingRow({
       activeBlockKeys.value = [];
       blockTranslate.value = 0;
       dragging.value = false;
+      runOnJS(endBodyDrag)();
       runOnJS(onCommit)();
     });
 
@@ -435,8 +530,23 @@ function RowActions({ visible, onEdit, onDate, onPriority, priority }) {
 function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCommit, ctx }) {
   const { positions, heights, kinds, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
   const { updateTask } = useTasks();
+  // Cross-pane drop onto sidebar projects/areas (two-pane layout only).
+  const drag = useDrag();
+  const dropRects = drag?.targetRects;
+  const dropHover = drag?.hovered;
+  const overSidebar = drag?.overSidebar;
+  const measureTargets = drag?.measureTargets;
+  const dropFn = drag?.drop;
+  const ghostX = drag?.ghostX;
+  const ghostY = drag?.ghostY;
+  const beginGhost = drag?.beginGhost;
+  const endGhost = drag?.endGhost;
+  const hasGhost = !!drag;
   const top = useRowTop(itemKey, ctx);
   const startTop = useSharedValue(0);
+  // Snapshot of the row order at drag start, restored while hovering the sidebar
+  // so the list shows no reflow gap.
+  const startPositions = useSharedValue(null);
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [sheet, setSheet] = useState(null); // 'when' | 'priority' | null
@@ -462,13 +572,55 @@ function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCom
   };
 
   const pan = makePan(ctx.showHandle)
-    .onStart(() => {
+    .onStart((e) => {
       activeId.value = itemKey;
       dragging.value = true;
       startTop.value = topForIndex(orderedKeys(positions.value), heights.value, positions.value[itemKey]);
+      startPositions.value = positions.value;
+      if (measureTargets) runOnJS(measureTargets)();
+      if (ghostX && ghostY) {
+        ghostX.value = e.absoluteX;
+        ghostY.value = e.absoluteY;
+      }
+      if (beginGhost) runOnJS(beginGhost)({ title: task.title });
+      runOnJS(beginBodyDrag)();
       runOnJS(flagDragged)();
     })
     .onUpdate((e) => {
+      // The ghost follows the raw pointer so it can travel across both panes.
+      if (ghostX && ghostY) {
+        ghostX.value = e.absoluteX;
+        ghostY.value = e.absoluteY;
+      }
+      // Cross-pane hit-test: find the hovered drop target (for highlight/drop)
+      // and whether the pointer is anywhere over the sidebar (to freeze).
+      let hit = null;
+      let over = false;
+      if (dropRects) {
+        const ax = e.absoluteX;
+        const ay = e.absoluteY;
+        const rects = dropRects.value;
+        const inside = (r) => r && ax >= r.x && ax <= r.x + r.w && ay >= r.y && ay <= r.y + r.h;
+        over = inside(rects[SIDEBAR_ZONE_KEY]);
+        for (const key in rects) {
+          if (key === SIDEBAR_ZONE_KEY) continue;
+          if (inside(rects[key])) {
+            hit = key;
+            over = true;
+            break;
+          }
+        }
+        if (dropHover) dropHover.value = hit;
+        if (overSidebar) overSidebar.value = over;
+      }
+      // Anywhere over the sidebar (target or not): freeze the list to its
+      // pre-drag order (no reflow gap or indicator) and park the dragged row in
+      // its slot — only the ghost moves. The task moves on drop, not here.
+      if (over) {
+        if (startPositions.value) positions.value = startPositions.value;
+        top.value = startTop.value;
+        return;
+      }
       top.value = startTop.value + e.translationY;
       const keys = orderedKeys(positions.value);
       const myH = heights.value[itemKey] ?? FALLBACK_H;
@@ -504,22 +656,42 @@ function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCom
       );
     })
     .onFinalize(() => {
+      const externalKey = dropHover ? dropHover.value : null;
       if (activeId.value === itemKey) {
         activeId.value = null;
-        runOnJS(onCommit)();
+        // Dropped on a sidebar project/area → move the task there instead of
+        // committing an in-list reorder.
+        if (externalKey && dropFn) {
+          runOnJS(dropFn)(task.id, externalKey);
+        } else {
+          runOnJS(onCommit)();
+        }
       }
+      if (dropHover) dropHover.value = null;
+      if (overSidebar) overSidebar.value = false;
       dragging.value = false;
+      if (endGhost) runOnJS(endGhost)();
+      runOnJS(endBodyDrag)();
       runOnJS(clearDraggedSoon)();
     });
 
-  const style = useAnimatedStyle(() => ({
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: top.value,
-    zIndex: activeId.value === itemKey || activeBlockSet.value[itemKey] ? 10 : 0,
-    transform: [{ scale: withTiming(activeId.value === itemKey ? 1.02 : 1, EASE) }],
-  }));
+  const style = useAnimatedStyle(() => {
+    const isActive = activeId.value === itemKey;
+    // While hovering the sidebar the list is frozen; show the dragged row in
+    // its slot (the ghost carries it) so there's no gap.
+    const onSidebar = !!(overSidebar && overSidebar.value);
+    return {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: top.value,
+      zIndex: isActive || activeBlockSet.value[itemKey] ? 10 : 0,
+      // When a ghost is present it stands in for the dragged row, so hide the
+      // original (it's clipped to the pane anyway). Native/phone keeps the row.
+      opacity: hasGhost && isActive && !onSidebar ? 0 : 1,
+      transform: [{ scale: withTiming(isActive && !onSidebar ? 1.02 : 1, EASE) }],
+    };
+  });
 
   const hoverProps = HOVERABLE
     ? { onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) }
@@ -610,11 +782,14 @@ function DraggableRow({ itemKey, task, showProject, inProject, onOpenTask, onCom
 // A drop-target placeholder for the item being dragged: a faint slot with a
 // red insertion line + dot at its top, marking where the row will land. Only
 // shown for single-task drags (activeId set); block/heading drags skip it.
-function DropIndicator({ ctx }) {
+function DropIndicator({ ctx, overSidebar }) {
   const { positions, heights, activeId, dragging } = ctx;
   const style = useAnimatedStyle(() => {
     const act = activeId.value;
-    if (!act || !dragging.value) return { opacity: 0, top: 0, height: 0 };
+    // Hide the in-list indicator whenever the pointer is over the sidebar — the
+    // task is being moved there, not reordered within this list.
+    const onSidebar = overSidebar && overSidebar.value;
+    if (!act || !dragging.value || onSidebar) return { opacity: 0, top: 0, height: 0 };
     const keys = orderedKeys(positions.value);
     const top = topForIndex(keys, heights.value, positions.value[act]);
     return { opacity: 1, top, height: heights.value[act] ?? FALLBACK_H };
@@ -648,6 +823,8 @@ export default function ReorderableTaskList({
 }) {
   // Non-mobile (iPad / web / desktop): drag from an explicit handle.
   const showHandle = useIsWide();
+  // Cross-pane drag: the currently-hovered sidebar drop target (or null).
+  const drag = useDrag();
   const ctx = {
     positions: useSharedValue(Object.fromEntries(items.map((it, i) => [it.key, i]))),
     heights: useSharedValue({}),
@@ -683,7 +860,7 @@ export default function ReorderableTaskList({
 
   return (
     <Animated.View style={containerStyle}>
-      <DropIndicator ctx={ctx} />
+      <DropIndicator ctx={ctx} overSidebar={drag?.overSidebar} />
       {items.map((item) =>
         item.kind === 'addtask' ? (
           <AddTaskRow
@@ -719,6 +896,16 @@ export default function ReorderableTaskList({
             onCommit={commit}
             ctx={ctx}
           />
+        ) : item.kind === 'divider' ? (
+          <DividerRow
+            key={item.key}
+            itemKey={item.key}
+            title={item.title}
+            icon={item.icon}
+            ctx={ctx}
+          />
+        ) : item.kind === 'emptyslot' ? (
+          <EmptySlotRow key={item.key} itemKey={item.key} label={item.label} ctx={ctx} />
         ) : (
           <DraggableRow
             key={item.key}
@@ -779,6 +966,32 @@ const styles = StyleSheet.create({
   addSectionLine: { flex: 1, height: 1, backgroundColor: 'transparent' },
   addSectionLineActive: { backgroundColor: colors.accent },
   addSectionText: { ...typography.subhead, color: colors.accent, fontWeight: '600' },
+  // Empty drag-handle gutter, so dividers/empty rows line up with task rows.
+  rowGutter: { width: HANDLE_W },
+  // The checkbox column (icon here) that a task's title sits after.
+  rowCheckCol: { width: 22, alignItems: 'center', marginRight: spacing.md },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // Use padding, not margin: row positions are computed from onLayout
+    // heights, which exclude margins — margins here would let the next row
+    // overlap the divider. Padding is measured, so spacing stays honest.
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+    backgroundColor: colors.background,
+    userSelect: 'none',
+  },
+  dividerInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: spacing.lg },
+  // Measured gap below the divider's border line so the group's first task
+  // (or the empty placeholder) sits clear of "This Evening".
+  dividerSpacer: { height: spacing.md },
+  dividerTitle: { ...typography.heading, color: colors.text },
+  emptySlot: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingTop: spacing.md },
+  // Match a task row's inner padding so the message aligns with task titles.
+  emptySlotInner: { flex: 1, paddingLeft: spacing.lg + 22 + spacing.md, paddingRight: spacing.lg },
+  emptySlotText: { ...typography.subhead, color: colors.textTertiary, fontStyle: 'italic' },
   addSectionTextHidden: { opacity: 0 },
   rowBody: { flex: 1 },
   // Drop-target placeholder shown under the floating dragged row.

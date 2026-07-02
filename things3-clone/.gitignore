@@ -4,3 +4,6 @@ dist/
 web-build/
 *.log
 .DS_Store
+
+# Desktop web export (generated)
+dist-web/

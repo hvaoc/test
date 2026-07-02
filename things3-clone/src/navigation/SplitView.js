@@ -4,6 +4,7 @@ import HomeScreen from '../screens/HomeScreen';
 import ListScreen from '../screens/ListScreen';
 import { colors } from '../theme';
 import { selectionKey } from './responsive';
+import { DragProvider } from '../store/DragContext';
 
 const SIDEBAR_WIDTH = 320;
 const DEFAULT_SELECTION = { listId: 'today', title: 'Today' };
@@ -30,24 +31,26 @@ export default function SplitView() {
   const key = selectionKey(selected);
 
   return (
-    <View style={styles.root}>
-      {!collapsed && (
-        <View style={styles.sidebar}>
-          <HomeScreen navigation={sidebarNav} embedded selectedKey={key} />
+    <DragProvider>
+      <View style={styles.root}>
+        {!collapsed && (
+          <View style={styles.sidebar}>
+            <HomeScreen navigation={sidebarNav} embedded selectedKey={key} />
+          </View>
+        )}
+        <View style={styles.detail}>
+          {/* Remount on selection change so per-list state (open task, scroll) resets. */}
+          <ListScreen
+            key={key}
+            navigation={detailNav}
+            route={{ params: selected }}
+            embedded
+            onToggleSidebar={toggleSidebar}
+            sidebarVisible={!collapsed}
+          />
         </View>
-      )}
-      <View style={styles.detail}>
-        {/* Remount on selection change so per-list state (open task, scroll) resets. */}
-        <ListScreen
-          key={key}
-          navigation={detailNav}
-          route={{ params: selected }}
-          embedded
-          onToggleSidebar={toggleSidebar}
-          sidebarVisible={!collapsed}
-        />
       </View>
-    </View>
+    </DragProvider>
   );
 }
 

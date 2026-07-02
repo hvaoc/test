@@ -142,6 +142,7 @@ export default function ListScreen({
   const {
     state,
     addTask,
+    updateTask,
     emptyTrash,
     reorderTasks,
     setProjectLayout,
@@ -188,15 +189,12 @@ export default function ListScreen({
   const headerColor = smart?.color || project?.color || area?.color || colors.text;
   const headerTitle = title || smart?.title || project?.name || area?.name || 'List';
 
-  // Stage 1 drag-to-reorder: only the contexts whose selector sorts by `order`
-  // (Inbox, Anytime, Someday, an Area). Today/Upcoming are schedule-ordered and
-  // Project is multi-section — those come in later stages. Restricting to these
-  // ensures a committed reorder actually persists across reloads.
-  const REORDERABLE_LISTS = ['inbox', 'anytime', 'someday'];
-  const canReorder =
-    sections.length === 1 &&
-    sections[0].data.length > 1 &&
-    (Boolean(areaId) || REORDERABLE_LISTS.includes(listId));
+  // Drag-to-reorder is allowed in contexts whose selector sorts by `order`, so
+  // a committed reorder persists across reloads: Inbox, Today, Anytime, Someday,
+  // and Areas. (Upcoming/Logbook are date-ordered; Project is handled above.)
+  // Today can split into Today + This Evening — each section reorders on its own.
+  const REORDERABLE_LISTS = ['inbox', 'today', 'anytime', 'someday'];
+  const listReorderable = Boolean(areaId) || REORDERABLE_LISTS.includes(listId);
 
   const contentPad = {
     paddingTop: insets.top + spacing.sm,
@@ -291,6 +289,41 @@ export default function ListScreen({
     setProjectLayout({ tasks, headings });
   };
 
+  // Today is one drag surface with a fixed "This Evening" divider so tasks can
+  // be dragged across it. The Evening slot is always present (an empty-drop
+  // placeholder when it has no tasks) so tasks can be moved into it.
+  const EVENING_DIVIDER = 'evening-divider';
+  let todayItems = null;
+  if (listId === 'today') {
+    const dayData = sections.find((s) => s.key === 'today')?.data || [];
+    const eveningData = sections.find((s) => s.key === 'evening')?.data || [];
+    todayItems = [
+      ...dayData.map((t) => ({ key: t.id, kind: 'task', task: t })),
+      { key: EVENING_DIVIDER, kind: 'divider', title: 'This Evening', icon: 'moon' },
+      ...eveningData.map((t) => ({ key: t.id, kind: 'task', task: t })),
+    ];
+    if (eveningData.length === 0) {
+      todayItems.push({ key: 'evening-empty', kind: 'emptyslot', label: 'No tasks yet' });
+    }
+  }
+
+  // Commit a Today reorder: tasks below the divider become "This Evening"
+  // (when = EVENING); tasks above revert to Today; then persist the order.
+  const commitTodayLayout = (keys) => {
+    const dividerIdx = keys.indexOf(EVENING_DIVIDER);
+    const orderedIds = [];
+    keys.forEach((k, i) => {
+      if (k === EVENING_DIVIDER || k === 'evening-empty') return;
+      orderedIds.push(k);
+      const task = state.tasks.find((t) => t.id === k);
+      if (!task) return;
+      const isEvening = dividerIdx >= 0 && i > dividerIdx;
+      if (isEvening && task.when !== WHEN.EVENING) updateTask(k, { when: WHEN.EVENING });
+      else if (!isEvening && task.when === WHEN.EVENING) updateTask(k, { when: WHEN.TODAY });
+    });
+    reorderTasks(orderedIds);
+  };
+
   // The chevron/sidebar-toggle bar sits above the content and is intentionally
   // NOT constrained by the "Center content" setting — it spans the full pane.
   const navBar = (
@@ -358,23 +391,34 @@ export default function ListScreen({
           />
         ) : isEmpty ? (
           <EmptyState listId={listId} />
-        ) : canReorder ? (
+        ) : listId === 'today' && listReorderable ? (
+          // Single drag surface: Today + This Evening divider, cross-draggable.
           <ReorderableTaskList
-            items={sections[0].data.map((t) => ({ key: t.id, kind: 'task', task: t }))}
-            showProject={listId && listId !== 'logbook'}
+            items={todayItems}
+            showProject
             onOpenTask={setOpenTaskId}
-            onCommitKeys={(keys) => reorderTasks(keys)}
+            onCommitKeys={commitTodayLayout}
           />
         ) : (
-          sections.map((section) => (
-            <Section
-              key={section.key}
-              section={section}
-              listId={listId}
-              navigation={navigation}
-              onOpenTask={setOpenTaskId}
-            />
-          ))
+          sections.map((section) =>
+            listReorderable && section.data.length > 0 ? (
+              <ReorderableSection
+                key={section.key}
+                section={section}
+                listId={listId}
+                onOpenTask={setOpenTaskId}
+                onCommitKeys={reorderTasks}
+              />
+            ) : (
+              <Section
+                key={section.key}
+                section={section}
+                listId={listId}
+                navigation={navigation}
+                onOpenTask={setOpenTaskId}
+              />
+            )
+          )
         )}
         </View>
       </ScrollView>
@@ -410,6 +454,39 @@ export default function ListScreen({
           )}
         </View>
       </Modal>
+    </View>
+  );
+}
+
+// A smart-list section whose tasks can be dragged to reorder (Inbox, Today,
+// Anytime, Someday, Areas). Renders the same header as Section, then a
+// ReorderableTaskList; reordering commits this section's ids via onCommitKeys.
+function ReorderableSection({ section, listId, onOpenTask, onCommitKeys }) {
+  const showProject = !!listId && listId !== 'logbook';
+  return (
+    <View style={styles.section}>
+      {section.title ? (
+        <View style={styles.sectionHeader}>
+          {section.icon && (
+            <Ionicons
+              name={section.icon}
+              size={14}
+              color={colors.textTertiary}
+              style={{ marginRight: 6 }}
+            />
+          )}
+          <Text style={styles.sectionTitle}>{section.title}</Text>
+          {section.subtitle && (
+            <Text style={styles.sectionSubtitle}>{section.subtitle}</Text>
+          )}
+        </View>
+      ) : null}
+      <ReorderableTaskList
+        items={section.data.map((t) => ({ key: t.id, kind: 'task', task: t }))}
+        showProject={showProject}
+        onOpenTask={onOpenTask}
+        onCommitKeys={onCommitKeys}
+      />
     </View>
   );
 }
