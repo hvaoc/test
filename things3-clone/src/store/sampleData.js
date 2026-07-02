@@ -155,6 +155,45 @@ export function buildSampleData() {
   mk({ title: 'Submit expense report', areaId: areaWork.id, ...done(2) });
   mk({ title: 'Cancel unused subscription', areaId: areaPersonal.id, status: STATUS.CANCELED, completedAt: now - 5 * day });
 
+  // ---- DevConf 2026: one busy day, multiple rooms, parallel tracks -------
+  const projConf = {
+    id: uid('proj'), name: 'DevConf 2026',
+    notes: 'One-day developer conference — multiple rooms, parallel tracks.',
+    areaId: areaWork.id, color: '#e84393', when: null, deadline: t,
+    status: STATUS.OPEN, createdAt: now, completedAt: null,
+  };
+  const cKey = { id: uid('head'), projectId: projConf.id, title: 'Keynotes & Main Stage', order: 0 };
+  const cFE = { id: uid('head'), projectId: projConf.id, title: 'Frontend Track', order: 1 };
+  const cBE = { id: uid('head'), projectId: projConf.id, title: 'Backend Track', order: 2 };
+  const cWS = { id: uid('head'), projectId: projConf.id, title: 'Workshops', order: 3 };
+  const cCom = { id: uid('head'), projectId: projConf.id, title: 'Community', order: 4 };
+  const sess = (h, title, start, dur, room) =>
+    mk({ projectId: projConf.id, areaId: areaWork.id, headingId: h.id, title, when: t, startMinutes: start, durationMinutes: dur, tags: [room] });
+  // Main stage (single track)
+  sess(cKey, 'Registration & Coffee', 510, 30, 'Main Hall'); // 08:30
+  sess(cKey, 'Opening Keynote — Ada Lovelace', 540, 60, 'Main Hall'); // 09:00
+  sess(cKey, 'Lunch & Networking', 750, 60, 'Main Hall'); // 12:30
+  sess(cKey, 'Closing Keynote — Grace Hopper', 1020, 45, 'Main Hall'); // 17:00
+  sess(cKey, 'Happy Hour', 1065, 60, 'Rooftop'); // 17:45
+  // Parallel tracks (overlapping time slots across rooms)
+  sess(cFE, 'React Server Components — Dan A.', 615, 45, 'Room A'); // 10:15
+  sess(cBE, 'Scaling Postgres to 1M writes — Kelsey H.', 615, 45, 'Room B');
+  sess(cWS, 'Design Systems Workshop', 615, 90, 'Room C');
+  sess(cFE, 'CSS Container Queries — Miriam S.', 675, 45, 'Room A'); // 11:15
+  sess(cBE, 'Event-driven Microservices — Sam N.', 675, 45, 'Room B');
+  sess(cCom, 'Open Source Panel', 675, 45, 'Lounge');
+  sess(cWS, 'Testing Workshop', 720, 60, 'Room C'); // 12:00
+  sess(cFE, 'Signals & Fine-grained Reactivity — Ryan C.', 825, 45, 'Room A'); // 13:45
+  sess(cBE, 'Rust for Services — Carol N.', 825, 45, 'Room B');
+  sess(cCom, 'Diversity in Tech', 825, 45, 'Lounge');
+  sess(cWS, 'Kubernetes Hands-on', 840, 90, 'Room C'); // 14:00
+  sess(cFE, 'Accessibility Patterns — Marcy S.', 900, 45, 'Room A'); // 15:00
+  sess(cBE, 'Observability 101 — Charity M.', 900, 45, 'Room B');
+  sess(cCom, 'Lightning Talks', 900, 60, 'Lounge');
+  sess(cFE, 'Edge Rendering — Sunil P.', 960, 45, 'Room A'); // 16:00
+  sess(cBE, 'Zero-downtime Migrations — Gergely O.', 960, 45, 'Room B');
+  sess(cWS, 'AI Pair Programming', 960, 60, 'Room C');
+
   // ---- Generated projects ------------------------------------------------
   // Five more projects, each with 5-7 sections and many tasks whose dates are
   // spread across ~4 months, so the list/board/calendar/gantt/upcoming views
@@ -215,11 +254,11 @@ export function buildSampleData() {
   });
 
   return {
-    version: 3,
+    version: 4,
     areas: [areaWork, areaPersonal],
-    projects: [projLaunch, projTrip, ...genProjects],
-    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack, ...genHeadings],
+    projects: [projLaunch, projTrip, projConf, ...genProjects],
+    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack, cKey, cFE, cBE, cWS, cCom, ...genHeadings],
     tasks,
-    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Travel', 'Errand', 'Home', 'Important'],
+    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Travel', 'Errand', 'Home', 'Important', 'Main Hall', 'Room A', 'Room B', 'Room C', 'Lounge'],
   };
 }

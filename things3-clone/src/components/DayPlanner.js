@@ -34,6 +34,34 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmt = (mins) =>
   `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 
+// Lay out overlapping blocks side by side (like a calendar): tasks that overlap
+// in time form a cluster and are split into equal-width columns. Returns a Map
+// of task.id -> { col, count }.
+function layoutOverlaps(timed) {
+  const items = timed
+    .map((t) => ({ id: t.id, s: t.startMinutes, e: t.startMinutes + (t.durationMinutes || DEFAULT_DUR) }))
+    .sort((a, b) => a.s - b.s || a.e - b.e);
+  const out = new Map();
+  let cluster = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    const count = cluster.reduce((m, c) => Math.max(m, c.col + 1), 1);
+    cluster.forEach((c) => out.set(c.id, { col: c.col, count }));
+    cluster = [];
+    clusterEnd = -1;
+  };
+  items.forEach((it) => {
+    if (cluster.length && it.s >= clusterEnd) flush();
+    const used = new Set(cluster.filter((c) => c.e > it.s).map((c) => c.col));
+    let col = 0;
+    while (used.has(col)) col += 1;
+    cluster.push({ id: it.id, e: it.e, col });
+    clusterEnd = Math.max(clusterEnd, it.e);
+  });
+  if (cluster.length) flush();
+  return out;
+}
+
 // A day-planner timeline that scrolls continuously across many dates (past and
 // future). Each day is a fixed-height section: an all-day strip over an hour
 // grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
@@ -239,6 +267,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 // One day: fixed-height header + all-day strip + hour grid with its blocks.
 function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder }) {
   const d = keyToDate(dayKey);
+  const layout = layoutOverlaps(timed);
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
   const showNow = isToday && nowMins >= START_HOUR * 60 && nowMins <= END_HOUR * 60;
@@ -278,21 +307,28 @@ function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeh
         {placeholder && (
           <View style={[styles.dropPlaceholder, { top: placeholder.top, height: placeholder.h }]} pointerEvents="none" />
         )}
-        {timed.map((t) => {
-          const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
-          const height = Math.max(20, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 3);
-          const done = t.status !== STATUS.OPEN;
-          return (
-            <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={[styles.block, { top, height }]}>
-              <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
-                <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
-                <Text style={styles.blockTime}>
-                  {fmt(t.startMinutes)}–{fmt(t.startMinutes + (t.durationMinutes || DEFAULT_DUR))}
-                </Text>
-              </View>
-            </Draggable>
-          );
-        })}
+        <View style={styles.blockLayer}>
+          {timed.map((t) => {
+            const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
+            const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 2);
+            const done = t.status !== STATUS.OPEN;
+            const { col = 0, count = 1 } = layout.get(t.id) || {};
+            const left = `${(col / count) * 100}%`;
+            const width = `${(1 / count) * 100}%`;
+            return (
+              <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={[styles.block, { top, height, left, width }]}>
+                <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
+                  <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
+                  {count < 3 && (
+                    <Text style={styles.blockTime} numberOfLines={1}>
+                      {fmt(t.startMinutes)}–{fmt(t.startMinutes + (t.durationMinutes || DEFAULT_DUR))}
+                    </Text>
+                  )}
+                </View>
+              </Draggable>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
@@ -411,7 +447,10 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.accent,
     backgroundColor: colors.accentSoft, borderRadius: radius.sm,
   },
-  block: { position: 'absolute', left: 50, right: 4 },
+  // Blocks live in a layer that starts after the hour labels; each block's
+  // left/width is a % of the layer so overlapping ones sit side by side.
+  blockLayer: { position: 'absolute', left: 50, right: 4, top: 0, bottom: 0 },
+  block: { position: 'absolute', paddingRight: 2 },
   blockInner: {
     flex: 1, borderLeftWidth: 3, borderRadius: radius.sm,
     paddingHorizontal: spacing.sm, paddingVertical: 3, overflow: 'hidden',
