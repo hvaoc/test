@@ -20,7 +20,7 @@ import {
   isOpen,
   byOrder,
 } from '../store/selectors';
-import { relativeLabel, monthTitle, longLabel } from '../utils/date';
+import { relativeLabel, monthTitle, longLabel, todayKey } from '../utils/date';
 import TaskRow from '../components/TaskRow';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
@@ -130,6 +130,46 @@ function useSections(state, route) {
   }, [state, route.params]);
 }
 
+// Group tasks by their When (scheduled date) field for the date views — the same
+// grouped shape the heading list uses, only bucketed by date instead of heading.
+// Grouping is by `when` only (never the deadline): Today/This Evening fold into
+// today, concrete dates each get their own day (sorted ascending), and
+// Someday/undated tasks collect in a "No Date" section at the bottom. Each bucket
+// mirrors a heading: open to-dos first (by order), then completed below when the
+// setting is on, and a done/total count for the header pie.
+function groupByDate(tasks, showCompleted) {
+  const buckets = {}; // dateKey -> { open: [], done: [] }
+  const noDate = { open: [], done: [] };
+  const bucketFor = (key) => (buckets[key] = buckets[key] || { open: [], done: [] });
+  tasks.forEach((t) => {
+    let key;
+    if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) key = todayKey();
+    else if (t.when === WHEN.SOMEDAY || !t.when) key = null;
+    else key = t.when;
+    const bucket = key === null ? noDate : bucketFor(key);
+    (isOpen(t) ? bucket.open : bucket.done).push(t);
+  });
+  const make = (key, b) => {
+    const open = b.open.slice().sort(byOrder);
+    const done = b.done.slice().sort(byOrder);
+    return {
+      key: key === null ? 'no-date' : key,
+      title: key === null ? 'No Date' : relativeLabel(key),
+      subtitle: key === null ? null : longLabel(key),
+      data: showCompleted ? [...open, ...done] : open,
+      total: open.length + done.length,
+      doneCount: done.length,
+    };
+  };
+  const sections = Object.keys(buckets)
+    .sort()
+    .map((key) => make(key, buckets[key]));
+  if (noDate.open.length || noDate.done.length) sections.push(make(null, noDate));
+  // Drop buckets with nothing to show (e.g. an all-completed date while
+  // "show completed" is off) — but their counts still fed the pie above.
+  return sections.filter((s) => s.data.length > 0);
+}
+
 export default function ListScreen({
   navigation,
   route,
@@ -153,6 +193,16 @@ export default function ListScreen({
   } = useTasks();
   const [openTaskId, setOpenTaskId] = useState(null);
   const [editSectionId, setEditSectionId] = useState(null);
+  // Projects can be viewed as the manual heading list, or grouped by date.
+  const [projectView, setProjectView] = useState('list');
+  // Collapsed date sections (by date key) for the date views (project + Upcoming).
+  const [collapsedDates, setCollapsedDates] = useState(() => new Set());
+  const toggleDate = (key) =>
+    setCollapsedDates((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const sections = useSections(state, route);
   const isWide = useIsWide();
@@ -199,6 +249,82 @@ export default function ListScreen({
   const contentPad = {
     paddingTop: insets.top + spacing.sm,
     paddingBottom: insets.bottom + 100,
+  };
+
+  // Project date view: the project's to-dos regrouped by their When date. Sourced
+  // from all project tasks (not the heading sections) so the per-bucket done/total
+  // is correct; completed rows show only when the setting is on, like the list.
+  const projectDateSections =
+    project && projectView === 'date'
+      ? groupByDate(
+          selectProjectTasks(state.tasks, project.id),
+          state.settings?.showCompleted
+        )
+      : [];
+
+  // --- Shared date-grouped list (project date view + Upcoming) --------------
+  // Both render date buckets as collapsible dividers with draggable/reorderable
+  // task rows underneath. Dropping a task under a bucket adopts that date; the
+  // manual order within a bucket persists via reorderTasks.
+
+  // Turn { key, title, subtitle, data, total, doneCount } date sections into
+  // ReorderableTaskList items: a collapsible divider per bucket (carrying its
+  // pie/count), then its already-ordered task rows.
+  const buildDateItems = (dateSections, color) => {
+    const items = [];
+    dateSections.forEach((s) => {
+      const collapsed = collapsedDates.has(s.key);
+      items.push({
+        key: `d:${s.key}`,
+        kind: 'divider',
+        dividerKey: s.key,
+        title: s.title,
+        subtitle: s.subtitle,
+        collapsible: true,
+        collapsed,
+        total: s.total,
+        done: s.doneCount,
+        color,
+      });
+      if (!collapsed) {
+        s.data.forEach((t) => items.push({ key: t.id, kind: 'task', task: t }));
+      }
+    });
+    return items;
+  };
+
+  // Commit a date-view drag: each task adopts the `when` of the divider above it
+  // ('no-date' clears it), then the visible order is persisted.
+  const whenForDivider = (dividerKey) => (dividerKey === 'no-date' ? null : dividerKey);
+  const commitDateLayout = (keys) => {
+    const orderedIds = [];
+    const firstDivider = keys.find((k) => k.startsWith('d:'));
+    let currentWhen = firstDivider ? whenForDivider(firstDivider.slice(2)) : null;
+    keys.forEach((k) => {
+      if (k.startsWith('d:')) {
+        currentWhen = whenForDivider(k.slice(2));
+        return;
+      }
+      orderedIds.push(k);
+      const task = state.tasks.find((t) => t.id === k);
+      if (task && task.when !== currentWhen) updateTask(k, { when: currentWhen });
+    });
+    reorderTasks(orderedIds);
+  };
+
+  const renderDateList = (dateSections, emptyKey) => {
+    const items = buildDateItems(dateSections, project?.color);
+    if (items.length === 0) return <EmptyState listId={emptyKey} />;
+    return (
+      <ReorderableTaskList
+        items={items}
+        // Show the project/area label in Upcoming; hide it inside a project.
+        showProject={!project}
+        onOpenTask={setOpenTaskId}
+        onCommitKeys={commitDateLayout}
+        onToggleDivider={toggleDate}
+      />
+    );
   };
 
   // Project view: flatten sections (main tasks + heading dividers + their tasks,
@@ -346,6 +472,30 @@ export default function ListScreen({
           <Text style={styles.emptyTrash}>Empty</Text>
         </Pressable>
       )}
+      {project && (
+        <View style={styles.viewToggle}>
+          {[
+            { mode: 'list', icon: 'list' },
+            { mode: 'date', icon: 'calendar-outline' },
+          ].map(({ mode, icon }) => {
+            const active = projectView === mode;
+            return (
+              <Pressable
+                key={mode}
+                hitSlop={6}
+                onPress={() => setProjectView(mode)}
+                style={[styles.viewToggleBtn, active && styles.viewToggleBtnActive]}
+              >
+                <Ionicons
+                  name={icon}
+                  size={17}
+                  color={active ? colors.accent : colors.textTertiary}
+                />
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 
@@ -373,24 +523,37 @@ export default function ListScreen({
         <View style={[styles.contentCol, centered && styles.contentColCentered]}>
         {titleHeader}
         {project ? (
-          // One drag surface for the whole project: heading dividers are fixed,
-          // tasks can be dragged within or across them. A per-section "+ Add
-          // task" and an "Add section" trigger let you build it out inline.
-          <ReorderableTaskList
-            items={projectItems}
-            showProject={false}
-            inProject
-            onOpenTask={setOpenTaskId}
-            onCommitKeys={commitProjectLayout}
-            onDeleteHeading={deleteHeading}
-            onUpdateHeading={updateHeading}
-            onToggleCollapse={toggleHeadingCollapsed}
-            onAddTask={handleAddInSection}
-            onAddSection={handleAddSectionAfter}
-            onEditSection={setEditSectionId}
-          />
+          projectView === 'date' ? (
+            // Date view: the project's open to-dos regrouped by scheduled date,
+            // as collapsible buckets with draggable/reorderable rows.
+            renderDateList(projectDateSections, 'project-date')
+          ) : (
+            // One drag surface for the whole project: heading dividers are fixed,
+            // tasks can be dragged within or across them. A per-section "+ Add
+            // task" and an "Add section" trigger let you build it out inline.
+            <ReorderableTaskList
+              items={projectItems}
+              showProject={false}
+              inProject
+              onOpenTask={setOpenTaskId}
+              onCommitKeys={commitProjectLayout}
+              onDeleteHeading={deleteHeading}
+              onUpdateHeading={updateHeading}
+              onToggleCollapse={toggleHeadingCollapsed}
+              onAddTask={handleAddInSection}
+              onAddSection={handleAddSectionAfter}
+              onEditSection={setEditSectionId}
+            />
+          )
         ) : isEmpty ? (
           <EmptyState listId={listId} />
+        ) : listId === 'upcoming' ? (
+          // Upcoming is the same date-grouped surface: collapsible date buckets
+          // with draggable/reorderable rows (dragging reschedules the task).
+          renderDateList(
+            groupByDate(selectForList(state.tasks, 'upcoming'), state.settings?.showCompleted),
+            'upcoming'
+          )
         ) : listId === 'today' && listReorderable ? (
           // Single drag surface: Today + This Evening divider, cross-draggable.
           <ReorderableTaskList
@@ -537,6 +700,7 @@ function EmptyState({ listId }) {
     someday: { icon: 'archive-outline', text: 'Nothing for someday' },
     logbook: { icon: 'checkmark-done-outline', text: 'Completed to-dos appear here' },
     trash: { icon: 'trash-outline', text: 'Trash is empty' },
+    'project-date': { icon: 'calendar-outline', text: 'No scheduled to-dos' },
   };
   const m = messages[listId] || { icon: 'list-outline', text: 'No to-dos yet' };
   return (
@@ -560,6 +724,20 @@ const styles = StyleSheet.create({
   },
   back: { flexDirection: 'row', alignItems: 'center' },
   emptyTrash: { ...typography.body, color: colors.deadline, paddingRight: spacing.md },
+  // Segmented list/date toggle shown in a project's nav bar.
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: colors.separator,
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+  },
+  viewToggleBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  viewToggleBtnActive: { backgroundColor: colors.card || colors.background },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',

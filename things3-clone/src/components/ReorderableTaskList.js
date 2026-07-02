@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -247,29 +247,83 @@ function AddSectionRow({ itemKey, afterHeadingId, onAddSection, ctx }) {
   );
 }
 
-// A fixed, non-draggable group header (e.g. "This Evening" in Today). Tasks can
-// be dragged across it; on commit the caller decides each task's group from
-// which side of the divider it landed on. The icon sits in the checkbox column
-// and the title aligns with task titles.
-function DividerRow({ itemKey, title, icon, ctx }) {
+// A fixed, non-draggable group header (e.g. "This Evening" in Today, or a date
+// bucket in the date views). Tasks can be dragged across it; on commit the
+// caller decides each task's group from which side of the divider it landed on.
+// The icon sits in the checkbox column and the title aligns with task titles.
+// When `collapsible`, the checkbox column shows a disclosure chevron and tapping
+// the header toggles the group (the caller then drops/adds its task rows).
+function DividerRow({
+  itemKey,
+  title,
+  subtitle,
+  icon,
+  collapsible,
+  collapsed,
+  dividerKey,
+  onToggleCollapse,
+  total,
+  done,
+  color,
+  ctx,
+}) {
   const { heights, showHandle } = ctx;
   const top = useRowTop(itemKey, ctx);
   const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
+  const progress =
+    total > 0 ? (
+      <View style={styles.dividerProgress}>
+        <Text style={styles.headingCount}>
+          {done}/{total}
+        </Text>
+        <ProgressPie progress={total ? done / total : 0} color={color || colors.accent} size={14} />
+      </View>
+    ) : null;
+  const header = collapsible ? (
+    // Collapsible date header: the chevron sits in the grip column and the title
+    // aligns with task titles — matching the project heading rows exactly.
+    <View style={[styles.dividerRow, !showHandle && styles.dividerRowInset]}>
+      {showHandle && <View style={styles.rowGutter} />}
+      <View style={styles.headingChevron}>
+        <Ionicons
+          name={collapsed ? 'chevron-forward' : 'chevron-down'}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </View>
+      <View style={styles.dividerTitleWrap}>
+        <Text style={styles.dividerTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.dividerSubtitle}>{subtitle}</Text> : null}
+      </View>
+      {progress}
+    </View>
+  ) : (
+    // Fixed sub-header (e.g. "This Evening"): the icon sits in the checkbox column.
+    <View style={styles.dividerRow}>
+      {showHandle && <View style={styles.rowGutter} />}
+      <View style={styles.dividerInner}>
+        <View style={styles.rowCheckCol}>
+          {icon && <Ionicons name={icon} size={15} color={colors.textTertiary} />}
+        </View>
+        <Text style={styles.dividerTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.dividerSubtitle}>{subtitle}</Text> : null}
+        {progress}
+      </View>
+    </View>
+  );
   return (
     <Animated.View style={style}>
       {/* The measured wrapper includes a spacer below the border line, so the
           first task in the group sits clear of the divider. A bare margin here
           wouldn't count toward the row height and the task would overlap it. */}
       <View onLayout={measure(heights, itemKey)}>
-        <View style={styles.dividerRow}>
-          {showHandle && <View style={styles.rowGutter} />}
-          <View style={styles.dividerInner}>
-            <View style={styles.rowCheckCol}>
-              {icon && <Ionicons name={icon} size={15} color={colors.textTertiary} />}
-            </View>
-            <Text style={styles.dividerTitle}>{title}</Text>
-          </View>
-        </View>
+        {collapsible ? (
+          <Pressable onPress={() => onToggleCollapse && onToggleCollapse(dividerKey)}>
+            {header}
+          </Pressable>
+        ) : (
+          header
+        )}
         <View style={styles.dividerSpacer} />
       </View>
     </Animated.View>
@@ -817,6 +871,7 @@ export default function ReorderableTaskList({
   onDeleteHeading,
   onUpdateHeading,
   onToggleCollapse,
+  onToggleDivider,
   onAddTask,
   onAddSection,
   onEditSection,
@@ -842,10 +897,19 @@ export default function ReorderableTaskList({
   const { positions, heights, kinds } = ctx;
   const keysKey = items.map((it) => it.key).join(',');
 
-  useEffect(() => {
+  // Reset row positions/kinds *synchronously* when the item set changes (e.g.
+  // toggling a project between its list and date views). Doing this in a
+  // useEffect would leave one committed frame where the new rows read stale
+  // positions and stack at top:0 — collapsing the container height so the
+  // ScrollView clamps and the list visibly jumps. Setting it during render
+  // means rows are placed correctly on the first frame; heights measured for
+  // tasks common to both views are retained, so there's no re-measure flash.
+  const prevKeys = React.useRef(keysKey);
+  if (prevKeys.current !== keysKey) {
     positions.value = Object.fromEntries(items.map((it, i) => [it.key, i]));
     kinds.value = Object.fromEntries(items.map((it) => [it.key, it.kind]));
-  }, [keysKey]);
+    prevKeys.current = keysKey;
+  }
 
   const commit = () => {
     const map = positions.value;
@@ -901,7 +965,15 @@ export default function ReorderableTaskList({
             key={item.key}
             itemKey={item.key}
             title={item.title}
+            subtitle={item.subtitle}
             icon={item.icon}
+            collapsible={item.collapsible}
+            collapsed={item.collapsed}
+            dividerKey={item.dividerKey}
+            onToggleCollapse={onToggleDivider}
+            total={item.total}
+            done={item.done}
+            color={item.color}
             ctx={ctx}
           />
         ) : item.kind === 'emptyslot' ? (
@@ -988,6 +1060,20 @@ const styles = StyleSheet.create({
   // (or the empty placeholder) sits clear of "This Evening".
   dividerSpacer: { height: spacing.md },
   dividerTitle: { ...typography.heading, color: colors.text },
+  // On mobile (no grip gutter) a collapsible date header still needs the same
+  // left inset the grip would otherwise provide.
+  dividerRowInset: { paddingLeft: spacing.lg },
+  dividerTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'baseline' },
+  dividerSubtitle: { ...typography.subhead, color: colors.textTertiary, marginLeft: spacing.sm },
+  // Pie + done/total pushed to the right edge of a date divider (mirrors the
+  // heading rows' progress indicator).
+  dividerProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginLeft: 'auto',
+    paddingRight: spacing.lg,
+  },
   emptySlot: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingTop: spacing.md },
   // Match a task row's inner padding so the message aligns with task titles.
   emptySlotInner: { flex: 1, paddingLeft: spacing.lg + 22 + spacing.md, paddingRight: spacing.lg },
