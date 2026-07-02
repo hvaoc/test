@@ -7,17 +7,15 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, addDays, WEEKDAYS, MONTHS_SHORT } from '../utils/date';
 
-const START_HOUR = 6;
 const END_HOUR = 23;
 const HOUR_H = 46;
 const SNAP = 15;
 const DEFAULT_DUR = 60;
 const PANEL_W = 236;
+const GRID_BOTTOM_PAD = 12; // room below the 23:00 label before the next day header
 
-const GRID_H = (END_HOUR - START_HOUR) * HOUR_H;
 const DHEADER_H = 34;
 const ALLDAY_H = 30;
-const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
 
 // Continuous range of days shown in the timeline (past .. future).
 const RANGE_PAST = 30;
@@ -67,7 +65,11 @@ function layoutOverlaps(timed) {
 // grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
 // panel. Tasks drag (long-press) onto any day's hour to time-block them, onto a
 // day's all-day strip to clear the time, or back to the panel to unschedule.
-export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
+export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0 }) {
+  const HOURS = END_HOUR - startHour;
+  const GRID_H = HOURS * HOUR_H + GRID_BOTTOM_PAD;
+  const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
+
   const [dragTask, setDragTask] = useState(null);
   const [dropInfo, setDropInfo] = useState(null); // { dayKey, top }
   const [showPanel, setShowPanel] = useState(true);
@@ -131,9 +133,9 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
     const within = rel - di * DAY_H;
     if (within < DHEADER_H + ALLDAY_H) return { mode: 'allday', dayKey };
     const gy = within - (DHEADER_H + ALLDAY_H);
-    let mins = START_HOUR * 60 + Math.round((gy / HOUR_H) * 60 / SNAP) * SNAP;
-    mins = clamp(mins, START_HOUR * 60, END_HOUR * 60 - SNAP);
-    return { mode: 'grid', dayKey, mins, top: ((mins - START_HOUR * 60) / 60) * HOUR_H };
+    let mins = startHour * 60 + Math.round((gy / HOUR_H) * 60 / SNAP) * SNAP;
+    mins = clamp(mins, startHour * 60, END_HOUR * 60 - SNAP);
+    return { mode: 'grid', dayKey, mins, top: ((mins - startHour * 60) / 60) * HOUR_H };
   };
 
   const begin = (task) => setDragTask(task);
@@ -214,6 +216,9 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
                 color={color}
                 ctx={dragCtx}
                 onOpen={onOpenTask}
+                startHour={startHour}
+                gridH={GRID_H}
+                dayH={DAY_H}
                 placeholder={dropInfo && dropInfo.dayKey === k ? { top: dropInfo.top, h: dropH } : null}
               />
             ))}
@@ -265,16 +270,16 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 }
 
 // One day: fixed-height header + all-day strip + hour grid with its blocks.
-function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder }) {
+function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder, startHour, gridH, dayH }) {
   const d = keyToDate(dayKey);
   const layout = layoutOverlaps(timed);
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  const showNow = isToday && nowMins >= START_HOUR * 60 && nowMins <= END_HOUR * 60;
-  const nowTop = ((nowMins - START_HOUR * 60) / 60) * HOUR_H;
+  const showNow = isToday && nowMins >= startHour * 60 && nowMins <= END_HOUR * 60;
+  const nowTop = ((nowMins - startHour * 60) / 60) * HOUR_H;
 
   return (
-    <View style={{ height: DAY_H }}>
+    <View style={{ height: dayH }}>
       <View style={[styles.dayHeader, { height: DHEADER_H }, isToday && styles.dayHeaderToday]}>
         <Text style={[styles.dayHeaderText, isToday && styles.dayHeaderTextToday]}>
           {WEEKDAYS[d.getDay()]}, {MONTHS_SHORT[d.getMonth()]} {d.getDate()}
@@ -292,9 +297,9 @@ function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeh
         {allDay.length > 8 && <Text style={styles.moreText}>+{allDay.length - 8}</Text>}
       </View>
 
-      <View style={[styles.grid, { height: GRID_H }]}>
-        {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
-          <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
+      <View style={[styles.grid, { height: gridH }]}>
+        {Array.from({ length: END_HOUR - startHour + 1 }, (_, i) => startHour + i).map((h) => (
+          <View key={h} style={[styles.hourRow, { top: (h - startHour) * HOUR_H }]}>
             <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
             <View style={styles.hourLine} />
           </View>
@@ -309,7 +314,7 @@ function DaySection({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeh
         )}
         <View style={styles.blockLayer}>
           {timed.map((t) => {
-            const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
+            const top = ((t.startMinutes - startHour * 60) / 60) * HOUR_H;
             const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 2);
             const done = t.status !== STATUS.OPEN;
             const { col = 0, count = 1 } = layout.get(t.id) || {};

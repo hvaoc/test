@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { colors, spacing, typography, radius } from '../theme';
+import { useTasks } from '../store/TasksContext';
 import DayPlanner from './DayPlanner';
 import WeekView from './WeekView';
 import MonthCalendar from './MonthCalendar';
@@ -9,6 +10,8 @@ import MonthCalendar from './MonthCalendar';
 // view; all three fill the pane and manage their own scrolling.
 export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
   const [mode, setMode] = useState('day');
+  const { state } = useTasks();
+  const startHour = state.settings.dayStartHour ?? 0;
   const common = { tasks, project, onOpenTask, onUpdateTask, onAddTask };
   return (
     <View style={styles.wrap}>
@@ -29,9 +32,9 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
       </View>
       <View style={styles.body}>
         {mode === 'day' ? (
-          <DayPlanner {...common} />
+          <DayPlanner {...common} startHour={startHour} />
         ) : mode === 'week' ? (
-          <WeekView {...common} />
+          <WeekView {...common} startHour={startHour} />
         ) : (
           <MonthCalendar {...common} />
         )}

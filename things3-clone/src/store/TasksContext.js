@@ -19,6 +19,7 @@ const TasksContext = createContext(null);
 const defaultSettings = {
   showCompleted: true, // show completed to-dos inside projects
   centeredContent: false, // constrain the content pane to a centered column
+  dayStartHour: 0, // first hour shown in Calendar Day/Week timelines (0 or 6)
 };
 
 const initialState = {

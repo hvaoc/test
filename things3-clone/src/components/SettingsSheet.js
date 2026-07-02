@@ -9,7 +9,7 @@ import { useTasks } from '../store/TasksContext';
 // shown inside projects; structured as a list so more settings can slot in.
 export default function SettingsSheet({ visible, onClose }) {
   const { state, setSetting, reset } = useTasks();
-  const { showCompleted, centeredContent } = state.settings;
+  const { showCompleted, centeredContent, dayStartHour } = state.settings;
 
   return (
     <BottomSheet visible={visible} onClose={onClose} title="Settings">
@@ -41,6 +41,32 @@ export default function SettingsSheet({ visible, onClose }) {
           trackColor={{ true: colors.accent, false: colors.separatorStrong }}
           ios_backgroundColor={colors.separatorStrong}
         />
+      </View>
+
+      <View style={styles.row}>
+        <View style={styles.labelWrap}>
+          <Text style={styles.label}>Day starts at</Text>
+          <Text style={styles.hint}>
+            First hour shown in the Calendar Day and Week timelines.
+          </Text>
+        </View>
+        <View style={styles.segment}>
+          {[
+            { h: 0, label: '12 AM' },
+            { h: 6, label: '6 AM' },
+          ].map((opt) => {
+            const active = (dayStartHour ?? 0) === opt.h;
+            return (
+              <Pressable
+                key={opt.h}
+                onPress={() => setSetting('dayStartHour', opt.h)}
+                style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+              >
+                <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{opt.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       <View style={styles.divider} />
@@ -76,6 +102,22 @@ const styles = StyleSheet.create({
   labelWrap: { flex: 1 },
   label: { ...typography.body, color: colors.text },
   hint: { ...typography.subhead, color: colors.textTertiary, marginTop: 2 },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: colors.separator,
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+  },
+  segmentBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: 6,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  segmentBtnActive: { backgroundColor: colors.card },
+  segmentText: { ...typography.subhead, color: colors.textSecondary },
+  segmentTextActive: { color: colors.text, fontWeight: '600' },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.separator,

@@ -7,8 +7,9 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, MONTHS, WEEKDAYS_SHORT } from '../utils/date';
 
-const HEADER_H = 40;
-const WEEKDAY_H = 22;
+const TITLE_H = 46; // month title band
+const WEEKDAY_H = 24; // SUN–SAT row, sits under the title
+const HEADER_H = TITLE_H + WEEKDAY_H; // sticky per-month header (title + weekdays)
 const WEEKS = 6;
 const FALLBACK_H = 640; // used until the viewport height is measured
 const PANEL_W = 236;
@@ -25,9 +26,11 @@ function whenKey(t) {
 const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
 // Continuous month calendar: month grids stack vertically and scroll across many
-// months (past + future), starting on the current month. Task chips drag between
-// days (across months) to reschedule; the right "Unscheduled" panel holds undated
-// tasks that can be dragged onto a day.
+// months (past + future), starting on the current month. The weekday row is
+// fixed; each month's title is a sticky section header that scrolls with its
+// month and pins to the top while that month is the one in view. Task chips drag
+// between days (across months) to reschedule; the right "Unscheduled" panel holds
+// undated tasks that can be dragged onto a day.
 export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
   const today = keyToDate(todayKey());
   const startY = today.getFullYear();
@@ -50,20 +53,18 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const [dropKey, setDropKey] = useState(null); // day being hovered
   const [newTitle, setNewTitle] = useState('');
   const [viewH, setViewH] = useState(0);
-  const [curIdx, setCurIdx] = useState(RANGE_BACK); // month currently in view
 
-  // Each month fills the full viewport height (like a single-month view); the
-  // list scrolls/pages between months. The month's own title lives in the fixed
-  // header, so a month section is just the weekday row + weeks.
+  // Each month fills the full viewport height (title + weekday row + weeks), so
+  // the list pages one month at a time. The title + weekday row form the sticky
+  // header, so together they take HEADER_H off a month's grid space.
   const monthH = viewH > 0 ? viewH : FALLBACK_H;
-  const weekH = (monthH - WEEKDAY_H) / WEEKS;
+  const weekH = (monthH - HEADER_H) / WEEKS;
 
   const rootRef = useRef(null);
-  const contentRef = useRef(null);
   const panelRef = useRef(null);
   const scrollRef = useRef(null);
+  const scrollYRef = useRef(0);
   const rectsRef = useRef(null);
-  const scrolledRef = useRef(false);
 
   const ghostX = useSharedValue(0);
   const ghostY = useSharedValue(0);
@@ -80,28 +81,31 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         else res();
       });
     const store = {};
-    Promise.all([grab(contentRef, 'content', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
+    Promise.all([grab(scrollRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
       rectsRef.current = store;
       if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
   };
 
-  // Resolve pointer -> a day key (grid), 'panel', or null.
+  // Resolve pointer -> a day key (grid), 'panel', or null. The scroll viewport is
+  // measured once at drag start; the day is computed analytically from the scroll
+  // offset (each month is TITLE_H + WEEKS*weekH tall).
   const computeDrop = (ax, ay) => {
     const c = rectsRef.current || {};
     if (c.panel) {
       const p = c.panel;
       if (ax >= p.x && ax <= p.x + p.w && ay >= p.y && ay <= p.y + p.h) return { mode: 'panel' };
     }
-    const content = c.content;
-    if (!content || ax < content.x || ax > content.x + content.w) return null;
-    const rel = ay - content.y;
+    const view = c.view;
+    if (!view || ax < view.x || ax > view.x + view.w) return null;
+    if (ay < view.y || ay > view.y + view.h) return null;
+    const rel = ay - view.y + scrollYRef.current;
     if (rel < 0 || rel >= NUM_MONTHS * monthH) return null;
     const mi = Math.floor(rel / monthH);
-    const within = rel - mi * monthH - WEEKDAY_H;
+    const within = rel - mi * monthH - HEADER_H;
     if (within < 0) return null;
     const row = Math.min(WEEKS - 1, Math.floor(within / weekH));
-    const col = Math.max(0, Math.min(6, Math.floor(((ax - content.x) / content.w) * 7)));
+    const col = Math.max(0, Math.min(6, Math.floor(((ax - view.x) / view.w) * 7)));
     const { y, m } = months[mi];
     const gridStart = new Date(y, m, 1 - new Date(y, m, 1).getDay());
     const dt = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + row * 7 + col);
@@ -133,7 +137,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   // Land on the current month once the viewport height is known (and keep it in
   // view if the height changes, e.g. a resize).
   useEffect(() => {
-    if (viewH > 0) scrollRef.current?.scrollTo({ y: RANGE_BACK * viewH, animated: false });
+    if (viewH > 0) scrollRef.current?.scrollTo({ y: RANGE_BACK * monthH, animated: false });
   }, [viewH]);
   const submitAdd = () => {
     const title = newTitle.trim();
@@ -144,14 +148,44 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
 
   const color = project?.color || colors.accent;
 
+  // Flatten months into [title, weeks, title, weeks, ...] so each title can be a
+  // sticky header (sticky indices are the even positions).
+  const items = [];
+  const stickyIndices = [];
+  months.forEach(({ y, m }) => {
+    stickyIndices.push(items.length);
+    items.push(
+      <View key={`t${y}-${m}`} style={[styles.monthHeader, { height: HEADER_H }]}>
+        <View style={[styles.monthTitleWrap, { height: TITLE_H }]}>
+          <Text style={styles.monthTitle}>{MONTHS[m]} {y}</Text>
+        </View>
+        <View style={[styles.weekdays, { height: WEEKDAY_H }]}>
+          {WEEKDAYS_SHORT.map((d) => (
+            <Text key={d} style={styles.weekday}>{d}</Text>
+          ))}
+        </View>
+      </View>
+    );
+    items.push(
+      <MonthWeeks
+        key={`w${y}-${m}`}
+        y={y}
+        m={m}
+        height={monthH - HEADER_H}
+        weekH={weekH}
+        byDate={byDate}
+        todayK={todayK}
+        color={color}
+        dropKey={dropKey}
+        ctx={dragCtx}
+        onOpen={onOpenTask}
+      />
+    );
+  });
+
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
       <View style={styles.toolbar}>
-        {/* The month currently in view sits here (in place of a "Calendar"
-            title), updating as you scroll between months. */}
-        <Text style={styles.title}>
-          {MONTHS[months[curIdx].m]} {months[curIdx].y}
-        </Text>
         <View style={styles.toolBtns}>
           <Pressable onPress={() => setShowPanel((v) => !v)} style={[styles.planBtn, showPanel && styles.planBtnActive]}>
             <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
@@ -164,38 +198,22 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
       </View>
 
       <View style={styles.row}>
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          showsVerticalScrollIndicator
-          onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
-          scrollEventThrottle={16}
-          onScroll={(e) => {
-            const i = Math.max(0, Math.min(NUM_MONTHS - 1, Math.round(e.nativeEvent.contentOffset.y / monthH)));
-            setCurIdx((prev) => (prev === i ? prev : i));
-          }}
-          snapToInterval={monthH}
-          decelerationRate="fast"
-          snapToAlignment="start"
-        >
-          <View ref={contentRef} collapsable={false}>
-            {months.map(({ y, m }) => (
-              <MonthGrid
-                key={`${y}-${m}`}
-                y={y}
-                m={m}
-                monthH={monthH}
-                weekH={weekH}
-                byDate={byDate}
-                todayK={todayK}
-                color={color}
-                dropKey={dropKey}
-                ctx={dragCtx}
-                onOpen={onOpenTask}
-              />
-            ))}
-          </View>
-        </ScrollView>
+        <View style={styles.leftCol}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.scroll}
+            showsVerticalScrollIndicator={false}
+            stickyHeaderIndices={stickyIndices}
+            onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
+            scrollEventThrottle={16}
+            onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+            snapToInterval={monthH}
+            decelerationRate="fast"
+            snapToAlignment="start"
+          >
+            {items}
+          </ScrollView>
+        </View>
 
         {showPanel && (
           <View ref={panelRef} collapsable={false} style={styles.panel}>
@@ -241,7 +259,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   );
 }
 
-function MonthGrid({ y, m, monthH, weekH, byDate, todayK, color, dropKey, ctx, onOpen }) {
+function MonthWeeks({ y, m, height, weekH, byDate, todayK, color, dropKey, ctx, onOpen }) {
   const first = new Date(y, m, 1);
   const gridStart = new Date(y, m, 1 - first.getDay());
   const weeks = [];
@@ -251,12 +269,7 @@ function MonthGrid({ y, m, monthH, weekH, byDate, todayK, color, dropKey, ctx, o
     weeks.push(days);
   }
   return (
-    <View style={{ height: monthH }}>
-      <View style={[styles.weekdays, { height: WEEKDAY_H }]}>
-        {WEEKDAYS_SHORT.map((d) => (
-          <Text key={d} style={styles.weekday}>{d}</Text>
-        ))}
-      </View>
+    <View style={{ height }}>
       {weeks.map((days, wi) => (
         <View key={wi} style={[styles.week, { height: weekH }]}>
           {days.map((dt) => {
@@ -326,8 +339,7 @@ function Draggable({ task, ctx, onOpen, style, children }) {
 const styles = StyleSheet.create({
   root: { flex: 1, paddingLeft: spacing.lg },
   fill: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: spacing.lg, paddingTop: spacing.xs, marginBottom: spacing.sm },
-  title: { ...typography.heading, color: colors.text },
+  toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', paddingRight: spacing.lg, paddingTop: spacing.xs, marginBottom: spacing.sm },
   toolBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   planBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   planBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
@@ -335,14 +347,16 @@ const styles = StyleSheet.create({
   todayBtn: { paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   todayText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
   row: { flex: 1, flexDirection: 'row' },
-  scroll: { flex: 1, paddingRight: spacing.lg },
-  monthHeader: { justifyContent: 'flex-end', paddingBottom: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separatorStrong },
+  leftCol: { flex: 1, paddingRight: spacing.lg },
+  scroll: { flex: 1 },
+  monthHeader: { backgroundColor: colors.background },
+  monthTitleWrap: { justifyContent: 'center', paddingLeft: 2 },
   monthTitle: { ...typography.title, color: colors.text },
   weekdays: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.separatorStrong,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separatorStrong,
     backgroundColor: colors.background,
   },
   weekday: { flex: 1, textAlign: 'center', ...typography.caption, color: colors.textTertiary, fontWeight: '600', textTransform: 'uppercase' },

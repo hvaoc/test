@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -7,14 +7,15 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
 import { todayKey, keyToDate, addDays, MONTHS_SHORT, WEEKDAYS_SHORT } from '../utils/date';
 
-const START_HOUR = 6;
 const END_HOUR = 23;
-const HOUR_H = 44;
+const DEFAULT_SCROLL_HOUR = 6; // open on the morning; user can scroll up to the day start
+const BASE_HOUR_H = 44; // minimum row height; grows to fill a tall viewport
+const TOP_PAD = 10; // breathing room so the first hour label isn't clipped
+const BOTTOM_PAD = 12;
 const GUTTER = 46;
 const SNAP = 15;
 const DEFAULT_DUR = 60;
 const PANEL_W = 236;
-const GRID_H = (END_HOUR - START_HOUR) * HOUR_H;
 
 function whenKey(t) {
   if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return todayKey();
@@ -32,15 +33,30 @@ function tint(hex) {
 // A 7-day week grid with a shared hour axis, an all-day row, and a now line.
 // Tasks drag (long-press) between days and times; the right "Unscheduled" Plan
 // panel holds undated tasks that can be dragged onto a day/time.
-export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
+export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0 }) {
+  const HOURS = END_HOUR - startHour;
   const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay());
   const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
   const [showPanel, setShowPanel] = useState(true);
   const [dragTask, setDragTask] = useState(null);
   const [newTitle, setNewTitle] = useState('');
+  const [gridViewH, setGridViewH] = useState(0);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const todayK = todayKey();
   const color = project?.color || colors.accent;
+
+  // Hours grow to fill the viewport when it's tall (no wasted space at the
+  // bottom), and fall back to a scrollable base height when it's short.
+  const hourH = gridViewH > 0 ? Math.max(BASE_HOUR_H, (gridViewH - TOP_PAD - BOTTOM_PAD) / HOURS) : BASE_HOUR_H;
+  const gridH = TOP_PAD + HOURS * hourH + BOTTOM_PAD;
+
+  // Open scrolled to the morning (early hours stay reachable by scrolling up).
+  useEffect(() => {
+    if (gridViewH > 0 && !didInitScroll.current) {
+      didInitScroll.current = true;
+      scrollRef.current?.scrollTo({ y: TOP_PAD + Math.max(0, DEFAULT_SCROLL_HOUR - startHour) * hourH, animated: false });
+    }
+  }, [gridViewH, hourH]);
 
   const timedByDay = {};
   const allDayByDay = {};
@@ -54,6 +70,8 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   });
 
   const rootRef = useRef(null);
+  const scrollRef = useRef(null);
+  const didInitScroll = useRef(false);
   const layerRef = useRef(null);
   const allDayRef = useRef(null);
   const panelRef = useRef(null);
@@ -83,8 +101,8 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
     if (c.allday) { const a = c.allday; if (ax >= a.x && ax <= a.x + a.w && ay >= a.y && ay <= a.y + a.h) return { mode: 'allday', dayKey: days[dayFromX(a, ax)] }; }
     const l = c.layer;
     if (!l || ax < l.x || ax > l.x + l.w || ay < l.y || ay > l.y + l.h) return null;
-    let mins = START_HOUR * 60 + Math.round(((ay - l.y) / HOUR_H) * 60 / SNAP) * SNAP;
-    mins = clamp(mins, START_HOUR * 60, END_HOUR * 60 - SNAP);
+    let mins = startHour * 60 + Math.round(((ay - l.y) / hourH) * 60 / SNAP) * SNAP;
+    mins = clamp(mins, startHour * 60, END_HOUR * 60 - SNAP);
     return { mode: 'grid', dayKey: days[dayFromX(l, ax)], mins };
   };
   const begin = (task) => setDragTask(task);
@@ -103,8 +121,8 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
 
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  const showNow = days.includes(todayK) && nowMins >= START_HOUR * 60 && nowMins <= END_HOUR * 60;
-  const nowTop = ((nowMins - START_HOUR * 60) / 60) * HOUR_H;
+  const showNow = days.includes(todayK) && nowMins >= startHour * 60 && nowMins <= END_HOUR * 60;
+  const nowTop = ((nowMins - startHour * 60) / 60) * hourH;
   const nowCol = days.indexOf(todayK);
 
   const first = keyToDate(days[0]);
@@ -177,10 +195,10 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
             </View>
           </View>
 
-          <ScrollView style={styles.scroll} showsVerticalScrollIndicator>
-            <View style={[styles.grid, { height: GRID_H }]}>
-              {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
-                <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
+          <ScrollView ref={scrollRef} style={styles.scroll} showsVerticalScrollIndicator={false} onLayout={(e) => setGridViewH(e.nativeEvent.layout.height)}>
+            <View style={[styles.grid, { height: gridH }]}>
+              {Array.from({ length: END_HOUR - startHour + 1 }, (_, i) => startHour + i).map((h) => (
+                <View key={h} style={[styles.hourRow, { top: TOP_PAD + (h - startHour) * hourH, height: hourH }]}>
                   <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
                   <View style={styles.hourLine} />
                 </View>
@@ -199,8 +217,8 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
                 )}
                 {days.map((k, di) =>
                   (timedByDay[k] || []).map((t) => {
-                    const top = ((t.startMinutes - START_HOUR * 60) / 60) * HOUR_H;
-                    const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * HOUR_H - 2);
+                    const top = ((t.startMinutes - startHour * 60) / 60) * hourH;
+                    const height = Math.max(18, ((t.durationMinutes || DEFAULT_DUR) / 60) * hourH - 2);
                     const doneT = t.status !== STATUS.OPEN;
                     return (
                       <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={[styles.block, { top, height, left: `${(di * 100) / 7}%`, width: `${100 / 7}%` }]}>
@@ -306,13 +324,13 @@ const styles = StyleSheet.create({
   moreText: { ...typography.caption, color: colors.textTertiary, fontSize: 10, paddingLeft: 4 },
   scroll: { flex: 1 },
   grid: { position: 'relative' },
-  hourRow: { position: 'absolute', left: 0, right: 0, height: HOUR_H, flexDirection: 'row', alignItems: 'flex-start' },
+  hourRow: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-start' },
   hourLabel: { width: GUTTER, ...typography.caption, color: colors.textTertiary, marginTop: -6, fontSize: 10, textAlign: 'right', paddingRight: 4, fontVariant: ['tabular-nums'] },
   hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
   colLayer: { position: 'absolute', top: 0, bottom: 0, right: 0, flexDirection: 'row' },
   colDivider: { flex: 1, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator },
   colToday: { backgroundColor: colors.accentSoft },
-  blockLayer: { position: 'absolute', top: 0, bottom: 0, right: 0 },
+  blockLayer: { position: 'absolute', top: TOP_PAD, bottom: 0, right: 0 },
   nowLine: { position: 'absolute', height: 2, backgroundColor: colors.deadline },
   nowDot: { position: 'absolute', left: -3, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
   block: { position: 'absolute', paddingHorizontal: 1 },
