@@ -50,11 +50,13 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const [dropKey, setDropKey] = useState(null); // day being hovered
   const [newTitle, setNewTitle] = useState('');
   const [viewH, setViewH] = useState(0);
+  const [curIdx, setCurIdx] = useState(RANGE_BACK); // month currently in view
 
   // Each month fills the full viewport height (like a single-month view); the
-  // list scrolls/pages between months.
+  // list scrolls/pages between months. The month's own title lives in the fixed
+  // header, so a month section is just the weekday row + weeks.
   const monthH = viewH > 0 ? viewH : FALLBACK_H;
-  const weekH = (monthH - HEADER_H - WEEKDAY_H) / WEEKS;
+  const weekH = (monthH - WEEKDAY_H) / WEEKS;
 
   const rootRef = useRef(null);
   const contentRef = useRef(null);
@@ -96,7 +98,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
     const rel = ay - content.y;
     if (rel < 0 || rel >= NUM_MONTHS * monthH) return null;
     const mi = Math.floor(rel / monthH);
-    const within = rel - mi * monthH - (HEADER_H + WEEKDAY_H);
+    const within = rel - mi * monthH - WEEKDAY_H;
     if (within < 0) return null;
     const row = Math.min(WEEKS - 1, Math.floor(within / weekH));
     const col = Math.max(0, Math.min(6, Math.floor(((ax - content.x) / content.w) * 7)));
@@ -145,7 +147,11 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
       <View style={styles.toolbar}>
-        <Text style={styles.title}>Calendar</Text>
+        {/* The month currently in view sits here (in place of a "Calendar"
+            title), updating as you scroll between months. */}
+        <Text style={styles.title}>
+          {MONTHS[months[curIdx].m]} {months[curIdx].y}
+        </Text>
         <View style={styles.toolBtns}>
           <Pressable onPress={() => setShowPanel((v) => !v)} style={[styles.planBtn, showPanel && styles.planBtnActive]}>
             <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
@@ -163,6 +169,11 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
           style={styles.scroll}
           showsVerticalScrollIndicator
           onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const i = Math.max(0, Math.min(NUM_MONTHS - 1, Math.round(e.nativeEvent.contentOffset.y / monthH)));
+            setCurIdx((prev) => (prev === i ? prev : i));
+          }}
           snapToInterval={monthH}
           decelerationRate="fast"
           snapToAlignment="start"
@@ -239,12 +250,8 @@ function MonthGrid({ y, m, monthH, weekH, byDate, todayK, color, dropKey, ctx, o
     for (let d = 0; d < 7; d++) days.push(new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + w * 7 + d));
     weeks.push(days);
   }
-  const sameYear = y === new Date().getFullYear();
   return (
     <View style={{ height: monthH }}>
-      <View style={[styles.monthHeader, { height: HEADER_H }]}>
-        <Text style={styles.monthTitle}>{MONTHS[m]}{sameYear ? '' : ` ${y}`}</Text>
-      </View>
       <View style={[styles.weekdays, { height: WEEKDAY_H }]}>
         {WEEKDAYS_SHORT.map((d) => (
           <Text key={d} style={styles.weekday}>{d}</Text>
@@ -331,7 +338,13 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, paddingRight: spacing.lg },
   monthHeader: { justifyContent: 'flex-end', paddingBottom: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separatorStrong },
   monthTitle: { ...typography.title, color: colors.text },
-  weekdays: { flexDirection: 'row' },
+  weekdays: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separatorStrong,
+    backgroundColor: colors.background,
+  },
   weekday: { flex: 1, textAlign: 'center', ...typography.caption, color: colors.textTertiary, fontWeight: '600', textTransform: 'uppercase' },
   week: { flexDirection: 'row' },
   cell: { flex: 1, borderTopWidth: StyleSheet.hairlineWidth, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.separator, padding: 3, gap: 2 },
