@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, Pressable, TextInput, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -33,6 +33,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   const [day, setDay] = useState(todayKey());
   const [dragTask, setDragTask] = useState(null);
   const [newTitle, setNewTitle] = useState('');
+  const [showPanel, setShowPanel] = useState(true);
 
   const rootRef = useRef(null);
   const gridRef = useRef(null);
@@ -123,6 +124,19 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
       <View style={styles.dayNav}>
         <Text style={styles.dayLabel}>{dayLabel}</Text>
         <View style={styles.dayNavBtns}>
+          <Pressable
+            onPress={() => setShowPanel((v) => !v)}
+            style={[styles.planBtn, showPanel && styles.planBtnActive]}
+          >
+            <Ionicons
+              name="albums-outline"
+              size={15}
+              color={showPanel ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.planText, showPanel && { color: colors.accent }]}>
+              Plan {untimed.length}
+            </Text>
+          </Pressable>
           <Pressable onPress={() => setDay(todayKey())} style={styles.todayBtn}>
             <Text style={styles.todayText}>Today</Text>
           </Pressable>
@@ -136,7 +150,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
       </View>
 
       <View style={styles.row}>
-        {/* Left: all-day strip + hour grid */}
+        {/* Left: all-day strip + hour grid (only the grid scrolls) */}
         <View style={styles.leftCol}>
           <View ref={allDayRef} collapsable={false} style={styles.allDay}>
             <Text style={styles.allDayLabel}>All day</Text>
@@ -157,6 +171,11 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
             </View>
           </View>
 
+          <ScrollView
+            style={styles.gridScroll}
+            contentContainerStyle={{ height: GRID_H }}
+            showsVerticalScrollIndicator={false}
+          >
           <View ref={gridRef} collapsable={false} style={[styles.grid, { height: GRID_H }]}>
             {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i).map((h) => (
               <View key={h} style={[styles.hourRow, { top: (h - START_HOUR) * HOUR_H }]}>
@@ -196,40 +215,45 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
               );
             })}
           </View>
+          </ScrollView>
         </View>
 
-        {/* Right: unscheduled panel */}
-        <View ref={panelRef} collapsable={false} style={styles.panel}>
-          <Text style={styles.panelTitle}>
-            Unscheduled <Text style={styles.panelCount}>{untimed.length}</Text>
-          </Text>
-          {untimed.map((t) => (
-            <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
-              <View style={styles.panelItem}>
-                <View style={[styles.panelDot, { borderColor: project?.color || colors.accent }]} />
-                <Text
-                  style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]}
-                  numberOfLines={2}
-                >
-                  {t.title || 'New To-Do'}
-                </Text>
+        {/* Right: unscheduled panel (toggled by the Plan button) */}
+        {showPanel && (
+          <View ref={panelRef} collapsable={false} style={styles.panel}>
+            <Text style={styles.panelTitle}>
+              Unscheduled <Text style={styles.panelCount}>{untimed.length}</Text>
+            </Text>
+            <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
+              {untimed.map((t) => (
+                <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
+                  <View style={styles.panelItem}>
+                    <View style={[styles.panelDot, { borderColor: project?.color || colors.accent }]} />
+                    <Text
+                      style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]}
+                      numberOfLines={2}
+                    >
+                      {t.title || 'New To-Do'}
+                    </Text>
+                  </View>
+                </Draggable>
+              ))}
+              <View style={styles.addRow}>
+                <Ionicons name="add" size={18} color={colors.textTertiary} />
+                <TextInput
+                  style={styles.addInput}
+                  value={newTitle}
+                  onChangeText={setNewTitle}
+                  onSubmitEditing={submitAdd}
+                  blurOnSubmit={false}
+                  placeholder="Add task"
+                  placeholderTextColor={colors.placeholder}
+                  returnKeyType="done"
+                />
               </View>
-            </Draggable>
-          ))}
-          <View style={styles.addRow}>
-            <Ionicons name="add" size={18} color={colors.textTertiary} />
-            <TextInput
-              style={styles.addInput}
-              value={newTitle}
-              onChangeText={setNewTitle}
-              onSubmitEditing={submitAdd}
-              blurOnSubmit={false}
-              placeholder="Add task"
-              placeholderTextColor={colors.placeholder}
-              returnKeyType="done"
-            />
+            </ScrollView>
           </View>
-        </View>
+        )}
       </View>
 
       {dragTask && (
@@ -282,14 +306,29 @@ function tint(hex) {
 }
 
 const styles = StyleSheet.create({
-  root: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  root: { flex: 1, paddingLeft: spacing.lg, paddingRight: spacing.lg },
   fill: { flex: 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   dayNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
+    paddingTop: spacing.xs,
   },
+  planBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    marginRight: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  planBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  planText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
   dayLabel: { ...typography.heading, color: colors.text },
   dayNavBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   todayBtn: {
@@ -303,8 +342,9 @@ const styles = StyleSheet.create({
   },
   todayText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
   navBtn: { padding: 2, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  row: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start' },
+  row: { flex: 1, flexDirection: 'row', gap: spacing.lg },
   leftCol: { flex: 1 },
+  gridScroll: { flex: 1 },
   allDay: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -355,11 +395,15 @@ const styles = StyleSheet.create({
   done: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   panel: {
     width: PANEL_W,
+    backgroundColor: colors.groupedBackground,
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: colors.separator,
-    paddingLeft: spacing.lg,
-    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    // Bleed to the pane's right edge so it reads as a sidebar like the app's.
+    marginRight: -spacing.lg,
   },
+  panelScroll: { flex: 1 },
   panelTitle: { ...typography.heading, color: colors.text, marginBottom: spacing.xs },
   panelCount: { ...typography.subhead, color: colors.textTertiary },
   panelItemWrap: {},

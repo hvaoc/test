@@ -23,7 +23,7 @@ const MAX_CHIPS = 4;
 // Month grid for a project: each day cell lists the tasks scheduled that day
 // (by their When date). Prev/next/Today navigate the months; tapping a chip
 // opens the task. Undated tasks are surfaced in a footer count.
-export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
+export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, fillHeight }) {
   const today = keyToDate(todayKey());
   const [mode, setMode] = useState('day');
   const [cursor, setCursor] = useState({ y: today.getFullYear(), m: today.getMonth() });
@@ -55,7 +55,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
   const todayK = todayKey();
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, fillHeight && styles.wrapFill]}>
       <View style={styles.modeRow}>
         {[
           { key: 'month', label: 'Month' },
@@ -78,6 +78,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
           onOpenTask={onOpenTask}
           onUpdateTask={onUpdateTask}
           onAddTask={onAddTask}
+          fillHeight={fillHeight}
         />
       ) : (
        <>
@@ -106,9 +107,9 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
         ))}
       </View>
 
-      <View style={styles.grid}>
+      <View style={[styles.grid, fillHeight && styles.gridFill]}>
         {weeks.map((days, wi) => (
-          <View key={wi} style={styles.week}>
+          <View key={wi} style={[styles.week, fillHeight && styles.weekFill]}>
             {days.map((dt) => {
               const k = dateKeyOf(dt.getFullYear(), dt.getMonth(), dt.getDate());
               const inMonth = dt.getMonth() === cursor.m;
@@ -161,6 +162,9 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
+  wrapFill: { flex: 1, paddingBottom: 0 },
+  gridFill: { flex: 1 },
+  weekFill: { flex: 1 },
   modeRow: {
     flexDirection: 'row',
     alignSelf: 'flex-start',

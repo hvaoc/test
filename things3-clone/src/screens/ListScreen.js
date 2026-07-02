@@ -554,6 +554,37 @@ export default function ListScreen({
     </View>
   );
 
+  // The Calendar view fills the pane and manages its own scrolling (the month
+  // grid stretches; the day timeline scrolls internally), so it renders in a
+  // flex column rather than inside the page's vertical ScrollView.
+  const isCalendar = project && projectView === 'calendar';
+  const calendarEl = (
+    <CalendarView
+      tasks={sections.flatMap((s) => s.data)}
+      project={project}
+      onOpenTask={setOpenTaskId}
+      onUpdateTask={updateTask}
+      onAddTask={(opts) => handleAddInSection(null, opts)}
+      fillHeight
+    />
+  );
+
+  if (isCalendar) {
+    return (
+      <View style={styles.container}>
+        {navBar}
+        {titleHeader}
+        <View style={styles.fillCol}>{calendarEl}</View>
+        <TaskDetailModal
+          visible={!!openTaskId}
+          taskId={openTaskId}
+          onClose={() => setOpenTaskId(null)}
+          onOpenTask={setOpenTaskId}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={contentPad} keyboardShouldPersistTaps="handled">
@@ -777,6 +808,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   contentCol: { width: '100%' },
   contentColCentered: { maxWidth: 1280, alignSelf: 'center' },
+  fillCol: { flex: 1, width: '100%' },
   navBar: {
     flexDirection: 'row',
     alignItems: 'center',
