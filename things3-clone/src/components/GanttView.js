@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, FlatList, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -146,52 +146,54 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
   const dragCtx = { DAY_W, commitBar, startKey, timelineWidth };
 
   // Keep the left task list and right timeline scrolled together vertically.
+  // Both are FlatLists, so use scrollToOffset (guarded against feedback).
   const syncTo = (toRef) => (e) => {
     if (syncingRef.current) return;
     syncingRef.current = true;
     const y = e.nativeEvent.contentOffset.y;
-    toRef.current?.scrollTo({ y, animated: false });
+    toRef.current?.scrollToOffset({ offset: y, animated: false });
     requestAnimationFrame(() => { syncingRef.current = false; });
   };
 
-  // Flatten rows into left (task grid) and right (timeline) cells, tracking the
-  // section-header indices so both columns can pin them as sticky headers.
-  const sectionIndices = [];
-  const leftItems = [];
-  const rightItems = [];
-  rows.forEach((r) => {
-    if (r.type === 'section') {
-      sectionIndices.push(leftItems.length);
-      leftItems.push(
-        <View key={r.key} style={[styles.gridSection, { height: SECTION_H }]}>
-          <Text style={styles.gridSectionText} numberOfLines={1}>{r.title}</Text>
-        </View>
-      );
-      rightItems.push(
-        <View key={r.key} style={[styles.tlSection, { height: SECTION_H, width: timelineWidth }]}>
-          <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
-        </View>
-      );
-    } else {
-      leftItems.push(
-        <Pressable key={r.key} style={[styles.gridRow, { height: ROW_H }]} onPress={() => onOpenTask(r.task.id)}>
-          <Text style={[styles.gName, r.task.status !== STATUS.OPEN && styles.done]} numberOfLines={1}>
-            {r.task.title || 'New To-Do'}
-          </Text>
-          <Text style={styles.gStart}>{r.span ? fmtShort(r.span[0]) : '—'}</Text>
-          <Text style={styles.gDur}>{r.span ? daysBetween(r.span[0], r.span[1]) + 1 : '—'}</Text>
-        </Pressable>
-      );
-      rightItems.push(
-        <View key={r.key} style={[styles.tlRow, { height: ROW_H, width: timelineWidth }]}>
-          <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
-          {r.span && (
-            <Bar task={r.task} span={r.span} color={color} progress={progressOf(r.task)} ctx={dragCtx} onOpen={onOpenTask} />
-          )}
-        </View>
-      );
-    }
-  });
+  // Section-header row indices, so both virtualized columns can pin them as
+  // sticky headers (stickyHeaderIndices refers to positions in `rows`).
+  const sectionIndices = rows.reduce((acc, r, i) => {
+    if (r.type === 'section') acc.push(i);
+    return acc;
+  }, []);
+  // Changes with any layout input so both FlatLists re-render their windows.
+  const rowExtra = `${DAY_W}|${numDays}|${scale}|${timelineWidth}`;
+
+  // Left (task grid) cell for a row.
+  const renderLeft = ({ item: r }) =>
+    r.type === 'section' ? (
+      <View style={[styles.gridSection, { height: SECTION_H }]}>
+        <Text style={styles.gridSectionText} numberOfLines={1}>{r.title}</Text>
+      </View>
+    ) : (
+      <Pressable style={[styles.gridRow, { height: ROW_H }]} onPress={() => onOpenTask(r.task.id)}>
+        <Text style={[styles.gName, r.task.status !== STATUS.OPEN && styles.done]} numberOfLines={1}>
+          {r.task.title || 'New To-Do'}
+        </Text>
+        <Text style={styles.gStart}>{r.span ? fmtShort(r.span[0]) : '—'}</Text>
+        <Text style={styles.gDur}>{r.span ? daysBetween(r.span[0], r.span[1]) + 1 : '—'}</Text>
+      </Pressable>
+    );
+
+  // Right (timeline) cell for a row. The day grid / weekend / today stripes are
+  // drawn once as a static background behind the list (see the render below), so
+  // rows only carry their bottom border and (for tasks) a bar — keeping the DOM
+  // small even with a very wide date range.
+  const renderRight = ({ item: r }) =>
+    r.type === 'section' ? (
+      <View style={[styles.tlSection, { height: SECTION_H, width: timelineWidth }]} />
+    ) : (
+      <View style={[styles.tlRow, { height: ROW_H, width: timelineWidth }]}>
+        {r.span && (
+          <Bar task={r.task} span={r.span} color={color} progress={progressOf(r.task)} ctx={dragCtx} onOpen={onOpenTask} />
+        )}
+      </View>
+    );
 
   return (
     <View style={styles.container}>
@@ -220,16 +222,22 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
             <Text style={[styles.gh, styles.ghStart]}>Start</Text>
             <Text style={[styles.gh, styles.ghDur]}>Days</Text>
           </View>
-          <ScrollView
+          <FlatList
             ref={leftVRef}
+            data={rows}
+            keyExtractor={(r) => r.key}
+            renderItem={renderLeft}
+            extraData={rowExtra}
             style={styles.vScroll}
             showsVerticalScrollIndicator={false}
             stickyHeaderIndices={sectionIndices}
             scrollEventThrottle={16}
             onScroll={syncTo(rightVRef)}
-          >
-            {leftItems}
-          </ScrollView>
+            initialNumToRender={30}
+            maxToRenderPerBatch={30}
+            windowSize={9}
+            removeClippedSubviews={false}
+          />
         </View>
 
         {/* Right: horizontal scroll wrapping a fixed timeline header + rows */}
@@ -283,16 +291,30 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
               </View>
             </View>
 
-            <ScrollView
-              ref={rightVRef}
-              style={styles.vScroll}
-              showsVerticalScrollIndicator={false}
-              stickyHeaderIndices={sectionIndices}
-              scrollEventThrottle={16}
-              onScroll={syncTo(leftVRef)}
-            >
-              {rightItems}
-            </ScrollView>
+            <View style={styles.tlBody}>
+              {/* One static day grid behind all rows: vertical gridlines,
+                  weekend shading and the today column are the same at every
+                  vertical scroll offset, so they don't need to be per-row. */}
+              <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
+              </View>
+              <FlatList
+                ref={rightVRef}
+                data={rows}
+                keyExtractor={(r) => r.key}
+                renderItem={renderRight}
+                extraData={rowExtra}
+                style={styles.vScroll}
+                showsVerticalScrollIndicator={false}
+                stickyHeaderIndices={sectionIndices}
+                scrollEventThrottle={16}
+                onScroll={syncTo(leftVRef)}
+                initialNumToRender={30}
+                maxToRenderPerBatch={30}
+                windowSize={9}
+                removeClippedSubviews={false}
+              />
+            </View>
           </View>
         </ScrollView>
       </View>
@@ -429,6 +451,7 @@ const styles = StyleSheet.create({
   zoomText: { ...typography.subhead, color: colors.textSecondary },
   zoomTextActive: { color: colors.text, fontWeight: '600' },
   body: { flex: 1, flexDirection: 'row', paddingLeft: spacing.lg },
+  tlBody: { flex: 1 },
   vScroll: { flex: 1 },
   grid: {
     width: LEFT_W,
