@@ -14,6 +14,8 @@ const ROW_H = 40;
 const SECTION_H = 32;
 const HEADER_H = 52;
 const BAR_H = 22;
+const PAD_BEFORE = 30; // empty days before the first task (horizontal scroll room)
+const PAD_AFTER = 30; // and after the last task
 
 const dayMs = 86400000;
 const daysBetween = (a, b) => Math.round((keyToDate(b) - keyToDate(a)) / dayMs);
@@ -50,7 +52,8 @@ function tint(hex, a) {
 export default function GanttView({ sections, project, onUpdateTask, onOpenTask }) {
   const { state } = useTasks();
   const [scale, setScale] = useState('day');
-  const DAY_W = scale === 'day' ? 38 : 16;
+  const [availW, setAvailW] = useState(0); // measured width of the timeline pane
+  const [bodyH, setBodyH] = useState(0); // measured height of the scroll body
 
   const color = project?.color || colors.accent;
 
@@ -68,8 +71,11 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
     });
   });
 
-  const gridRef = useRef(null);
-  const rectRef = useRef(null);
+  const hScrollRef = useRef(null);
+  const didScrollRef = useRef(false);
+  const leftVRef = useRef(null); // left task-list vertical scroll
+  const rightVRef = useRef(null); // right timeline vertical scroll
+  const syncingRef = useRef(false); // guard against scroll-sync feedback
 
   if (!allSpans.length) {
     return (
@@ -85,11 +91,16 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
     if (s < minKey) minKey = s;
     if (e > maxKey) maxKey = e;
   });
-  const startKey = addDays(minKey, -2);
-  const endKey = addDays(maxKey, 3);
+  const startKey = addDays(minKey, -PAD_BEFORE);
+  const endKey = addDays(maxKey, PAD_AFTER);
   const numDays = daysBetween(startKey, endKey) + 1;
   const days = Array.from({ length: numDays }, (_, i) => addDays(startKey, i));
   const todayK = todayKey();
+  // Day-column width: a base size, but stretched so the timeline fills the whole
+  // pane when the date range is short (no dead space on the right). A long range
+  // keeps the base width and scrolls horizontally instead.
+  const baseDayW = scale === 'day' ? 38 : 16;
+  const DAY_W = availW > 0 ? Math.max(baseDayW, availW / numDays) : baseDayW;
   const timelineWidth = numDays * DAY_W;
 
   // Month header segments (top row): contiguous runs of the same month.
@@ -107,13 +118,6 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
     if (kids.length) return kids.filter((k) => k.status !== STATUS.OPEN).length / kids.length;
     return t.status !== STATUS.OPEN ? 1 : 0;
   };
-
-  const measure = () =>
-    new Promise((res) => {
-      const n = gridRef.current;
-      if (n && n.measureInWindow) n.measureInWindow((x, y, w, h) => { rectRef.current = { x, y, w, h }; res(); });
-      else res();
-    });
 
   // Commit a bar drag. mode: 'move' | 'left' | 'right'. deltaDays already rounded.
   const commitBar = (taskId, mode, deltaDays) => {
@@ -139,7 +143,55 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
     }
   };
 
-  const dragCtx = { DAY_W, measure, rectRef, commitBar, startKey, timelineWidth };
+  const dragCtx = { DAY_W, commitBar, startKey, timelineWidth };
+
+  // Keep the left task list and right timeline scrolled together vertically.
+  const syncTo = (toRef) => (e) => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    const y = e.nativeEvent.contentOffset.y;
+    toRef.current?.scrollTo({ y, animated: false });
+    requestAnimationFrame(() => { syncingRef.current = false; });
+  };
+
+  // Flatten rows into left (task grid) and right (timeline) cells, tracking the
+  // section-header indices so both columns can pin them as sticky headers.
+  const sectionIndices = [];
+  const leftItems = [];
+  const rightItems = [];
+  rows.forEach((r) => {
+    if (r.type === 'section') {
+      sectionIndices.push(leftItems.length);
+      leftItems.push(
+        <View key={r.key} style={[styles.gridSection, { height: SECTION_H }]}>
+          <Text style={styles.gridSectionText} numberOfLines={1}>{r.title}</Text>
+        </View>
+      );
+      rightItems.push(
+        <View key={r.key} style={[styles.tlSection, { height: SECTION_H, width: timelineWidth }]}>
+          <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
+        </View>
+      );
+    } else {
+      leftItems.push(
+        <Pressable key={r.key} style={[styles.gridRow, { height: ROW_H }]} onPress={() => onOpenTask(r.task.id)}>
+          <Text style={[styles.gName, r.task.status !== STATUS.OPEN && styles.done]} numberOfLines={1}>
+            {r.task.title || 'New To-Do'}
+          </Text>
+          <Text style={styles.gStart}>{r.span ? fmtShort(r.span[0]) : '—'}</Text>
+          <Text style={styles.gDur}>{r.span ? daysBetween(r.span[0], r.span[1]) + 1 : '—'}</Text>
+        </Pressable>
+      );
+      rightItems.push(
+        <View key={r.key} style={[styles.tlRow, { height: ROW_H, width: timelineWidth }]}>
+          <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
+          {r.span && (
+            <Bar task={r.task} span={r.span} color={color} progress={progressOf(r.task)} ctx={dragCtx} onOpen={onOpenTask} />
+          )}
+        </View>
+      );
+    }
+  });
 
   return (
     <View style={styles.container}>
@@ -160,110 +212,90 @@ export default function GanttView({ sections, project, onUpdateTask, onOpenTask 
         </View>
       </View>
 
-      <ScrollView style={styles.body} showsVerticalScrollIndicator contentContainerStyle={{ minHeight: '100%' }}>
-        <View style={styles.split}>
-          {/* Left grid */}
-          <View style={styles.grid}>
-            <View style={[styles.gridHeader, { height: HEADER_H }]}>
-              <Text style={[styles.gh, styles.ghName]}>Task</Text>
-              <Text style={[styles.gh, styles.ghStart]}>Start</Text>
-              <Text style={[styles.gh, styles.ghDur]}>Days</Text>
-            </View>
-            {rows.map((r) =>
-              r.type === 'section' ? (
-                <View key={r.key} style={[styles.gridSection, { height: SECTION_H }]}>
-                  <Text style={styles.gridSectionText} numberOfLines={1}>{r.title}</Text>
-                </View>
-              ) : (
-                <Pressable
-                  key={r.key}
-                  style={[styles.gridRow, { height: ROW_H }]}
-                  onPress={() => onOpenTask(r.task.id)}
-                >
-                  <Text
-                    style={[styles.gName, r.task.status !== STATUS.OPEN && styles.done]}
-                    numberOfLines={1}
-                  >
-                    {r.task.title || 'New To-Do'}
-                  </Text>
-                  <Text style={styles.gStart}>{r.span ? fmtShort(r.span[0]) : '—'}</Text>
-                  <Text style={styles.gDur}>{r.span ? daysBetween(r.span[0], r.span[1]) + 1 : '—'}</Text>
-                </Pressable>
-              )
-            )}
+      <View style={styles.body} onLayout={(e) => setBodyH(e.nativeEvent.layout.height)}>
+        {/* Left: fixed Task/Start/Days header + vertically-scrolling task list */}
+        <View style={styles.grid}>
+          <View style={[styles.gridHeader, { height: HEADER_H }]}>
+            <Text style={[styles.gh, styles.ghName]}>Task</Text>
+            <Text style={[styles.gh, styles.ghStart]}>Start</Text>
+            <Text style={[styles.gh, styles.ghDur]}>Days</Text>
           </View>
-
-          {/* Right timeline */}
-          <ScrollView horizontal showsHorizontalScrollIndicator style={styles.tlScroll}>
-            <View
-              ref={gridRef}
-              collapsable={false}
-              style={{ width: timelineWidth }}
-            >
-              {/* header: months + days */}
-              <View style={[styles.tlHeader, { height: HEADER_H, width: timelineWidth }]}>
-                <View style={styles.tlMonths}>
-                  {months.map((m) => (
-                    <View key={m.startIdx} style={[styles.tlMonth, { width: m.span * DAY_W }]}>
-                      <Text style={styles.tlMonthText} numberOfLines={1}>{m.label}</Text>
-                    </View>
-                  ))}
-                </View>
-                <View style={styles.tlDays}>
-                  {days.map((k, i) => {
-                    const d = keyToDate(k);
-                    const wd = d.getDay();
-                    const showDay = scale === 'day' || wd === 1; // week scale: Mondays
-                    return (
-                      <View
-                        key={k}
-                        style={[
-                          styles.tlDay,
-                          { width: DAY_W },
-                          (wd === 0 || wd === 6) && styles.tlWeekend,
-                          k === todayK && styles.tlTodayCol,
-                        ]}
-                      >
-                        {showDay && (
-                          <Text style={[styles.tlDayText, k === todayK && styles.tlTodayText]}>
-                            {scale === 'day' ? d.getDate() : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`}
-                          </Text>
-                        )}
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* rows */}
-              {rows.map((r) => {
-                if (r.type === 'section') {
-                  return (
-                    <View key={r.key} style={[styles.tlSection, { height: SECTION_H, width: timelineWidth }]}>
-                      <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
-                    </View>
-                  );
-                }
-                return (
-                  <View key={r.key} style={[styles.tlRow, { height: ROW_H, width: timelineWidth }]}>
-                    <DayGrid days={days} DAY_W={DAY_W} todayK={todayK} />
-                    {r.span && (
-                      <Bar
-                        task={r.task}
-                        span={r.span}
-                        color={color}
-                        progress={progressOf(r.task)}
-                        ctx={dragCtx}
-                        onOpen={onOpenTask}
-                      />
-                    )}
-                  </View>
-                );
-              })}
-            </View>
+          <ScrollView
+            ref={leftVRef}
+            style={styles.vScroll}
+            showsVerticalScrollIndicator={false}
+            stickyHeaderIndices={sectionIndices}
+            scrollEventThrottle={16}
+            onScroll={syncTo(rightVRef)}
+          >
+            {leftItems}
           </ScrollView>
         </View>
-      </ScrollView>
+
+        {/* Right: horizontal scroll wrapping a fixed timeline header + rows */}
+        <ScrollView
+          ref={hScrollRef}
+          horizontal
+          showsHorizontalScrollIndicator
+          style={styles.tlScroll}
+          onLayout={(e) => setAvailW(e.nativeEvent.layout.width)}
+          onContentSizeChange={() => {
+            // Open scrolled to the first task (a few days of lead-in), leaving
+            // the padding days reachable by scrolling left/right.
+            if (didScrollRef.current) return;
+            didScrollRef.current = true;
+            hScrollRef.current?.scrollTo({ x: Math.max(0, (PAD_BEFORE - 3) * DAY_W), animated: false });
+          }}
+        >
+          <View style={{ width: timelineWidth, height: bodyH }}>
+            {/* Fixed header: months + days */}
+            <View style={[styles.tlHeader, { height: HEADER_H, width: timelineWidth }]}>
+              <View style={styles.tlMonths}>
+                {months.map((m) => (
+                  <View key={m.startIdx} style={[styles.tlMonth, { width: m.span * DAY_W }]}>
+                    <Text style={styles.tlMonthText} numberOfLines={1}>{m.label}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.tlDays}>
+                {days.map((k) => {
+                  const d = keyToDate(k);
+                  const wd = d.getDay();
+                  const showDay = scale === 'day' || wd === 1; // week scale: Mondays
+                  return (
+                    <View
+                      key={k}
+                      style={[
+                        styles.tlDay,
+                        { width: DAY_W },
+                        (wd === 0 || wd === 6) && styles.tlWeekend,
+                        k === todayK && styles.tlTodayCol,
+                      ]}
+                    >
+                      {showDay && (
+                        <Text style={[styles.tlDayText, k === todayK && styles.tlTodayText]}>
+                          {scale === 'day' ? d.getDate() : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+
+            <ScrollView
+              ref={rightVRef}
+              style={styles.vScroll}
+              showsVerticalScrollIndicator={false}
+              stickyHeaderIndices={sectionIndices}
+              scrollEventThrottle={16}
+              onScroll={syncTo(leftVRef)}
+            >
+              {rightItems}
+            </ScrollView>
+          </View>
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -396,8 +428,8 @@ const styles = StyleSheet.create({
   zoomBtnActive: { backgroundColor: colors.card },
   zoomText: { ...typography.subhead, color: colors.textSecondary },
   zoomTextActive: { color: colors.text, fontWeight: '600' },
-  body: { flex: 1 },
-  split: { flexDirection: 'row', paddingLeft: spacing.lg },
+  body: { flex: 1, flexDirection: 'row', paddingLeft: spacing.lg },
+  vScroll: { flex: 1 },
   grid: {
     width: LEFT_W,
     borderRightWidth: StyleSheet.hairlineWidth,
