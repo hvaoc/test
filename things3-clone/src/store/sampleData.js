@@ -196,6 +196,63 @@ export function buildSampleData() {
   sess(cBE, 'Zero-downtime Migrations — Gergely O.', 960, 45, 'Room B');
   sess(cWS, 'AI Pair Programming', 960, 60, 'Room C');
 
+  // ---- Website Redesign: a phased plan across ~3 months (for the Gantt) ---
+  // Every task has a start (when) + end (deadline) so it draws a real bar;
+  // phases cascade and overlap, a few early tasks are done (progress fill), and
+  // "Go live" is a single-day milestone.
+  const projSite = {
+    id: uid('proj'), name: 'Website Redesign', emoji: '🎨',
+    notes: 'Full redesign & rebuild — a phased plan across the quarter.',
+    areaId: areaWork.id, color: '#6c5ce7', when: null, deadline: addDays(t, 86),
+    status: STATUS.OPEN, createdAt: now, completedAt: null,
+  };
+  const sDisc = { id: uid('head'), projectId: projSite.id, title: 'Discovery', order: 0 };
+  const sDes = { id: uid('head'), projectId: projSite.id, title: 'Design', order: 1 };
+  const sDev = { id: uid('head'), projectId: projSite.id, title: 'Development', order: 2 };
+  const sCont = { id: uid('head'), projectId: projSite.id, title: 'Content', order: 3 };
+  const sTest = { id: uid('head'), projectId: projSite.id, title: 'QA & Testing', order: 4 };
+  const sLaunch = { id: uid('head'), projectId: projSite.id, title: 'Launch', order: 5 };
+  // bar(section, title, startOffset, endOffset, extra) — offsets are days from today.
+  const bar = (h, title, s, e, extra = {}) =>
+    mk({ projectId: projSite.id, areaId: areaWork.id, headingId: h.id, title, when: addDays(t, s), deadline: addDays(t, e), ...extra });
+
+  // Discovery — weeks 1–2, partly in the past (so some are complete).
+  bar(sDisc, 'Stakeholder interviews', -12, -5, { ...done(6), tags: ['Research'] });
+  bar(sDisc, 'User research & surveys', -8, 2, { ...done(1), tags: ['Research'] });
+  bar(sDisc, 'Competitive analysis', -3, 6, { priority: 'medium', tags: ['Research'] });
+  bar(sDisc, 'Requirements & scope doc', 4, 12, { priority: 'high', tags: ['Content'] });
+
+  // Design — overlaps the tail of Discovery, runs ~5 weeks.
+  bar(sDes, 'Information architecture', 8, 16, { tags: ['Design'] });
+  bar(sDes, 'Wireframes', 13, 25, { priority: 'high', tags: ['Design'] });
+  bar(sDes, 'Visual design system', 22, 40, { tags: ['Design'] });
+  bar(sDes, 'High-fidelity mockups', 32, 46, { priority: 'medium', tags: ['Design'] });
+  bar(sDes, 'Design review & sign-off', 44, 48, { tags: ['Design'] });
+
+  // Development — starts mid-design; the longest phase.
+  bar(sDev, 'Frontend scaffolding', 25, 33, { tags: ['Frontend'] });
+  bar(sDev, 'Component library', 32, 52, { priority: 'high', tags: ['Frontend'] });
+  bar(sDev, 'Page templates', 46, 63, { tags: ['Frontend'] });
+  bar(sDev, 'CMS integration', 54, 69, { priority: 'medium', tags: ['Backend'] });
+  bar(sDev, 'Search & API integration', 60, 73, { tags: ['Backend'] });
+
+  // Content — parallel to late development.
+  bar(sCont, 'Copywriting', 35, 55, { tags: ['Content'] });
+  bar(sCont, 'Photography & assets', 44, 56, { tags: ['Content'] });
+  bar(sCont, 'Content migration', 60, 70, { priority: 'medium', tags: ['Content'] });
+
+  // QA & Testing.
+  bar(sTest, 'Cross-browser QA', 66, 76, { tags: ['QA'] });
+  bar(sTest, 'Accessibility audit', 68, 77, { priority: 'high', tags: ['QA'] });
+  bar(sTest, 'Performance tuning', 72, 80, { tags: ['QA'] });
+  bar(sTest, 'Bug bash & fixes', 76, 84, { priority: 'high', tags: ['QA'] });
+
+  // Launch.
+  bar(sLaunch, 'Staging deploy', 81, 83, { tags: ['Ops'] });
+  bar(sLaunch, 'Final review', 83, 85, { priority: 'high', tags: ['Ops'] });
+  bar(sLaunch, 'Go live', 86, 86, { priority: 'high', tags: ['Ops'] }); // milestone
+  bar(sLaunch, 'Post-launch monitoring', 87, 93, { tags: ['Ops'] });
+
   // ---- Generated projects ------------------------------------------------
   // Five more projects, each with 5-7 sections and many tasks whose dates are
   // spread across ~4 months, so the list/board/calendar/gantt/upcoming views
@@ -255,12 +312,38 @@ export function buildSampleData() {
     });
   });
 
+  // ---- Stress test: one project with 2000 tasks -------------------------
+  // 20 sections x 100 tasks. Dates/priorities/labels/completed are spread so
+  // every view has volume, but kept off "today" mostly so smart lists don't
+  // flood. Useful for profiling list/board/calendar/gantt rendering.
+  const projStress = {
+    id: uid('proj'), name: 'Stress Test · 2k', emoji: '🧪',
+    notes: '2000 tasks to stress-test rendering across all views.',
+    areaId: areaWork.id, color: '#636e72', when: null, deadline: null,
+    status: STATUS.OPEN, createdAt: now, completedAt: null,
+  };
+  const stressHeadings = [];
+  for (let si = 0; si < 20; si++) {
+    const h = { id: uid('head'), projectId: projStress.id, title: `Batch ${si + 1}`, order: si };
+    stressHeadings.push(h);
+    for (let k = 0; k < 100; k++) {
+      const n = si * 100 + k;
+      const over = { projectId: projStress.id, areaId: areaWork.id, headingId: h.id, title: `Task #${n + 1}` };
+      if (n % 4 === 0) over.when = addDays(t, 5 + ((n * 7) % 120)); // future only, keeps Today clean
+      if (n % 5 === 0 && over.when) over.deadline = addDays(over.when, 2 + (n % 6));
+      if (n % 7 === 0) over.priority = GPRI[n % 3];
+      if (n % 3 === 0) over.tags = [GTAGS[n % GTAGS.length]];
+      if (n % 11 === 0) { over.status = STATUS.COMPLETED; over.completedAt = now - (n % 30) * day; }
+      mk(over);
+    }
+  }
+
   return {
     version: 4,
     areas: [areaWork, areaPersonal],
-    projects: [projLaunch, projTrip, projConf, ...genProjects],
-    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack, cKey, cFE, cBE, cWS, cCom, ...genHeadings],
+    projects: [projLaunch, projTrip, projConf, projSite, ...genProjects, projStress],
+    headings: [hDesign, hDev, hQA, hMkt, hPlan, hPack, cKey, cFE, cBE, cWS, cCom, sDisc, sDes, sDev, sCont, sTest, sLaunch, ...genHeadings, ...stressHeadings],
     tasks,
-    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Travel', 'Errand', 'Home', 'Important', 'Main Hall', 'Room A', 'Room B', 'Room C', 'Lounge'],
+    tags: ['Design', 'Frontend', 'Backend', 'DevOps', 'QA', 'Content', 'Social', 'Ops', 'Finance', 'Research', 'Travel', 'Errand', 'Home', 'Important', 'Main Hall', 'Room A', 'Room B', 'Room C', 'Lounge'],
   };
 }
