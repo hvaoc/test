@@ -126,7 +126,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   const updateDrop = (ax, ay) => {
     const d = computeDrop(ax, ay);
     if (d && d.mode === 'grid') {
-      setDropInfo((prev) => (prev && prev.dayKey === d.dayKey && prev.top === d.top ? prev : { dayKey: d.dayKey, top: d.top }));
+      setDropInfo((prev) => (prev && prev.dayKey === d.dayKey && prev.top === d.top ? prev : { dayKey: d.dayKey, top: d.top, mins: d.mins }));
     } else {
       setDropInfo((prev) => (prev ? null : prev));
     }
@@ -215,7 +215,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
         startHour={startHour}
         gridH={GRID_H}
         bodyH={ALLDAY_H + GRID_H}
-        placeholder={dropInfo && dropInfo.dayKey === item.k ? { top: dropInfo.top, h: dropH } : null}
+        placeholder={dropInfo && dropInfo.dayKey === item.k ? { top: dropInfo.top, h: dropH, mins: dropInfo.mins } : null}
       />
     );
 
@@ -363,7 +363,11 @@ function DayBody({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placehold
           </View>
         )}
         {placeholder && (
-          <View style={[styles.dropPlaceholder, { top: placeholder.top, height: placeholder.h }]} pointerEvents="none" />
+          <View style={[styles.dropLine, { top: placeholder.top }]} pointerEvents="none">
+            <View style={styles.dropDot} />
+            <View style={styles.dropRule} />
+            <Text style={styles.dropTime}>{fmt(placeholder.mins)}</Text>
+          </View>
         )}
         <View style={styles.blockLayer}>
           {timed.map((t) => {
@@ -493,11 +497,11 @@ const styles = StyleSheet.create({
   hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
   nowLine: { position: 'absolute', left: 44, right: 0, height: 2, backgroundColor: colors.deadline },
   nowDot: { position: 'absolute', left: -4, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
-  dropPlaceholder: {
-    position: 'absolute', left: 50, right: 4,
-    borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.accent,
-    backgroundColor: colors.accentSoft, borderRadius: radius.sm,
-  },
+  // Line drop indicator: a dot + rule + snapped time, matching the day-peek.
+  dropLine: { position: 'absolute', left: 50, right: 4, height: 0, flexDirection: 'row', alignItems: 'center' },
+  dropDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent, marginLeft: -4 },
+  dropRule: { flex: 1, height: 2, backgroundColor: colors.accent, borderRadius: 1 },
+  dropTime: { ...typography.caption, color: colors.accent, fontWeight: '700', fontSize: 10, marginLeft: 4, marginRight: 4 },
   // Blocks live in a layer that starts after the hour labels; each block's
   // left/width is a % of the layer so overlapping ones sit side by side.
   blockLayer: { position: 'absolute', left: 50, right: 4, top: 0, bottom: 0 },

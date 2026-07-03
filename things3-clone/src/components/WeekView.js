@@ -40,6 +40,7 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
   const [showPanel, setShowPanel] = useState(true);
   const [dragTask, setDragTask] = useState(null);
+  const [dropInfo, setDropInfo] = useState(null); // { di, top, mins } — live drop line
   const [newTitle, setNewTitle] = useState('');
   const [gridViewH, setGridViewH] = useState(0);
   // Optionally drop Sat/Sun so weekdays get wider, cleaner columns.
@@ -108,12 +109,22 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
     if (!l || ax < l.x || ax > l.x + l.w || ay < l.y || ay > l.y + l.h) return null;
     let mins = startHour * 60 + Math.round(((ay - l.y) / hourH) * 60 / SNAP) * SNAP;
     mins = clamp(mins, startHour * 60, END_HOUR * 60 - SNAP);
-    return { mode: 'grid', dayKey: days[dayFromX(l, ax)], mins };
+    const di = dayFromX(l, ax);
+    return { mode: 'grid', dayKey: days[di], mins, di, top: ((mins - startHour * 60) / 60) * hourH };
   };
   const begin = (task) => setDragTask(task);
-  const cancelDrag = () => setDragTask(null);
+  const cancelDrag = () => { setDragTask(null); setDropInfo(null); };
+  const updateDrop = (ax, ay) => {
+    const d = computeDrop(ax, ay);
+    if (d && d.mode === 'grid') {
+      setDropInfo((prev) => (prev && prev.di === d.di && prev.top === d.top ? prev : { di: d.di, top: d.top, mins: d.mins }));
+    } else {
+      setDropInfo((prev) => (prev ? null : prev));
+    }
+  };
   const end = (taskId, ax, ay) => {
     setDragTask(null);
+    setDropInfo(null);
     const d = computeDrop(ax, ay);
     const task = tasks.find((x) => x.id === taskId);
     if (!d || !task) return;
@@ -121,7 +132,7 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
     else if (d.mode === 'allday') onUpdateTask(taskId, { when: d.dayKey, startMinutes: null });
     else if (d.mode === 'panel') onUpdateTask(taskId, { when: null, startMinutes: null });
   };
-  const ctx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, end };
+  const ctx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, updateDrop, end };
   const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
   const nowMins = nowMinutes();
@@ -217,6 +228,14 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
                     <View style={styles.nowDot} />
                   </View>
                 )}
+                {/* Line drop indicator in the target column, matching the day-peek. */}
+                {dropInfo && (
+                  <View style={[styles.dropLine, { top: dropInfo.top, left: `${(dropInfo.di * 100) / N}%`, width: `${100 / N}%` }]} pointerEvents="none">
+                    <View style={styles.dropDot} />
+                    <View style={styles.dropRule} />
+                    <Text style={styles.dropTime}>{fmt(dropInfo.mins)}</Text>
+                  </View>
+                )}
                 {days.map((k, di) => {
                   // Split overlapping events within a day into side-by-side
                   // sub-columns so every parallel session stays readable.
@@ -300,6 +319,7 @@ function Draggable({ task, ctx, onOpen, style, children }) {
       if (!moved.value) return;
       ctx.ghostX.value = e.absoluteX - ctx.rootX.value - 16;
       ctx.ghostY.value = e.absoluteY - ctx.rootY.value - 12;
+      runOnJS(ctx.updateDrop)(e.absoluteX, e.absoluteY);
     })
     .onEnd((e) => { if (moved.value) runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY); else runOnJS(ctx.cancelDrag)(); });
   return (
@@ -354,6 +374,10 @@ const styles = StyleSheet.create({
   blockLayer: { position: 'absolute', top: TOP_PAD, bottom: 0, right: 0 },
   nowLine: { position: 'absolute', height: 2, backgroundColor: colors.deadline },
   nowDot: { position: 'absolute', left: -3, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
+  dropLine: { position: 'absolute', height: 0, flexDirection: 'row', alignItems: 'center' },
+  dropDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent, marginLeft: -4 },
+  dropRule: { flex: 1, height: 2, backgroundColor: colors.accent, borderRadius: 1 },
+  dropTime: { ...typography.caption, color: colors.accent, fontWeight: '700', fontSize: 10, marginLeft: 4, marginRight: 2 },
   block: { position: 'absolute', paddingHorizontal: 1 },
   blockInner: { flex: 1, borderLeftWidth: 3, borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1, overflow: 'hidden' },
   blockTitle: { ...typography.caption, color: colors.text, fontWeight: '600', fontSize: 10 },
