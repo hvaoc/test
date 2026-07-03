@@ -31,6 +31,7 @@ import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
 import GanttView from '../components/GanttView';
 import DisplayMenu from '../components/DisplayMenu';
+import VirtualTaskList from '../components/VirtualTaskList';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -756,6 +757,70 @@ export default function ListScreen({
         {navBar}
         {titleHeader}
         <View style={styles.fillCol}>{fullPaneEl}</View>
+        <TaskDetailModal
+          visible={!!openTaskId}
+          taskId={openTaskId}
+          onClose={() => setOpenTaskId(null)}
+          onOpenTask={setOpenTaskId}
+        />
+      </View>
+    );
+  }
+
+  // Flat items for whichever non-full-pane list surface is active, so any of
+  // them can fall back to a virtualized (windowed) list. Only rows near the
+  // viewport stay in the DOM, so every list scales to any number of tasks.
+  let surfaceItems = null;
+  let surfaceShowProject = false;
+  if (project) {
+    if (projectView === 'list' && !groupedSections) surfaceItems = projectItems;
+    else if (projectView === 'list' && groupedSections) surfaceItems = buildDateItems(groupedSections, project.color);
+    else if (projectView === 'date') surfaceItems = buildDateItems(projectDateSections, project.color);
+  } else if (listId === 'upcoming') {
+    surfaceItems = buildDateItems(
+      groupByDate(selectForList(state.tasks, 'upcoming'), state.settings?.showCompleted, dateFormat),
+      null
+    );
+    surfaceShowProject = true;
+  } else if (listId === 'today' && listReorderable) {
+    surfaceItems = todayItems;
+    surfaceShowProject = true;
+  } else if (!isEmpty) {
+    // Generic smart list / area: flatten its sections into divider + task rows.
+    const flat = [];
+    sections.forEach((s) => {
+      if (s.title) {
+        flat.push({
+          key: `d:${s.key}`, kind: 'divider', title: s.title, subtitle: s.subtitle || null,
+          collapsible: false, total: s.total || 0, done: s.doneCount || 0,
+        });
+      }
+      (s.data || []).forEach((t) => flat.push({ key: t.id, kind: 'task', task: t }));
+    });
+    surfaceItems = flat;
+    surfaceShowProject = true;
+  }
+
+  // Above ~120 rows, virtualize. Trades rich drag-reorder (impractical at that
+  // scale) for a bounded DOM; smaller lists keep the full drag list below.
+  if (surfaceItems && surfaceItems.length > 120) {
+    return (
+      <View style={styles.container}>
+        {navBar}
+        <VirtualTaskList
+          items={surfaceItems}
+          header={<View style={[styles.contentCol, centered && styles.contentColCentered]}>{titleHeader}</View>}
+          inProject={!!project}
+          showProject={surfaceShowProject}
+          onOpenTask={setOpenTaskId}
+          onToggleExpand={toggleTaskExpand}
+          onToggleCollapse={toggleHeadingCollapsed}
+          onToggleDivider={toggleDate}
+          onAddTask={handleAddInSection}
+        />
+        {listId !== 'logbook' && listId !== 'trash' && !(project && isWide) && (
+          <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
+        )}
         <TaskDetailModal
           visible={!!openTaskId}
           taskId={openTaskId}
