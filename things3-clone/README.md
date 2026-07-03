@@ -89,6 +89,16 @@ src/
 pure functions of the task list (see `selectors.js`), so they always stay in
 sync with no manual bookkeeping.
 
+## Checkpoints (git tags)
+
+Stable points to roll back to if a large change regresses something. Restore
+with `git checkout <tag>` (or `git reset --hard <tag>`).
+
+- **`pre-virtualization`** — before any list windowing (baseline perf work).
+- **`pre-board-gantt-virtualization`** — all *list* surfaces virtualized and
+  stable; Board & Gantt still render every row up front. Checkpoint taken right
+  before virtualizing those two views.
+
 ## Notes & limitations
 
 This is a faithful single-device prototype, not a full Things replacement. Not
