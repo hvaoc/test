@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 440,
+    maxWidth: 560,
     maxHeight: '80%',
     backgroundColor: colors.background,
     borderRadius: radius.lg,

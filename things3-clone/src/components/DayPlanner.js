@@ -5,14 +5,14 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, addDays, formatDayKey, keyToDate, WEEKDAYS } from '../utils/date';
+import { todayKey, addDays, formatDayKey, keyToDate, WEEKDAYS, nowMinutes } from '../utils/date';
 import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
 const HOUR_H = 46;
 const SNAP = 15;
 const DEFAULT_DUR = 60;
-const PANEL_W = 236;
+const PANEL_W = 272;
 const GRID_BOTTOM_PAD = 12; // room below the 23:00 label before the next day header
 
 const DHEADER_H = 46; // tall sticky date header (matches the Month title band)
@@ -297,8 +297,7 @@ function DayHeader({ dayKey, height, dateFormat }) {
 // One day's body: the all-day strip over the hour grid with its blocks.
 function DayBody({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placeholder, startHour, gridH, bodyH }) {
   const layout = layoutOverlaps(timed);
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const nowMins = nowMinutes();
   const showNow = isToday && nowMins >= startHour * 60 && nowMins <= END_HOUR * 60;
   const nowTop = ((nowMins - startHour * 60) / 60) * HOUR_H;
 

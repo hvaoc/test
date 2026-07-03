@@ -5,7 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, keyToDate, addDays, WEEKDAYS_SHORT, formatDayKey } from '../utils/date';
+import { todayKey, keyToDate, addDays, WEEKDAYS_SHORT, formatDayKey, nowMinutes } from '../utils/date';
 import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
@@ -16,7 +16,7 @@ const BOTTOM_PAD = 12;
 const GUTTER = 46;
 const SNAP = 15;
 const DEFAULT_DUR = 60;
-const PANEL_W = 236;
+const PANEL_W = 272;
 
 function whenKey(t) {
   if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return todayKey();
@@ -124,8 +124,7 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   const ctx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, end };
   const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const nowMins = nowMinutes();
   const showNow = days.includes(todayK) && nowMins >= startHour * 60 && nowMins <= END_HOUR * 60;
   const nowTop = ((nowMins - startHour * 60) / 60) * hourH;
   const nowCol = days.indexOf(todayK);
@@ -198,17 +197,19 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
 
           <ScrollView ref={scrollRef} style={styles.scroll} showsVerticalScrollIndicator={false} onLayout={(e) => setGridViewH(e.nativeEvent.layout.height)}>
             <View style={[styles.grid, { height: gridH }]}>
+              {/* Day columns + today highlight sit behind the hour lines so the
+                  lines stay visible through the highlighted (today) column. */}
+              <View style={[styles.colLayer, { left: GUTTER }]} pointerEvents="none">
+                {days.map((k) => (
+                  <View key={k} style={[styles.colDivider, k === todayK && styles.colToday]} />
+                ))}
+              </View>
               {Array.from({ length: END_HOUR - startHour + 1 }, (_, i) => startHour + i).map((h) => (
                 <View key={h} style={[styles.hourRow, { top: TOP_PAD + (h - startHour) * hourH, height: hourH }]}>
                   <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
                   <View style={styles.hourLine} />
                 </View>
               ))}
-              <View style={[styles.colLayer, { left: GUTTER }]} pointerEvents="none">
-                {days.map((k) => (
-                  <View key={k} style={[styles.colDivider, k === todayK && styles.colToday]} />
-                ))}
-              </View>
 
               <View ref={layerRef} collapsable={false} style={[styles.blockLayer, { left: GUTTER }]}>
                 {showNow && nowCol >= 0 && (
@@ -337,7 +338,8 @@ const styles = StyleSheet.create({
   hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
   colLayer: { position: 'absolute', top: 0, bottom: 0, right: 0, flexDirection: 'row' },
   colDivider: { flex: 1, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator },
-  colToday: { backgroundColor: colors.accentSoft },
+  // Light, translucent accent tint so the hour lines stay visible through it.
+  colToday: { backgroundColor: 'rgba(43, 111, 255, 0.06)' },
   blockLayer: { position: 'absolute', top: TOP_PAD, bottom: 0, right: 0 },
   nowLine: { position: 'absolute', height: 2, backgroundColor: colors.deadline },
   nowDot: { position: 'absolute', left: -3, top: -3, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.deadline },
