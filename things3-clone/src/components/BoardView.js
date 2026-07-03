@@ -12,6 +12,8 @@ import TaskComposer from './TaskComposer';
 import SectionEditor from './SectionEditor';
 
 const COL_W = 300;
+const COL_GAP = 16; // === spacing.lg, the column marginRight
+const COL_STRIDE = COL_W + COL_GAP; // per-column horizontal footprint
 
 const GROUPINGS = [
   { key: 'section', label: 'Section' },
@@ -134,6 +136,7 @@ export default function BoardView({
   const [dropTarget, setDropTarget] = useState(null); // { colKey, index }
   const [scrollX, setScrollX] = useState(0);
   const [viewW, setViewW] = useState(0);
+  const [viewH, setViewH] = useState(0);
   const [contentW, setContentW] = useState(0);
 
   const boardScrollRef = useRef(null);
@@ -233,26 +236,41 @@ export default function BoardView({
 
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
-      <ScrollView
+      {/* Columns are a horizontal FlatList so off-screen columns don't mount —
+          switching a huge project's board stays fast even with many sections. */}
+      <FlatList
         ref={boardScrollRef}
         horizontal
+        data={columns}
+        keyExtractor={(col) => col.key}
+        extraData={dragKey}
         showsHorizontalScrollIndicator={false}
         style={styles.boardScroll}
         contentContainerStyle={styles.board}
         keyboardShouldPersistTaps="handled"
         scrollEventThrottle={16}
         onScroll={(e) => setScrollX(e.nativeEvent.contentOffset.x)}
-        onLayout={(e) => setViewW(e.nativeEvent.layout.width)}
+        onLayout={(e) => { setViewW(e.nativeEvent.layout.width); setViewH(e.nativeEvent.layout.height); }}
         onContentSizeChange={(w) => setContentW(w)}
-      >
-        {columns.map((col) => {
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={5}
+        removeClippedSubviews={false}
+        getItemLayout={(data, index) => ({ length: COL_STRIDE, offset: COL_STRIDE * index, index })}
+        ListFooterComponent={
+          grouping === 'section' ? (
+            <AddColumn afterHeadingId={lastHeadingId} onAddSection={onAddSection} boardH={viewH} />
+          ) : null
+        }
+        renderItem={({ item: col }) => {
           const isTarget = dropTarget && dropTarget.colKey === col.key;
           return (
             <View
-              key={col.key}
               ref={(n) => (n ? colRefs.current.set(col.key, n) : colRefs.current.delete(col.key))}
               collapsable={false}
-              style={[styles.column, isTarget && styles.columnTarget]}
+              // Explicit height (measured) so each column's inner vertical list
+              // is bounded and virtualizes; falls back to stretch pre-measure.
+              style={[styles.column, viewH > 0 && { height: viewH }, isTarget && styles.columnTarget]}
             >
               {/* Fixed header: stays put while the column's tasks scroll below it. */}
               <Pressable
@@ -304,16 +322,14 @@ export default function BoardView({
               />
             </View>
           );
-        })}
-
-        {grouping === 'section' && <AddColumn afterHeadingId={lastHeadingId} onAddSection={onAddSection} />}
-      </ScrollView>
+        }}
+      />
 
       {/* Edge affordances: more columns exist beyond the visible area. */}
       {scrollX > 4 && (
         <Pressable
           style={[styles.edge, styles.edgeLeft]}
-          onPress={() => boardScrollRef.current?.scrollTo({ x: Math.max(0, scrollX - (COL_W + 16) * 2), animated: true })}
+          onPress={() => boardScrollRef.current?.scrollToOffset({ offset: Math.max(0, scrollX - COL_STRIDE * 2), animated: true })}
         >
           <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
         </Pressable>
@@ -321,7 +337,7 @@ export default function BoardView({
       {contentW > 0 && scrollX + viewW < contentW - 4 && (
         <Pressable
           style={[styles.edge, styles.edgeRight]}
-          onPress={() => boardScrollRef.current?.scrollTo({ x: scrollX + (COL_W + 16) * 2, animated: true })}
+          onPress={() => boardScrollRef.current?.scrollToOffset({ offset: scrollX + COL_STRIDE * 2, animated: true })}
         >
           <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
         </Pressable>
@@ -410,10 +426,10 @@ function AddInColumn({ col, grouping, onAddTask }) {
   );
 }
 
-function AddColumn({ afterHeadingId, onAddSection }) {
+function AddColumn({ afterHeadingId, onAddSection, boardH }) {
   const [adding, setAdding] = useState(false);
   return (
-    <View style={styles.column}>
+    <View style={[styles.column, boardH > 0 && { height: boardH }]}>
       {adding ? (
         <SectionEditor
           onSave={({ title, description }) => {
