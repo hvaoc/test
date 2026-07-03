@@ -42,7 +42,7 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
         {mode === 'day' ? (
           <DayPlanner {...common} startHour={startHour} focusDate={focusDate} dateFormat={dateFormat} />
         ) : mode === 'week' ? (
-          <WeekView {...common} startHour={startHour} showWeekends={showWeekends} />
+          <WeekView {...common} startHour={startHour} showWeekends={showWeekends} dateFormat={dateFormat} />
         ) : (
           <MonthCalendar {...common} onOpenDay={openDay} startHour={startHour} dateFormat={dateFormat} />
         )}

@@ -55,6 +55,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const [newTitle, setNewTitle] = useState('');
   const [peekDay, setPeekDay] = useState(null); // date tapped -> inline day dialog
   const [viewH, setViewH] = useState(0);
+  const [ready, setReady] = useState(false); // hide the grid until it lands on the current month
 
   // Each month fills the full viewport height (title + weekday row + weeks), so
   // the list pages one month at a time. The title + weekday row form the sticky
@@ -139,7 +140,10 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   // Land on the current month once the viewport height is known (and keep it in
   // view if the height changes, e.g. a resize).
   useEffect(() => {
-    if (viewH > 0) scrollRef.current?.scrollTo({ y: RANGE_BACK * monthH, animated: false });
+    if (viewH > 0) {
+      scrollRef.current?.scrollTo({ y: RANGE_BACK * monthH, animated: false });
+      setReady(true);
+    }
   }, [viewH]);
   const submitAdd = () => {
     const title = newTitle.trim();
@@ -204,7 +208,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         <View style={styles.leftCol}>
           <ScrollView
             ref={scrollRef}
-            style={styles.scroll}
+            style={[styles.scroll, !ready && styles.hidden]}
             showsVerticalScrollIndicator={false}
             stickyHeaderIndices={stickyIndices}
             onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
@@ -369,6 +373,7 @@ const styles = StyleSheet.create({
   row: { flex: 1, flexDirection: 'row' },
   leftCol: { flex: 1, paddingRight: spacing.lg },
   scroll: { flex: 1 },
+  hidden: { opacity: 0 },
   monthHeader: { backgroundColor: colors.background },
   monthTitleWrap: { justifyContent: 'center', paddingLeft: 2 },
   monthTitle: { ...typography.title, color: colors.text },

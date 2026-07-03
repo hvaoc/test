@@ -5,7 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, addDays, formatDayKey } from '../utils/date';
+import { todayKey, addDays, formatDayKey, keyToDate, WEEKDAYS } from '../utils/date';
 import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
@@ -40,7 +40,9 @@ const fmt = (mins) =>
 // day's all-day strip to clear the time, or back to the panel to unschedule.
 export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null, dateFormat = 'weekday-long' }) {
   const HOURS = END_HOUR - startHour;
-  const GRID_H = HOURS * HOUR_H + GRID_BOTTOM_PAD;
+  // Include the final 23:00 → 24:00 slot (one hour past the last hour label) so
+  // the last hour is fully visible before the next day's header.
+  const GRID_H = (HOURS + 1) * HOUR_H + GRID_BOTTOM_PAD;
   const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
 
   // The timeline window is centered on an anchor date (today by default, or a
@@ -278,12 +280,16 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
 // The sticky per-day date header. Pins to the top while its day is in view,
 // then the next day's header pushes it up (mirrors the Month view).
-function DayHeader({ dayKey, isToday, height, dateFormat }) {
+function DayHeader({ dayKey, height, dateFormat }) {
+  // Show the weekday subtly, right after the date title — but only when the
+  // chosen date format doesn't already spell it out (weekday-long/short).
+  const showWeekday = dateFormat !== 'weekday-long' && dateFormat !== 'weekday-short';
   return (
-    <View style={[styles.dayHeader, { height }, isToday && styles.dayHeaderToday]}>
-      <Text style={[styles.dayHeaderText, isToday && styles.dayHeaderTextToday]}>
-        {formatDayKey(dayKey, dateFormat)}
-      </Text>
+    <View style={[styles.dayHeader, { height }]}>
+      <Text style={styles.dayHeaderText}>{formatDayKey(dayKey, dateFormat)}</Text>
+      {showWeekday && (
+        <Text style={styles.dayHeaderWeekday}>{WEEKDAYS[keyToDate(dayKey).getDay()]}</Text>
+      )}
     </View>
   );
 }
@@ -310,7 +316,7 @@ function DayBody({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placehold
       </View>
 
       <View style={[styles.grid, { height: gridH }]}>
-        {Array.from({ length: END_HOUR - startHour + 1 }, (_, i) => startHour + i).map((h) => (
+        {Array.from({ length: END_HOUR - startHour + 2 }, (_, i) => startHour + i).map((h) => (
           <View key={h} style={[styles.hourRow, { top: (h - startHour) * HOUR_H }]}>
             <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
             <View style={styles.hourLine} />
@@ -335,12 +341,7 @@ function DayBody({ dayKey, isToday, timed, allDay, color, ctx, onOpen, placehold
             return (
               <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpen} style={[styles.block, { top, height, left, width }]}>
                 <View style={[styles.blockInner, { backgroundColor: tint(color), borderLeftColor: color }]}>
-                  <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={1}>{t.title || 'New To-Do'}</Text>
-                  {count < 3 && (
-                    <Text style={styles.blockTime} numberOfLines={1}>
-                      {fmt(t.startMinutes)}–{fmt(t.startMinutes + (t.durationMinutes || DEFAULT_DUR))}
-                    </Text>
-                  )}
+                  <Text style={[styles.blockTitle, done && styles.done]} numberOfLines={2}>{t.title || 'New To-Do'}</Text>
                 </View>
               </Draggable>
             );
@@ -426,15 +427,16 @@ const styles = StyleSheet.create({
   row: { flex: 1, flexDirection: 'row' },
   scroll: { flex: 1 },
   dayHeader: {
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.separatorStrong,
     backgroundColor: colors.background,
     paddingLeft: 2,
   },
-  dayHeaderToday: { backgroundColor: colors.accentSoft },
   dayHeaderText: { ...typography.title, color: colors.text },
-  dayHeaderTextToday: { color: colors.accent },
+  dayHeaderWeekday: { ...typography.subhead, color: colors.textTertiary },
   allDay: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -442,8 +444,6 @@ const styles = StyleSheet.create({
     paddingLeft: 48,
     paddingRight: 4,
     overflow: 'hidden',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.separator,
   },
   allDayChipWrap: { maxWidth: 180 },
   allDayChip: {

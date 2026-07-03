@@ -5,7 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS } from '../store/constants';
-import { todayKey, keyToDate, addDays, MONTHS_SHORT, WEEKDAYS_SHORT } from '../utils/date';
+import { todayKey, keyToDate, addDays, WEEKDAYS_SHORT, formatDayKey } from '../utils/date';
 import { layoutOverlaps } from '../utils/overlap';
 
 const END_HOUR = 23;
@@ -34,7 +34,7 @@ function tint(hex) {
 // A 7-day week grid with a shared hour axis, an all-day row, and a now line.
 // Tasks drag (long-press) between days and times; the right "Unscheduled" Plan
 // panel holds undated tasks that can be dragged onto a day/time.
-export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, showWeekends = false }) {
+export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, showWeekends = false, dateFormat = 'weekday-long' }) {
   const HOURS = END_HOUR - startHour;
   const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay());
   const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
@@ -130,12 +130,8 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
   const nowTop = ((nowMins - startHour * 60) / 60) * hourH;
   const nowCol = days.indexOf(todayK);
 
-  const first = keyToDate(days[0]);
-  const last = keyToDate(days[N - 1]);
-  const rangeLabel =
-    first.getMonth() === last.getMonth()
-      ? `${MONTHS_SHORT[first.getMonth()]} ${first.getDate()} – ${last.getDate()}`
-      : `${MONTHS_SHORT[first.getMonth()]} ${first.getDate()} – ${MONTHS_SHORT[last.getMonth()]} ${last.getDate()}`;
+  // Same absolute-date format as the Day view, applied to both ends of the week.
+  const rangeLabel = `${formatDayKey(days[0], dateFormat)} – ${formatDayKey(days[N - 1], dateFormat)}`;
 
   const submitAdd = () => { const t = newTitle.trim(); if (!t) return; onAddTask({ title: t }); setNewTitle(''); };
 
@@ -307,7 +303,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, paddingLeft: spacing.lg },
   fill: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: spacing.lg, marginBottom: spacing.sm },
-  rangeLabel: { ...typography.heading, color: colors.text },
+  rangeLabel: { ...typography.title, color: colors.text },
   navBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   planBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, marginRight: spacing.xs, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   planBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
