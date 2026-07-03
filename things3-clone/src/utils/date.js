@@ -2,11 +2,48 @@
 // never wrestle with timezones — a deadline of "the 5th" should be the 5th no
 // matter where the user is.
 
-export function todayKey(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+// Active timezone for computing "now"/"today". null = the device's local zone.
+// Stored calendar dates (YYYY-MM-DD) stay absolute; only the notion of the
+// current date/time is shifted. Kept in sync from the timezone setting.
+let activeTimeZone = null;
+export function setTimeZone(tz) {
+  activeTimeZone = tz || null;
+}
+
+// Wall-clock parts of the current moment in the active timezone.
+function nowParts() {
+  const d = new Date();
+  if (!activeTimeZone) {
+    return { y: d.getFullYear(), m: d.getMonth() + 1, day: d.getDate(), h: d.getHours(), min: d.getMinutes() };
+  }
+  try {
+    const p = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: activeTimeZone, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    })
+      .formatToParts(d)
+      .forEach((x) => { p[x.type] = x.value; });
+    return { y: +p.year, m: +p.month, day: +p.day, h: +(p.hour === '24' ? '0' : p.hour), min: +p.minute };
+  } catch {
+    return { y: d.getFullYear(), m: d.getMonth() + 1, day: d.getDate(), h: d.getHours(), min: d.getMinutes() };
+  }
+}
+
+// With a Date argument: format that date's calendar day (absolute, unchanged).
+// Without one: today's date in the active timezone.
+export function todayKey(d) {
+  if (d === undefined) {
+    const { y, m, day } = nowParts();
+    return `${y}-${pad2(m)}-${pad2(day)}`;
+  }
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// Minutes-since-midnight of the current moment in the active timezone.
+export function nowMinutes() {
+  const { h, min } = nowParts();
+  return h * 60 + min;
 }
 
 export function dateToKey(date) {

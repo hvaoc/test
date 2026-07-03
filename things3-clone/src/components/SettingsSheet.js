@@ -1,16 +1,48 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Switch, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, Switch, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet from './BottomSheet';
 import { colors, spacing, typography, radius } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
 
+// Curated IANA timezones ('' = the device's local zone).
+const TIMEZONES = [
+  { id: '', label: 'System default' },
+  { id: 'UTC', label: 'UTC' },
+  { id: 'Pacific/Honolulu', label: 'Honolulu' },
+  { id: 'America/Los_Angeles', label: 'Los Angeles (PT)' },
+  { id: 'America/Denver', label: 'Denver (MT)' },
+  { id: 'America/Chicago', label: 'Chicago (CT)' },
+  { id: 'America/New_York', label: 'New York (ET)' },
+  { id: 'America/Sao_Paulo', label: 'São Paulo' },
+  { id: 'Europe/London', label: 'London' },
+  { id: 'Europe/Paris', label: 'Paris / Berlin' },
+  { id: 'Africa/Johannesburg', label: 'Johannesburg' },
+  { id: 'Asia/Dubai', label: 'Dubai' },
+  { id: 'Asia/Kolkata', label: 'India (IST)' },
+  { id: 'Asia/Singapore', label: 'Singapore' },
+  { id: 'Asia/Tokyo', label: 'Tokyo' },
+  { id: 'Australia/Sydney', label: 'Sydney' },
+  { id: 'Pacific/Auckland', label: 'Auckland' },
+];
+
+// Current wall-clock time in a zone, for the hint next to each option.
+function zoneTime(tz) {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz || undefined, hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(new Date());
+  } catch {
+    return '';
+  }
+}
+
 // App preferences. Currently a single toggle for whether completed to-dos are
 // shown inside projects; structured as a list so more settings can slot in.
 export default function SettingsSheet({ visible, onClose }) {
   const { state, setSetting, reset } = useTasks();
-  const { showCompleted, centeredContent, dayStartHour, dateFormat, showWeekends } = state.settings;
+  const { showCompleted, centeredContent, dayStartHour, dateFormat, showWeekends, timezone } = state.settings;
   const sampleKey = todayKey();
 
   return (
@@ -113,6 +145,34 @@ export default function SettingsSheet({ visible, onClose }) {
       <View style={styles.divider} />
 
       <View style={styles.labelWrap}>
+        <Text style={styles.label}>Time zone</Text>
+        <Text style={styles.hint}>
+          Sets what counts as "now"/"today" — affects Today, relative dates,
+          overdue, and the current-time line.
+        </Text>
+      </View>
+      <ScrollView style={styles.tzList} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+        {TIMEZONES.map((tz) => {
+          const active = (timezone || '') === tz.id;
+          return (
+            <Pressable
+              key={tz.id || 'system'}
+              onPress={() => setSetting('timezone', tz.id)}
+              style={[styles.formatRow, active && styles.formatRowActive]}
+            >
+              <Text style={[styles.formatText, active && styles.formatTextActive]}>{tz.label}</Text>
+              <View style={styles.tzRight}>
+                <Text style={styles.tzTime}>{zoneTime(tz.id)}</Text>
+                {active && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <View style={styles.divider} />
+
+      <View style={styles.labelWrap}>
         <Text style={styles.label}>Sample data</Text>
         <Text style={styles.hint}>
           This build always starts from the demo data; reloading resets it. Use
@@ -174,6 +234,9 @@ const styles = StyleSheet.create({
   formatRowActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   formatText: { ...typography.body, color: colors.text, fontVariant: ['tabular-nums'] },
   formatTextActive: { color: colors.accent, fontWeight: '600' },
+  tzList: { maxHeight: 220, marginTop: spacing.sm },
+  tzRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  tzTime: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.separator,

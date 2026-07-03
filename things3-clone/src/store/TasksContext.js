@@ -11,6 +11,7 @@ import { uid } from '../utils/id';
 import { STATUS } from './constants';
 import { loadState, saveState } from './storage';
 import { buildSampleData } from './sampleData';
+import { setTimeZone } from '../utils/date';
 
 const TasksContext = createContext(null);
 
@@ -22,6 +23,7 @@ const defaultSettings = {
   dayStartHour: 0, // first hour shown in Calendar Day/Week timelines (0 or 6)
   dateFormat: 'weekday-long', // absolute-date format for Calendar Day headers
   showWeekends: false, // include Sat/Sun in the Calendar Week view
+  timezone: '', // IANA zone for "now"/"today"; '' = device local
 };
 
 const initialState = {
@@ -375,6 +377,10 @@ function reducer(state, action) {
 export function TasksProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const saveTimer = useRef(null);
+
+  // Keep the date utils' active timezone in sync before descendants render, so
+  // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
+  setTimeZone(state.settings?.timezone);
 
   // Testing mode: always start from the rich sample data so interactive-feature
   // tests are reproducible. Edits live in memory for the session (and can be
