@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -13,12 +13,14 @@ import { colors, spacing, typography } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { selectProjectTasks, isOpen } from '../store/selectors';
 import ProgressPie from './ProgressPie';
+import EmojiPicker from './EmojiPicker';
 
 // Editable header shown atop a project: title, notes, progress ring, and a
 // Delete action. Scheduling/priority/etc. live on the individual tasks; adding
 // a section is done inline in the project body.
 export default function ProjectHeader({ project, navigation }) {
   const { state, updateProject, deleteProject } = useTasks();
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const tasks = selectProjectTasks(state.tasks, project.id);
   const total = tasks.length;
@@ -42,15 +44,13 @@ export default function ProjectHeader({ project, navigation }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.titleRow}>
-        {/* Optional emoji icon (used in the sidebar too); "#" when empty. */}
-        <TextInput
-          style={styles.emoji}
-          value={project.emoji || ''}
-          onChangeText={(v) => updateProject(project.id, { emoji: [...v].slice(0, 2).join('') })}
-          placeholder="#"
-          placeholderTextColor={colors.textTertiary}
-          maxLength={4}
-        />
+        {/* Optional emoji icon (used in the sidebar too); "#" when empty. Tap to
+            open the emoji picker. */}
+        <Pressable style={styles.emoji} onPress={() => setPickerOpen(true)}>
+          <Text style={[styles.emojiText, !project.emoji && styles.emojiPlaceholder]}>
+            {project.emoji || '#'}
+          </Text>
+        </Pressable>
         <TextInput
           style={styles.title}
           value={project.name}
@@ -83,6 +83,14 @@ export default function ProjectHeader({ project, navigation }) {
           <Text style={styles.actionText}>Delete</Text>
         </Pressable>
       </View>
+
+      <EmojiPicker
+        visible={pickerOpen}
+        current={project.emoji}
+        onSelect={(e) => { updateProject(project.id, { emoji: e }); setPickerOpen(false); }}
+        onRemove={() => { updateProject(project.id, { emoji: '' }); setPickerOpen(false); }}
+        onClose={() => setPickerOpen(false)}
+      />
     </View>
   );
 }
@@ -96,12 +104,14 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   emoji: {
     width: 34,
-    fontSize: 26,
-    textAlign: 'center',
-    color: colors.text,
-    padding: 0,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
+  emojiText: { fontSize: 26, color: colors.text, textAlign: 'center' },
+  emojiPlaceholder: { color: colors.textTertiary },
   title: { flex: 1, ...typography.largeTitle, fontSize: 28, color: colors.text, padding: 0 },
   progressWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   progressCount: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
