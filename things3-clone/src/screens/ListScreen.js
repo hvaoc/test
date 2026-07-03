@@ -26,6 +26,7 @@ import TaskRow from '../components/TaskRow';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
+import AreaHeader from '../components/AreaHeader';
 import ReorderableTaskList from '../components/ReorderableTaskList';
 import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
@@ -700,13 +701,12 @@ export default function ListScreen({
   // The title/project header is part of the content and follows the centering.
   const titleHeader = project ? (
     <ProjectHeader project={project} navigation={navigation} />
+  ) : area ? (
+    <AreaHeader area={area} navigation={navigation} />
   ) : (
     <View style={styles.titleRow}>
       {smart && (
         <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
-      )}
-      {area && (
-        <Ionicons name="cube-outline" size={24} color={headerColor} style={{ marginRight: 8 }} />
       )}
       <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
         {headerTitle}

@@ -3,6 +3,8 @@ import { Modal, View, Text, Pressable, ScrollView, TextInput, StyleSheet, Platfo
 import { Ionicons } from '@expo/vector-icons';
 import groups from 'unicode-emoji-json/data-by-group.json';
 import { colors, spacing, typography, radius } from '../theme';
+import { PROJECT_COLORS } from '../store/constants';
+import ColorPickerSwatch from './ColorPickerSwatch';
 
 // A dependency-light emoji picker. Web/RN-web has no programmatic hook to the OS
 // emoji panel, so this is our own UI over the full Unicode emoji set (the
@@ -27,9 +29,10 @@ const CATEGORIES = groups.map((g) => ({
 }));
 const ALL = groups.flatMap((g) => g.emojis);
 
-export default function EmojiPicker({ visible, current, onSelect, onRemove, onClose }) {
+export default function EmojiPicker({ visible, current, onSelect, onRemove, onClose, color, onColorChange }) {
   const [cat, setCat] = useState(CATEGORIES[0].key);
   const [query, setQuery] = useState('');
+  const showColors = typeof onColorChange === 'function';
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -58,6 +61,33 @@ export default function EmojiPicker({ visible, current, onSelect, onRemove, onCl
               </Pressable>
             ) : null}
           </View>
+
+          {showColors && !query && (
+            <View style={styles.colorRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.colorStrip}
+                keyboardShouldPersistTaps="handled"
+              >
+                {PROJECT_COLORS.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => onColorChange(c)}
+                    style={[styles.colorDot, { backgroundColor: c }, color === c && styles.colorDotActive]}
+                  >
+                    {color === c && <Ionicons name="checkmark" size={13} color={colors.white} />}
+                  </Pressable>
+                ))}
+                {color && !PROJECT_COLORS.includes(color) && (
+                  <View style={[styles.colorDot, { backgroundColor: color }, styles.colorDotActive]}>
+                    <Ionicons name="checkmark" size={13} color={colors.white} />
+                  </View>
+                )}
+                <ColorPickerSwatch value={color || PROJECT_COLORS[0]} onChange={onColorChange} size={26} />
+              </ScrollView>
+            </View>
+          )}
 
           {!query && (
             <View style={styles.tabs}>
@@ -123,6 +153,26 @@ const styles = StyleSheet.create({
   search: { flex: 1, ...typography.body, color: colors.text, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
   removeBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   removeText: { ...typography.caption, color: colors.textSecondary },
+  colorRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+  },
+  colorStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  colorDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  colorDotActive: { borderWidth: 2, borderColor: colors.text },
   tabs: {
     flexDirection: 'row',
     paddingHorizontal: spacing.xs,

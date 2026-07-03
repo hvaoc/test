@@ -47,7 +47,7 @@ export default function ProjectHeader({ project, navigation }) {
         {/* Optional emoji icon (used in the sidebar too); "#" when empty. Tap to
             open the emoji picker. */}
         <Pressable style={styles.emoji} onPress={() => setPickerOpen(true)}>
-          <Text style={[styles.emojiText, !project.emoji && styles.emojiPlaceholder]}>
+          <Text style={[styles.emojiText, !project.emoji && { color: project.color, fontWeight: '700' }]}>
             {project.emoji || '#'}
           </Text>
         </Pressable>
@@ -87,6 +87,8 @@ export default function ProjectHeader({ project, navigation }) {
       <EmojiPicker
         visible={pickerOpen}
         current={project.emoji}
+        color={project.color}
+        onColorChange={(c) => updateProject(project.id, { color: c })}
         onSelect={(e) => { updateProject(project.id, { emoji: e }); setPickerOpen(false); }}
         onRemove={() => { updateProject(project.id, { emoji: '' }); setPickerOpen(false); }}
         onClose={() => setPickerOpen(false)}

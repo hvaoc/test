@@ -130,7 +130,11 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
                   })
                 }
               >
-                <Ionicons name="cube-outline" size={16} color={area.color} />
+                {area.emoji ? (
+                  <Text style={styles.areaEmoji}>{area.emoji}</Text>
+                ) : (
+                  <Ionicons name="cube-outline" size={16} color={area.color} />
+                )}
                 <Text style={styles.areaTitle}>{area.name}</Text>
               </Pressable>
               {projects.map((p) => (
@@ -287,6 +291,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
   },
+  areaEmoji: { fontSize: 15, width: 16, textAlign: 'center' },
   areaTitle: {
     ...typography.subhead,
     fontWeight: '700',

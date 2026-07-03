@@ -256,6 +256,7 @@ function reducer(state, action) {
       const project = {
         id: uid('proj'),
         name: action.payload.name || 'New Project',
+        emoji: action.payload.emoji || '',
         notes: '',
         areaId: action.payload.areaId || null,
         color: action.payload.color || '#2b6fff',
@@ -336,6 +337,7 @@ function reducer(state, action) {
       const area = {
         id: uid('area'),
         name: action.payload.name || 'New Area',
+        emoji: action.payload.emoji || '',
         color: action.payload.color || '#5b6b7b',
       };
       return { ...state, areas: [...state.areas, area] };

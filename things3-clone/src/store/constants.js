@@ -49,6 +49,8 @@ export const PRIORITY_MAP = PRIORITIES.reduce((acc, p) => {
 
 // Palette offered when creating a project / area.
 export const PROJECT_COLORS = [
-  '#2b6fff', '#e8554e', '#1f9d55', '#f5a623',
-  '#9b59b6', '#16a4a4', '#e84393', '#5b6b7b',
+  '#2b6fff', '#4a90e2', '#00b8d4', '#16a4a4', '#00897b', '#1f9d55',
+  '#43a047', '#7cb342', '#f5a623', '#fb8c00', '#ff8c42', '#e8554e',
+  '#d81b60', '#e84393', '#c0399f', '#9b59b6', '#6c5ce7', '#3949ab',
+  '#8d6e63', '#546e7a', '#5b6b7b', '#37474f',
 ];
