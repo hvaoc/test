@@ -125,7 +125,9 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
+         <View style={[styles.bodyRow, isWide && styles.bodyRowWide]}>
           <ScrollView
+            style={styles.contentScroll}
             contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled"
           >
@@ -157,6 +159,20 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
               onChangeText={(text) => updateTask(task.id, { notes: text })}
               multiline
             />
+
+            {/* Fields stack below notes on narrow; on wide they live in the right
+                side panel (rendered outside the ScrollView, below). */}
+            {!isWide && (
+              <FieldsPanel
+                task={task}
+                when={when}
+                containerLabel={containerLabel}
+                containerColor={containerColor}
+                onEdit={setSheet}
+                onUpdate={(patch) => updateTask(task.id, patch)}
+                style={styles.panelStacked}
+              />
+            )}
 
             {/* Sub-tasks — nested tasks (distinct from the lightweight checklist) */}
             <View style={styles.subtasks}>
@@ -256,50 +272,23 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
             )}
           </ScrollView>
 
-          {/* Attribute toolbar */}
-          <View style={[styles.toolbar, { paddingBottom: insets.bottom + spacing.sm }]}>
-            <ToolButton
-              icon={when.icon}
-              color={when.color}
-              label={when.label}
-              active={!!task.when}
-              onPress={() => setSheet('when')}
-            />
-            <ToolButton
-              icon="alarm-outline"
-              color={task.deadline ? colors.deadline : colors.textSecondary}
-              label={task.deadline ? relativeLabel(task.deadline) : 'Deadline'}
-              active={!!task.deadline}
-              onPress={() => setSheet('deadline')}
-            />
-            <ToolButton
-              icon={task.priority ? 'flag' : 'flag-outline'}
-              color={task.priority ? PRIORITY_MAP[task.priority].color : colors.textSecondary}
-              label={task.priority ? PRIORITY_MAP[task.priority].label : 'Priority'}
-              active={!!task.priority}
-              onPress={() => setSheet('priority')}
-            />
-            <ToolButton
-              icon={task.location ? 'location' : 'location-outline'}
-              color={task.location ? colors.accent : colors.textSecondary}
-              label={task.location ? task.location : 'Location'}
-              active={!!task.location}
-              onPress={() => setSheet('location')}
-            />
-            <ToolButton
-              icon="pricetag-outline"
-              color={colors.textSecondary}
-              label={task.tags.length ? `${task.tags.length} Tag${task.tags.length > 1 ? 's' : ''}` : 'Tags'}
-              active={task.tags.length > 0}
-              onPress={() => setSheet('tags')}
-            />
-            <ToolButton
-              icon="ellipse"
-              color={containerColor}
-              label="Move"
-              onPress={() => setSheet('move')}
-            />
-          </View>
+          {/* Right-side properties panel on wide screens (fixed-width View so
+              the content column keeps the rest of the space). */}
+          {isWide && (
+            <View style={styles.sidePanel}>
+              <ScrollView contentContainerStyle={styles.sidePanelScroll}>
+                <FieldsPanel
+                  task={task}
+                  when={when}
+                  containerLabel={containerLabel}
+                  containerColor={containerColor}
+                  onEdit={setSheet}
+                  onUpdate={(patch) => updateTask(task.id, patch)}
+                />
+              </ScrollView>
+            </View>
+          )}
+         </View>
         </KeyboardAvoidingView>
 
         <WhenSheet
@@ -357,19 +346,101 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
   );
 }
 
-function ToolButton({ icon, color, label, onPress, active }) {
+const isDateStr = (w) => typeof w === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(w);
+const fmtTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const fmtDur = (m) => (m % 60 === 0 ? `${m / 60}h` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`);
+
+// The always-visible, first-class attributes for a task. Each row shows the
+// current value and opens the matching editor sheet; Start/Duration edit inline.
+function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpdate, style }) {
   return (
-    <Pressable style={styles.toolBtn} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={color} />
-      <Text
-        style={[styles.toolLabel, active && { color, fontWeight: '600' }]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
+    <View style={[styles.panel, style]}>
+      <Text style={styles.panelHeader}>Details</Text>
+      <FieldRow icon="ellipse" iconColor={containerColor} label="List" value={containerLabel} active onPress={() => onEdit('move')} />
+      <FieldRow icon={when.icon} iconColor={when.color} label="When" value={when.label} active={!!task.when} onPress={() => onEdit('when')} />
+      <TimeField task={task} onUpdate={onUpdate} />
+      <FieldRow icon="alarm-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
+      <FieldRow icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} onPress={() => onEdit('priority')} />
+      <FieldRow icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
+      <FieldRow icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
+    </View>
+  );
+}
+
+function FieldRow({ icon, iconColor, label, value, active, onPress }) {
+  return (
+    <Pressable style={styles.fieldRow} onPress={onPress}>
+      <Ionicons name={icon} size={18} color={iconColor || colors.textSecondary} style={styles.fieldIcon} />
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldValue, !active && styles.fieldValueMuted]} numberOfLines={1}>{value}</Text>
+      <Ionicons name="chevron-forward" size={15} color={colors.separatorStrong} />
     </Pressable>
   );
 }
+
+// Start time + duration. A task can only be time-blocked on a concrete date, so
+// the controls are inert (with a hint) until a date is set. Start uses the OS
+// time picker on web; duration is a 15-minute stepper. Empty start = all-day.
+function TimeField({ task, onUpdate }) {
+  const scheduled = isDateStr(task.when);
+  const start = task.startMinutes;
+  const dur = task.durationMinutes || 60;
+  const setStart = (mins) =>
+    onUpdate(mins == null ? { startMinutes: null } : { startMinutes: mins, durationMinutes: task.durationMinutes || 60 });
+  const stepDur = (delta) => onUpdate({ durationMinutes: Math.max(15, Math.min(720, dur + delta)) });
+
+  if (!scheduled) {
+    return (
+      <View style={styles.fieldRow}>
+        <Ionicons name="time-outline" size={18} color={colors.textTertiary} style={styles.fieldIcon} />
+        <Text style={styles.fieldLabel}>Start</Text>
+        <Text style={[styles.fieldValue, styles.fieldValueMuted]} numberOfLines={1}>Set a date first</Text>
+      </View>
+    );
+  }
+  return (
+    <>
+      <View style={styles.fieldRow}>
+        <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : colors.textSecondary} style={styles.fieldIcon} />
+        <Text style={styles.fieldLabel}>Start</Text>
+        {Platform.OS === 'web'
+          ? React.createElement('input', {
+              type: 'time',
+              value: start != null ? fmtTime(start) : '',
+              onChange: (e) => {
+                const v = e.target.value;
+                if (!v) { setStart(null); return; }
+                const [h, m] = v.split(':').map(Number);
+                setStart(h * 60 + m);
+              },
+              style: TIME_INPUT_STYLE,
+            })
+          : <Text style={styles.fieldValue}>{start != null ? fmtTime(start) : 'All day'}</Text>}
+        {start != null && (
+          <Pressable onPress={() => setStart(null)} hitSlop={8} style={styles.clearBtn}>
+            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+          </Pressable>
+        )}
+      </View>
+      {start != null && (
+        <View style={styles.fieldRow}>
+          <Ionicons name="hourglass-outline" size={18} color={colors.textSecondary} style={styles.fieldIcon} />
+          <Text style={styles.fieldLabel}>Duration</Text>
+          <View style={styles.stepper}>
+            <Pressable onPress={() => stepDur(-15)} style={styles.stepBtn}><Ionicons name="remove" size={16} color={colors.textSecondary} /></Pressable>
+            <Text style={styles.stepValue}>{fmtDur(dur)}</Text>
+            <Pressable onPress={() => stepDur(15)} style={styles.stepBtn}><Ionicons name="add" size={16} color={colors.textSecondary} /></Pressable>
+          </View>
+        </View>
+      )}
+    </>
+  );
+}
+
+const TIME_INPUT_STYLE = {
+  border: '1px solid #dcdde0', borderRadius: 6, padding: '2px 6px',
+  font: 'inherit', fontSize: 13, color: '#1c1c1e', background: '#fff', cursor: 'pointer',
+};
 
 const styles = StyleSheet.create({
   // Wide layout: fills the content pane (over the list), leaving the sidebar.
@@ -437,15 +508,49 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   tagText: { ...typography.subhead, color: colors.textSecondary },
-  toolbar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.separator,
-    paddingTop: spacing.md,
-    paddingHorizontal: spacing.sm,
+  // Hybrid layout: content scrolls on the left; on wide, a properties sidebar
+  // sits on the right. On narrow the panel stacks below notes (styles.panelStacked).
+  bodyRow: { flex: 1 },
+  bodyRowWide: { flexDirection: 'row' },
+  contentScroll: { flex: 1, minWidth: 0 },
+  sidePanel: {
+    width: 300,
+    flexShrink: 0,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: colors.separator,
+    backgroundColor: colors.groupedBackground,
   },
-  toolBtn: { width: '25%', alignItems: 'center', gap: 2, paddingHorizontal: 2 },
-  toolLabel: { ...typography.caption, color: colors.textSecondary, maxWidth: 84 },
+  sidePanelScroll: { padding: spacing.lg },
+  panel: {},
+  panelStacked: {
+    marginTop: spacing.lg,
+    marginLeft: spacing.xl + spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separator,
+    paddingTop: spacing.sm,
+  },
+  panelHeader: {
+    ...typography.caption, color: colors.textTertiary, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs,
+  },
+  fieldRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: 7, minHeight: 34,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  fieldIcon: { width: 20, textAlign: 'center' },
+  fieldLabel: { ...typography.subhead, color: colors.textSecondary, width: 76, flexShrink: 0 },
+  fieldValue: { flex: 1, ...typography.subhead, color: colors.text, textAlign: 'right' },
+  fieldValueMuted: { color: colors.textTertiary },
+  clearBtn: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  stepper: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm,
+  },
+  stepBtn: {
+    width: 26, height: 26, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong, backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  stepValue: { ...typography.subhead, color: colors.text, fontVariant: ['tabular-nums'], minWidth: 48, textAlign: 'center' },
+  endHint: { ...typography.caption, color: colors.textTertiary, marginLeft: spacing.sm },
 });
