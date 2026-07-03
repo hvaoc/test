@@ -753,7 +753,7 @@ export default function ListScreen({
 
   if (isFullPane) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
         {navBar}
         {titleHeader}
         <View style={styles.fillCol}>{fullPaneEl}</View>
@@ -805,7 +805,7 @@ export default function ListScreen({
   // scale) for a bounded DOM; smaller lists keep the full drag list below.
   if (surfaceItems && surfaceItems.length > 120) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
         {navBar}
         <VirtualTaskList
           items={surfaceItems}
