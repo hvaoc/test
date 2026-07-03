@@ -333,7 +333,7 @@ function Draggable({ task, ctx, onOpen, style, children }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, paddingLeft: spacing.lg },
-  fill: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  fill: { flex: 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
   nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: spacing.lg, marginBottom: spacing.sm },
   rangeLabel: { ...typography.title, color: colors.text },
   navBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },

@@ -47,6 +47,7 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
   const [sheet, setSheet] = useState(null); // 'when' | 'deadline' | 'move' | 'tags'
   const [newCheck, setNewCheck] = useState('');
   const [newSub, setNewSub] = useState('');
+  const [titleH, setTitleH] = useState(0); // auto-grow the title to its content height
 
   if (!task) return null;
 
@@ -137,11 +138,12 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
                 size={24}
               />
               <TextInput
-                style={[styles.title, done && styles.titleDone]}
+                style={[styles.title, done && styles.titleDone, { height: Math.max(28, titleH) }]}
                 value={task.title}
                 placeholder="New To-Do"
                 placeholderTextColor={colors.placeholder}
                 onChangeText={(text) => updateTask(task.id, { title: text })}
+                onContentSizeChange={(e) => setTitleH(e.nativeEvent.contentSize.height)}
                 multiline
               />
             </View>
