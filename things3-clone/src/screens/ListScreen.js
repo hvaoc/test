@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, radius } from '../theme';
 import { SMART_LIST_MAP, WHEN, STATUS } from '../store/constants';
 import { useTasks, newTask } from '../store/TasksContext';
 import {
@@ -21,7 +21,7 @@ import {
   isOpen,
   byOrder,
 } from '../store/selectors';
-import { relativeLabel, monthTitle, longLabel, todayKey } from '../utils/date';
+import { relativeLabel, monthTitle, longLabel, todayKey, addDays, formatDayKey } from '../utils/date';
 import TaskRow from '../components/TaskRow';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
@@ -30,6 +30,7 @@ import ReorderableTaskList from '../components/ReorderableTaskList';
 import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
 import GanttView from '../components/GanttView';
+import DisplayMenu from '../components/DisplayMenu';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -142,7 +143,7 @@ function useSections(state, route) {
 // Someday/undated tasks collect in a "No Date" section at the bottom. Each bucket
 // mirrors a heading: open to-dos first (by order), then completed below when the
 // setting is on, and a done/total count for the header pie.
-function groupByDate(tasks, showCompleted) {
+function groupByDate(tasks, showCompleted, dateFormat = 'weekday-long') {
   const buckets = {}; // dateKey -> { open: [], done: [] }
   const noDate = { open: [], done: [] };
   const bucketFor = (key) => (buckets[key] = buckets[key] || { open: [], done: [] });
@@ -154,13 +155,24 @@ function groupByDate(tasks, showCompleted) {
     const bucket = key === null ? noDate : bucketFor(key);
     (isOpen(t) ? bucket.open : bucket.done).push(t);
   });
+  const today = todayKey();
+  const tomorrow = addDays(today, 1);
   const make = (key, b) => {
     const open = b.open.slice().sort(byOrder);
     const done = b.done.slice().sort(byOrder);
+    // Header follows the Display/settings date format; "Today"/"Tomorrow" keep
+    // their relative word (the formatted date moves to the subtitle) and every
+    // other day is just the formatted date (no redundant weekday + long label).
+    let title;
+    let subtitle = null;
+    if (key === null) title = 'No Date';
+    else if (key === today) { title = 'Today'; subtitle = formatDayKey(key, dateFormat); }
+    else if (key === tomorrow) { title = 'Tomorrow'; subtitle = formatDayKey(key, dateFormat); }
+    else title = formatDayKey(key, dateFormat);
     return {
       key: key === null ? 'no-date' : key,
-      title: key === null ? 'No Date' : relativeLabel(key),
-      subtitle: key === null ? null : longLabel(key),
+      title,
+      subtitle,
       data: showCompleted ? [...open, ...done] : open,
       total: open.length + done.length,
       doneCount: done.length,
@@ -173,6 +185,70 @@ function groupByDate(tasks, showCompleted) {
   // Drop buckets with nothing to show (e.g. an all-completed date while
   // "show completed" is off) — but their counts still fed the pie above.
   return sections.filter((s) => s.data.length > 0);
+}
+
+// ---- Display menu: universal filter / sort / grouping --------------------
+const PRIO_RANK = { high: 0, medium: 1, low: 2 };
+
+// A task predicate for the Display menu's Filter section (date/priority/label).
+function makeFilter(fDate, fPri, fLabel) {
+  const today = todayKey();
+  return (t) => {
+    if (fPri !== 'all' && t.priority !== fPri) return false;
+    if (fLabel !== 'all' && !(t.tags || []).includes(fLabel)) return false;
+    if (fDate !== 'all') {
+      const w = t.when === WHEN.TODAY || t.when === WHEN.EVENING ? today : t.when;
+      const dated = !!w && w !== WHEN.SOMEDAY;
+      if (fDate === 'none') return !dated;
+      if (!dated) return false;
+      if (fDate === 'today') return w === today;
+      if (fDate === 'overdue') return w < today;
+      if (fDate === 'upcoming') return w >= today;
+    }
+    return true;
+  };
+}
+
+function sortData(arr, sorting) {
+  if (sorting === 'manual') return arr;
+  const a = arr.slice();
+  if (sorting === 'name') a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
+  else if (sorting === 'date') a.sort((x, y) => String(x.when || '~').localeCompare(String(y.when || '~')));
+  else if (sorting === 'priority') a.sort((x, y) => (PRIO_RANK[x.priority] ?? 9) - (PRIO_RANK[y.priority] ?? 9));
+  return a;
+}
+
+// Regroup a flat task list into { key, title, subtitle, data, total, doneCount }
+// sections for grouping modes other than the default heading "Section" view.
+function groupTasks(tasks, grouping, showCompleted, sorting, dateFormat) {
+  if (grouping === 'date') return groupByDate(tasks, showCompleted, dateFormat);
+  const open = tasks.filter(isOpen);
+  const done = tasks.filter((t) => !isOpen(t));
+  const src = showCompleted ? tasks : open;
+  const section = (key, title, pred) => {
+    const data = sortData(src.filter(pred), sorting);
+    return {
+      key, title, subtitle: null, data,
+      total: open.filter(pred).length + done.filter(pred).length,
+      doneCount: done.filter(pred).length,
+    };
+  };
+  let secs = [];
+  if (grouping === 'none') {
+    secs = [section('all', null, () => true)];
+  } else if (grouping === 'priority') {
+    secs = [
+      section('p:high', 'High', (t) => t.priority === 'high'),
+      section('p:medium', 'Medium', (t) => t.priority === 'medium'),
+      section('p:low', 'Low', (t) => t.priority === 'low'),
+      section('p:none', 'No Priority', (t) => !t.priority),
+    ];
+  } else if (grouping === 'label') {
+    const labels = [...new Set(tasks.flatMap((t) => t.tags || []))].sort();
+    secs = labels.map((l) => section(`l:${l}`, l, (t) => (t.tags || []).includes(l)));
+    secs.push(section('l:none', 'No Label', (t) => !(t.tags || []).length));
+  }
+  return secs.filter((s) => s.data.length > 0);
 }
 
 export default function ListScreen({
@@ -195,11 +271,20 @@ export default function ListScreen({
     updateHeading,
     toggleHeadingCollapsed,
     addHeading,
+    setSetting,
   } = useTasks();
   const [openTaskId, setOpenTaskId] = useState(null);
   const [editSectionId, setEditSectionId] = useState(null);
   // Projects can be viewed as the manual heading list, or grouped by date.
   const [projectView, setProjectView] = useState('list');
+  // "Display" popover: universal grouping / sorting / filtering for the project.
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const [grouping, setGrouping] = useState('section'); // section|none|priority|date|label
+  const [sorting, setSorting] = useState('manual'); // manual|name|date|priority
+  const [filterDate, setFilterDate] = useState('all'); // all|overdue|today|upcoming|none
+  const [filterPriority, setFilterPriority] = useState('all'); // all|high|medium|low
+  const [filterLabel, setFilterLabel] = useState('all'); // all|<tag>
+  const hasFilter = filterDate !== 'all' || filterPriority !== 'all' || filterLabel !== 'all';
   // Expanded parent tasks (by id) — controls whether their subtasks are shown
   // as nested rows in the project list.
   const [expandedTasks, setExpandedTasks] = useState(() => new Set());
@@ -218,7 +303,34 @@ export default function ListScreen({
       return next;
     });
 
-  const sections = useSections(state, route);
+  const rawSections = useSections(state, route);
+  const dateFormat = state.settings?.dateFormat ?? 'weekday-long';
+  const project0 = projectId ? state.projects.find((p) => p.id === projectId) : null;
+  const taskFilter = useMemo(
+    () => makeFilter(filterDate, filterPriority, filterLabel),
+    [filterDate, filterPriority, filterLabel]
+  );
+  // Universal (all-layout) filter + within-section sort for projects. Heading
+  // structure is preserved, so drag-to-reorder in the list stays safe.
+  const sections = useMemo(() => {
+    if (!project0 || (!hasFilter && sorting === 'manual')) return rawSections;
+    return rawSections.map((s) => ({
+      ...s,
+      data: sortData(hasFilter ? s.data.filter(taskFilter) : s.data, sorting),
+    }));
+  }, [rawSections, project0, hasFilter, taskFilter, sorting]);
+  // Alternate grouping (Priority/Date/Label/None) rebuilds the project's list as
+  // collapsible group sections; null when using the default heading "Section".
+  const groupedSections = useMemo(() => {
+    if (!project0 || grouping === 'section') return null;
+    let flat = selectProjectTasks(state.tasks, project0.id).filter((tk) => !tk.parentId);
+    if (hasFilter) flat = flat.filter(taskFilter);
+    return groupTasks(flat, grouping, state.settings?.showCompleted, sorting, dateFormat);
+  }, [project0, grouping, state.tasks, hasFilter, taskFilter, sorting, state.settings?.showCompleted, dateFormat]);
+  const projectLabels = useMemo(
+    () => (project0 ? [...new Set(selectProjectTasks(state.tasks, project0.id).flatMap((tk) => tk.tags || []))].sort() : []),
+    [project0, state.tasks]
+  );
   const isWide = useIsWide();
   const centered = state.settings?.centeredContent;
   const smart = listId ? SMART_LIST_MAP[listId] : null;
@@ -271,8 +383,9 @@ export default function ListScreen({
   const projectDateSections =
     project && projectView === 'date'
       ? groupByDate(
-          selectProjectTasks(state.tasks, project.id),
-          state.settings?.showCompleted
+          selectProjectTasks(state.tasks, project.id).filter(hasFilter ? taskFilter : () => true),
+          state.settings?.showCompleted,
+          dateFormat
         )
       : [];
 
@@ -343,6 +456,26 @@ export default function ListScreen({
         showProject={!project}
         onOpenTask={setOpenTaskId}
         onCommitKeys={commitDateLayout}
+        onToggleDivider={toggleDate}
+      />
+    );
+  };
+
+  // Render the Display-menu grouping (Priority/Date/Label/None) as collapsible
+  // group buckets. Date grouping reschedules on drop; the others only reorder.
+  const renderGroupedList = (grpSections) => {
+    const items = buildDateItems(grpSections, project?.color);
+    if (items.length === 0) return <EmptyState listId="project-date" />;
+    const onCommit =
+      grouping === 'date'
+        ? commitDateLayout
+        : (keys) => reorderTasks(keys.filter((k) => !k.startsWith('d:')));
+    return (
+      <ReorderableTaskList
+        items={items}
+        showProject={false}
+        onOpenTask={setOpenTaskId}
+        onCommitKeys={onCommit}
         onToggleDivider={toggleDate}
       />
     );
@@ -532,31 +665,33 @@ export default function ListScreen({
         </Pressable>
       )}
       {project && (
-        <View style={styles.viewToggle}>
-          {[
-            { mode: 'list', icon: 'list' },
-            { mode: 'board', icon: 'grid-outline' },
-            { mode: 'calendar', icon: 'calendar-outline' },
-            { mode: 'gantt', icon: 'stats-chart-outline' },
-            { mode: 'date', icon: 'calendar-number-outline' },
-          ].map(({ mode, icon }) => {
-            const active = projectView === mode;
-            return (
-              <Pressable
-                key={mode}
-                hitSlop={6}
-                onPress={() => setProjectView(mode)}
-                style={[styles.viewToggleBtn, active && styles.viewToggleBtnActive]}
-              >
-                <Ionicons
-                  name={icon}
-                  size={17}
-                  color={active ? colors.accent : colors.textTertiary}
-                />
-              </Pressable>
-            );
-          })}
-        </View>
+        <Pressable style={styles.displayBtn} onPress={() => setDisplayOpen(true)}>
+          <Ionicons name="options-outline" size={16} color={colors.textSecondary} />
+          <Text style={styles.displayText}>Display</Text>
+          {hasFilter && <View style={styles.displayDot} />}
+        </Pressable>
+      )}
+      {project && (
+        <DisplayMenu
+          visible={displayOpen}
+          onClose={() => setDisplayOpen(false)}
+          layout={projectView}
+          onLayout={setProjectView}
+          layouts={['list', 'board', 'calendar', 'gantt', 'date']}
+          showCompleted={!!state.settings?.showCompleted}
+          onToggleCompleted={(v) => setSetting('showCompleted', v)}
+          grouping={grouping}
+          onGrouping={setGrouping}
+          sorting={sorting}
+          onSorting={setSorting}
+          filterDate={filterDate}
+          onFilterDate={setFilterDate}
+          filterPriority={filterPriority}
+          onFilterPriority={setFilterPriority}
+          filterLabel={filterLabel}
+          onFilterLabel={setFilterLabel}
+          labels={projectLabels}
+        />
       )}
     </View>
   );
@@ -594,6 +729,8 @@ export default function ListScreen({
         onAddTask={handleAddInSection}
         onAddSection={handleAddSectionAfter}
         onEditSection={setEditSectionId}
+        grouping={grouping}
+        sorting={sorting}
       />
     ) : projectView === 'gantt' ? (
       <GanttView
@@ -649,6 +786,8 @@ export default function ListScreen({
               onAddTask={handleAddInSection}
               onAddSection={handleAddSectionAfter}
               onEditSection={setEditSectionId}
+              grouping={grouping}
+              sorting={sorting}
             />
           ) : projectView === 'calendar' ? (
             // Calendar view: Month grid or a Day planner (time-blocking timeline).
@@ -667,6 +806,10 @@ export default function ListScreen({
             // Date view: the project's open to-dos regrouped by scheduled date,
             // as collapsible buckets with draggable/reorderable rows.
             renderDateList(projectDateSections, 'project-date')
+          ) : groupedSections ? (
+            // Non-default grouping (Priority/Date/Label/None): collapsible group
+            // buckets. Reorder persists order only (Date grouping reschedules).
+            renderGroupedList(groupedSections)
           ) : (
             // One drag surface for the whole project: heading dividers are fixed,
             // tasks can be dragged within or across them. A per-section "+ Add
@@ -693,7 +836,7 @@ export default function ListScreen({
           // Upcoming is the same date-grouped surface: collapsible date buckets
           // with draggable/reorderable rows (dragging reschedules the task).
           renderDateList(
-            groupByDate(selectForList(state.tasks, 'upcoming'), state.settings?.showCompleted),
+            groupByDate(selectForList(state.tasks, 'upcoming'), state.settings?.showCompleted, dateFormat),
             'upcoming'
           )
         ) : listId === 'today' && listReorderable ? (
@@ -882,6 +1025,19 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   viewToggleBtnActive: { backgroundColor: colors.card || colors.background },
+  displayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  displayText: { ...typography.subhead, color: colors.textSecondary, fontWeight: '600' },
+  displayDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',

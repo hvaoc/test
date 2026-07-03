@@ -125,10 +125,11 @@ export default function BoardView({
   onAddTask,
   onAddSection,
   onEditSection,
+  // Grouping / sorting are driven by the project's Display menu.
+  grouping = 'section',
+  sorting = 'manual',
 }) {
-  const [grouping, setGrouping] = useState('section');
-  const [sort, setSort] = useState('manual');
-  const [showDisplay, setShowDisplay] = useState(false);
+  const sort = sorting;
   const [dragTask, setDragTask] = useState(null);
   const [dropTarget, setDropTarget] = useState(null); // { colKey, index }
   const [scrollX, setScrollX] = useState(0);
@@ -229,17 +230,6 @@ export default function BoardView({
 
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
-      <View style={styles.toolbar}>
-        <Pressable style={styles.displayBtn} onPress={() => setShowDisplay((v) => !v)}>
-          <Ionicons name="options-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.displayText}>Display</Text>
-        </Pressable>
-        <Text style={styles.groupHint}>
-          Grouped by {GROUPINGS.find((g) => g.key === grouping)?.label} · Sorted by{' '}
-          {SORTS.find((s) => s.key === sort)?.label}
-        </Text>
-      </View>
-
       <ScrollView
         ref={boardScrollRef}
         horizontal
@@ -321,38 +311,6 @@ export default function BoardView({
         >
           <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
         </Pressable>
-      )}
-
-      {showDisplay && (
-        <>
-          <Pressable style={styles.scrim} onPress={() => setShowDisplay(false)} />
-          <View style={styles.popover}>
-            <Text style={styles.popLabel}>Grouping</Text>
-            <View style={styles.segRow}>
-              {GROUPINGS.map((g) => (
-                <Pressable
-                  key={g.key}
-                  style={[styles.seg, grouping === g.key && styles.segActive]}
-                  onPress={() => setGrouping(g.key)}
-                >
-                  <Text style={[styles.segText, grouping === g.key && styles.segTextActive]}>{g.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-            <Text style={styles.popLabel}>Sorting</Text>
-            <View style={styles.segRow}>
-              {SORTS.map((s) => (
-                <Pressable
-                  key={s.key}
-                  style={[styles.seg, sort === s.key && styles.segActive]}
-                  onPress={() => setSort(s.key)}
-                >
-                  <Text style={[styles.segText, sort === s.key && styles.segTextActive]}>{s.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        </>
       )}
 
       {dragTask && (
