@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, TextInput, ScrollView, FlatList, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -65,7 +65,8 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
 
   const rootRef = useRef(null);
   const panelRef = useRef(null);
-  const scrollRef = useRef(null);
+  const scrollRef = useRef(null); // FlatList (scrollToOffset only — no measureInWindow)
+  const viewRef = useRef(null); // wrapper View around the list, used to measure the drop viewport
   const scrollYRef = useRef(0);
   const rectsRef = useRef(null);
 
@@ -84,7 +85,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         else res();
       });
     const store = {};
-    Promise.all([grab(scrollRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
+    Promise.all([grab(viewRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
       rectsRef.current = store;
       if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
@@ -136,12 +137,12 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const dragCtx = { ghostX, ghostY, rootX, rootY, measureOnly, begin, cancelDrag, updateDrop, end };
   const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
-  const scrollToMonth = (i, animated) => scrollRef.current?.scrollTo({ y: i * monthH, animated });
+  const scrollToMonth = (i, animated) => scrollRef.current?.scrollToOffset({ offset: i * monthH, animated });
   // Land on the current month once the viewport height is known (and keep it in
   // view if the height changes, e.g. a resize).
   useEffect(() => {
     if (viewH > 0) {
-      scrollRef.current?.scrollTo({ y: RANGE_BACK * monthH, animated: false });
+      scrollRef.current?.scrollToOffset({ offset: RANGE_BACK * monthH, animated: false });
       setReady(true);
     }
   }, [viewH]);
@@ -155,15 +156,32 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const color = project?.color || colors.accent;
 
   // Flatten months into [title, weeks, title, weeks, ...] so each title can be a
-  // sticky header (sticky indices are the even positions).
-  const items = [];
+  // sticky header (sticky indices are the even positions). This drives a
+  // virtualized FlatList: only the on-screen months mount, so the 19-month span
+  // stays cheap even when every day carries tasks.
+  const monthData = [];
   const stickyIndices = [];
   months.forEach(({ y, m }) => {
-    stickyIndices.push(items.length);
-    items.push(
-      <View key={`t${y}-${m}`} style={[styles.monthHeader, { height: HEADER_H }]}>
+    stickyIndices.push(monthData.length);
+    monthData.push({ type: 'title', y, m, key: `t${y}-${m}` });
+    monthData.push({ type: 'weeks', y, m, key: `w${y}-${m}` });
+  });
+  // Both items of a month share the monthH stride; title sits at the top,
+  // weeks below the header — exact offsets keep scroll/snap/drag math correct.
+  const monthLayout = (_d, index) => {
+    const monthIdx = Math.floor(index / 2);
+    const isTitle = index % 2 === 0;
+    return {
+      length: isTitle ? HEADER_H : monthH - HEADER_H,
+      offset: monthIdx * monthH + (isTitle ? 0 : HEADER_H),
+      index,
+    };
+  };
+  const renderMonthItem = ({ item }) =>
+    item.type === 'title' ? (
+      <View style={[styles.monthHeader, { height: HEADER_H }]}>
         <View style={[styles.monthTitleWrap, { height: TITLE_H }]}>
-          <Text style={styles.monthTitle}>{MONTHS[m]} {y}</Text>
+          <Text style={styles.monthTitle}>{MONTHS[item.m]} {item.y}</Text>
         </View>
         <View style={[styles.weekdays, { height: WEEKDAY_H }]}>
           {WEEKDAYS_SHORT.map((d) => (
@@ -171,12 +189,10 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
           ))}
         </View>
       </View>
-    );
-    items.push(
+    ) : (
       <MonthWeeks
-        key={`w${y}-${m}`}
-        y={y}
-        m={m}
+        y={item.y}
+        m={item.m}
         height={monthH - HEADER_H}
         weekH={weekH}
         byDate={byDate}
@@ -188,7 +204,6 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         onDayPress={setPeekDay}
       />
     );
-  });
 
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
@@ -205,9 +220,14 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
       </View>
 
       <View style={styles.row}>
-        <View style={styles.leftCol}>
-          <ScrollView
+        <View ref={viewRef} collapsable={false} style={styles.leftCol}>
+          <FlatList
             ref={scrollRef}
+            data={monthData}
+            keyExtractor={(it) => it.key}
+            renderItem={renderMonthItem}
+            extraData={`${dropKey}|${monthH}`}
+            getItemLayout={monthLayout}
             style={[styles.scroll, !ready && styles.hidden]}
             showsVerticalScrollIndicator={false}
             stickyHeaderIndices={stickyIndices}
@@ -217,9 +237,11 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
             snapToInterval={monthH}
             decelerationRate="fast"
             snapToAlignment="start"
-          >
-            {items}
-          </ScrollView>
+            initialNumToRender={4}
+            maxToRenderPerBatch={4}
+            windowSize={5}
+            removeClippedSubviews={false}
+          />
         </View>
 
         {showPanel && (
@@ -227,9 +249,19 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
             <Text style={styles.panelTitle}>
               Unscheduled <Text style={styles.panelCount}>{unscheduled.length}</Text>
             </Text>
-            <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
-              {unscheduled.map((t) => (
-                <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
+            <FlatList
+              style={styles.panelScroll}
+              showsVerticalScrollIndicator={false}
+              data={unscheduled}
+              keyExtractor={(t) => t.id}
+              extraData={dropKey}
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={7}
+              removeClippedSubviews={false}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: t }) => (
+                <Draggable task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
                   <View style={styles.panelItem}>
                     <View style={[styles.panelDot, { borderColor: color }]} />
                     <Text style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={2}>
@@ -237,21 +269,23 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
                     </Text>
                   </View>
                 </Draggable>
-              ))}
-              <View style={styles.addRow}>
-                <Ionicons name="add" size={18} color={colors.textTertiary} />
-                <TextInput
-                  style={styles.addInput}
-                  value={newTitle}
-                  onChangeText={setNewTitle}
-                  onSubmitEditing={submitAdd}
-                  blurOnSubmit={false}
-                  placeholder="Add task"
-                  placeholderTextColor={colors.placeholder}
-                  returnKeyType="done"
-                />
-              </View>
-            </ScrollView>
+              )}
+              ListFooterComponent={
+                <View style={styles.addRow}>
+                  <Ionicons name="add" size={18} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.addInput}
+                    value={newTitle}
+                    onChangeText={setNewTitle}
+                    onSubmitEditing={submitAdd}
+                    blurOnSubmit={false}
+                    placeholder="Add task"
+                    placeholderTextColor={colors.placeholder}
+                    returnKeyType="done"
+                  />
+                </View>
+              }
+            />
           </View>
         )}
       </View>

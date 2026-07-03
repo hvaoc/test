@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, TextInput, ScrollView, FlatList, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -247,20 +247,31 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
         {showPanel && (
           <View ref={panelRef} collapsable={false} style={styles.panel}>
             <Text style={styles.panelTitle}>Unscheduled <Text style={styles.panelCount}>{unscheduled.length}</Text></Text>
-            <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
-              {unscheduled.map((t) => (
-                <Draggable key={t.id} task={t} ctx={ctx} onOpen={onOpenTask} style={styles.panelItemWrap}>
+            <FlatList
+              style={styles.panelScroll}
+              showsVerticalScrollIndicator={false}
+              data={unscheduled}
+              keyExtractor={(t) => t.id}
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={7}
+              removeClippedSubviews={false}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: t }) => (
+                <Draggable task={t} ctx={ctx} onOpen={onOpenTask} style={styles.panelItemWrap}>
                   <View style={styles.panelItem}>
                     <View style={[styles.panelDot, { borderColor: color }]} />
                     <Text style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={2}>{t.title || 'New To-Do'}</Text>
                   </View>
                 </Draggable>
-              ))}
-              <View style={styles.addRow}>
-                <Ionicons name="add" size={18} color={colors.textTertiary} />
-                <TextInput style={styles.addInput} value={newTitle} onChangeText={setNewTitle} onSubmitEditing={submitAdd} blurOnSubmit={false} placeholder="Add task" placeholderTextColor={colors.placeholder} returnKeyType="done" />
-              </View>
-            </ScrollView>
+              )}
+              ListFooterComponent={
+                <View style={styles.addRow}>
+                  <Ionicons name="add" size={18} color={colors.textTertiary} />
+                  <TextInput style={styles.addInput} value={newTitle} onChangeText={setNewTitle} onSubmitEditing={submitAdd} blurOnSubmit={false} placeholder="Add task" placeholderTextColor={colors.placeholder} returnKeyType="done" />
+                </View>
+              }
+            />
           </View>
         )}
       </View>

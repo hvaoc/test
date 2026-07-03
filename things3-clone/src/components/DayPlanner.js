@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, TextInput, ScrollView, FlatList, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -57,7 +57,8 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
   const rootRef = useRef(null);
   const panelRef = useRef(null);
-  const scrollRef = useRef(null);
+  const scrollRef = useRef(null); // FlatList (scrollToOffset only — no measureInWindow)
+  const viewRef = useRef(null); // wrapper View around the list, used to measure the drop viewport
   const scrollYRef = useRef(0);
   const rectsRef = useRef(null);
   const scrolledRef = useRef(false);
@@ -91,7 +92,7 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
         else res();
       });
     const store = {};
-    Promise.all([grab(scrollRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
+    Promise.all([grab(viewRef, 'view', store), grab(panelRef, 'panel', store), grab(rootRef, 'root', store)]).then(() => {
       rectsRef.current = store;
       if (store.root) { rootX.value = store.root.x; rootY.value = store.root.y; }
     });
@@ -153,18 +154,18 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
   // The anchor day always sits at index RANGE_PAST in the window.
   const scrollToToday = () => {
     const ti = days.indexOf(todayK);
-    if (ti >= 0) scrollRef.current?.scrollTo({ y: ti * DAY_H, animated: true });
+    if (ti >= 0) scrollRef.current?.scrollToOffset({ offset: ti * DAY_H, animated: true });
     else setAnchor(todayKey()); // today is outside the window — recenter on it
   };
   const onContentReady = () => {
     if (scrolledRef.current) return;
     scrolledRef.current = true;
-    scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
+    scrollRef.current?.scrollToOffset({ offset: RANGE_PAST * DAY_H, animated: false });
   };
   // Recenter when the anchor changes (Today from out-of-range, or a tapped date).
   useEffect(() => {
     if (!scrolledRef.current) return; // initial position handled by onContentReady
-    scrollRef.current?.scrollTo({ y: RANGE_PAST * DAY_H, animated: false });
+    scrollRef.current?.scrollToOffset({ offset: RANGE_PAST * DAY_H, animated: false });
   }, [anchor]);
 
   const submitAdd = () => {
@@ -179,30 +180,44 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
 
   // Flatten days into [header, body, header, body, ...] so each date header can
   // be a sticky section header (scrolls with its day, pins while it's in view).
-  const items = [];
+  // This drives a virtualized FlatList: only the on-screen days mount, so the
+  // 91-day window stays cheap even with many timed tasks.
+  const dayData = [];
   const stickyIndices = [];
   days.forEach((k) => {
-    stickyIndices.push(items.length);
-    items.push(
-      <DayHeader key={`h${k}`} dayKey={k} isToday={k === todayK} height={DHEADER_H} dateFormat={dateFormat} />
-    );
-    items.push(
+    stickyIndices.push(dayData.length);
+    dayData.push({ type: 'header', k, key: `h${k}` });
+    dayData.push({ type: 'body', k, key: `b${k}` });
+  });
+  // Each day shares the DAY_H stride; header at the top, body (all-day + grid)
+  // below — exact offsets keep scroll and the analytic drop math correct.
+  const dayLayout = (_d, index) => {
+    const dayIdx = Math.floor(index / 2);
+    const isHeader = index % 2 === 0;
+    return {
+      length: isHeader ? DHEADER_H : ALLDAY_H + GRID_H,
+      offset: dayIdx * DAY_H + (isHeader ? 0 : DHEADER_H),
+      index,
+    };
+  };
+  const renderDayItem = ({ item }) =>
+    item.type === 'header' ? (
+      <DayHeader dayKey={item.k} isToday={item.k === todayK} height={DHEADER_H} dateFormat={dateFormat} />
+    ) : (
       <DayBody
-        key={`b${k}`}
-        dayKey={k}
-        isToday={k === todayK}
-        timed={timedByDay[k] || []}
-        allDay={allDayByDay[k] || []}
+        dayKey={item.k}
+        isToday={item.k === todayK}
+        timed={timedByDay[item.k] || []}
+        allDay={allDayByDay[item.k] || []}
         color={color}
         ctx={dragCtx}
         onOpen={onOpenTask}
         startHour={startHour}
         gridH={GRID_H}
         bodyH={ALLDAY_H + GRID_H}
-        placeholder={dropInfo && dropInfo.dayKey === k ? { top: dropInfo.top, h: dropH } : null}
+        placeholder={dropInfo && dropInfo.dayKey === item.k ? { top: dropInfo.top, h: dropH } : null}
       />
     );
-  });
 
   return (
     <View ref={rootRef} collapsable={false} style={styles.root}>
@@ -222,26 +237,45 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
       </View>
 
       <View style={styles.row}>
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          showsVerticalScrollIndicator={false}
-          stickyHeaderIndices={stickyIndices}
-          scrollEventThrottle={16}
-          onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
-          onContentSizeChange={onContentReady}
-        >
-          {items}
-        </ScrollView>
+        <View ref={viewRef} collapsable={false} style={styles.scroll}>
+          <FlatList
+            ref={scrollRef}
+            data={dayData}
+            keyExtractor={(it) => it.key}
+            renderItem={renderDayItem}
+            extraData={`${dropInfo?.dayKey}|${dropInfo?.top}|${DAY_H}`}
+            getItemLayout={dayLayout}
+            style={styles.scroll}
+            showsVerticalScrollIndicator={false}
+            stickyHeaderIndices={stickyIndices}
+            scrollEventThrottle={16}
+            onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+            onContentSizeChange={onContentReady}
+            initialNumToRender={4}
+            maxToRenderPerBatch={4}
+            windowSize={5}
+            removeClippedSubviews={false}
+          />
+        </View>
 
         {showPanel && (
           <View ref={panelRef} collapsable={false} style={styles.panel}>
             <Text style={styles.panelTitle}>
               Unscheduled <Text style={styles.panelCount}>{unscheduled.length}</Text>
             </Text>
-            <ScrollView style={styles.panelScroll} showsVerticalScrollIndicator={false}>
-              {unscheduled.map((t) => (
-                <Draggable key={t.id} task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
+            <FlatList
+              style={styles.panelScroll}
+              showsVerticalScrollIndicator={false}
+              data={unscheduled}
+              keyExtractor={(t) => t.id}
+              extraData={dropInfo}
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={7}
+              removeClippedSubviews={false}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item: t }) => (
+                <Draggable task={t} ctx={dragCtx} onOpen={onOpenTask} style={styles.panelItemWrap}>
                   <View style={styles.panelItem}>
                     <View style={[styles.panelDot, { borderColor: color }]} />
                     <Text style={[styles.panelItemText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={2}>
@@ -249,21 +283,23 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
                     </Text>
                   </View>
                 </Draggable>
-              ))}
-              <View style={styles.addRow}>
-                <Ionicons name="add" size={18} color={colors.textTertiary} />
-                <TextInput
-                  style={styles.addInput}
-                  value={newTitle}
-                  onChangeText={setNewTitle}
-                  onSubmitEditing={submitAdd}
-                  blurOnSubmit={false}
-                  placeholder="Add task"
-                  placeholderTextColor={colors.placeholder}
-                  returnKeyType="done"
-                />
-              </View>
-            </ScrollView>
+              )}
+              ListFooterComponent={
+                <View style={styles.addRow}>
+                  <Ionicons name="add" size={18} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.addInput}
+                    value={newTitle}
+                    onChangeText={setNewTitle}
+                    onSubmitEditing={submitAdd}
+                    blurOnSubmit={false}
+                    placeholder="Add task"
+                    placeholderTextColor={colors.placeholder}
+                    returnKeyType="done"
+                  />
+                </View>
+              }
+            />
           </View>
         )}
       </View>
