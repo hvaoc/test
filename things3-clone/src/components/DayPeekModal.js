@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -40,6 +40,12 @@ export default function DayPeekModal({
 }) {
   const scrollRef = useRef(null);
   const scrolledRef = useRef(false);
+  const gridRef = useRef(null); // the hour-grid content, measured to map a drop -> time
+  const rectsRef = useRef({});
+  const [dragChip, setDragChip] = useState(null); // all-day task being dragged onto the grid
+  const [dropMin, setDropMin] = useState(null); // live target time while dragging
+  const ghostX = useSharedValue(0);
+  const ghostY = useSharedValue(0);
 
   const timed = dayTasks.filter((t) => t.startMinutes != null).sort((a, b) => a.startMinutes - b.startMinutes);
   const allDay = dayTasks.filter((t) => t.startMinutes == null);
@@ -56,6 +62,44 @@ export default function DayPeekModal({
     const y = TOP_PAD + Math.max(0, (firstMin - startHour * 60) / 60 - 0.5) * HOUR_H;
     scrollRef.current?.scrollTo({ y, animated: false });
   };
+
+  // Measure the scroll viewport (drop zone) and the grid content (time origin)
+  // once, at the start of an all-day drag.
+  const measure = () => {
+    const grab = (ref, key) =>
+      new Promise((res) => {
+        const n = ref.current;
+        if (n && n.measureInWindow) n.measureInWindow((x, y, w, h) => { rectsRef.current[key] = { x, y, w, h }; res(); });
+        else res();
+      });
+    return Promise.all([grab(scrollRef, 'view'), grab(gridRef, 'grid')]);
+  };
+  // Pointer (window coords) -> snapped minutes, or null when off the grid.
+  const computeMin = (ax, ay) => {
+    const v = rectsRef.current.view;
+    const g = rectsRef.current.grid;
+    if (!v || !g) return null;
+    if (ax < v.x || ax > v.x + v.w || ay < v.y || ay > v.y + v.h) return null;
+    const relY = ay - g.y;
+    let mins = startHour * 60 + Math.round(((relY - TOP_PAD) / HOUR_H) * 60 / SNAP) * SNAP;
+    return Math.max(startHour * 60, Math.min(END_HOUR * 60 - SNAP, mins));
+  };
+  const chipCtx = {
+    ghostX,
+    ghostY,
+    enabled: !!onUpdateTask,
+    measure,
+    begin: (t) => setDragChip(t),
+    updateDrop: (ax, ay) => { const m = computeMin(ax, ay); setDropMin((p) => (p === m ? p : m)); },
+    cancel: () => { setDragChip(null); setDropMin(null); },
+    end: (id, ax, ay) => {
+      const m = computeMin(ax, ay);
+      setDragChip(null);
+      setDropMin(null);
+      if (m != null) onUpdateTask(id, { startMinutes: m });
+    },
+  };
+  const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -82,11 +126,7 @@ export default function DayPeekModal({
           {allDay.length > 0 && (
             <View style={styles.allDay}>
               {allDay.map((t) => (
-                <Pressable key={t.id} onPress={() => onOpenTask && onOpenTask(t.id)} style={[styles.allDayChip, { borderLeftColor: color }]}>
-                  <Text style={[styles.allDayText, t.status !== STATUS.OPEN && styles.done]} numberOfLines={1}>
-                    {t.title || 'New To-Do'}
-                  </Text>
-                </Pressable>
+                <AllDayChip key={t.id} task={t} color={color} ctx={chipCtx} onOpen={onOpenTask} />
               ))}
             </View>
           )}
@@ -97,7 +137,7 @@ export default function DayPeekModal({
             showsVerticalScrollIndicator={false}
             onContentSizeChange={onContentReady}
           >
-            <View style={{ height: gridH }}>
+            <View ref={gridRef} collapsable={false} style={{ height: gridH }}>
               {Array.from({ length: HOURS + 1 }, (_, i) => startHour + i).map((h) => (
                 <View key={h} style={[styles.hourRow, { top: TOP_PAD + (h - startHour) * HOUR_H }]}>
                   <Text style={styles.hourLabel}>{fmt(h * 60)}</Text>
@@ -127,6 +167,14 @@ export default function DayPeekModal({
                   );
                 })}
               </View>
+              {/* Live drop indicator while pulling an all-day task onto a time. */}
+              {dropMin != null && (
+                <View pointerEvents="none" style={[styles.dropLine, { top: TOP_PAD + ((dropMin - startHour * 60) / 60) * HOUR_H, left: GUTTER }]}>
+                  <View style={styles.dropDot} />
+                  <View style={styles.dropRule} />
+                  <Text style={styles.dropTime}>{fmt(dropMin)}</Text>
+                </View>
+              )}
               {timed.length === 0 && allDay.length === 0 && (
                 <Text style={styles.empty}>No events</Text>
               )}
@@ -134,6 +182,14 @@ export default function DayPeekModal({
           </ScrollView>
         </Pressable>
       </Pressable>
+      {/* Floating ghost of the all-day task being dragged onto the grid. */}
+      {dragChip && (
+        <Animated.View pointerEvents="none" style={[styles.ghost, ghostStyle]}>
+          <View style={[styles.ghostChip, { borderLeftColor: color }]}>
+            <Text style={styles.ghostText} numberOfLines={1}>{dragChip.title || 'New To-Do'}</Text>
+          </View>
+        </Animated.View>
+      )}
       </GestureHandlerRootView>
     </Modal>
   );
@@ -184,6 +240,48 @@ function Block({ task, color, startHour, top, height, left, width, count, onOpen
             </Text>
             {count < 3 && <Text style={styles.blockTime} numberOfLines={1}>{fmt(task.startMinutes)}</Text>}
           </View>
+        </Pressable>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+// An all-day task chip. Tap opens it; press-and-drag pulls it down onto the
+// hour grid to give it a start time (via coordinate-based drop detection).
+function AllDayChip({ task, color, ctx, onOpen }) {
+  const draggedRef = React.useRef(false);
+  const moved = useSharedValue(false);
+  const markDragged = () => { draggedRef.current = true; };
+  const handlePress = () => {
+    if (draggedRef.current) { draggedRef.current = false; return; }
+    onOpen && onOpen(task.id);
+  };
+  const pan = Gesture.Pan()
+    .enabled(ctx.enabled)
+    .activateAfterLongPress(150)
+    .onStart(() => { moved.value = false; runOnJS(ctx.measure)(); })
+    .onUpdate((e) => {
+      if (!moved.value && Math.abs(e.translationX) + Math.abs(e.translationY) > 4) {
+        moved.value = true;
+        runOnJS(markDragged)();
+        runOnJS(ctx.begin)(task);
+      }
+      if (!moved.value) return;
+      ctx.ghostX.value = e.absoluteX - 16;
+      ctx.ghostY.value = e.absoluteY - 14;
+      runOnJS(ctx.updateDrop)(e.absoluteX, e.absoluteY);
+    })
+    .onEnd((e) => {
+      if (moved.value) runOnJS(ctx.end)(task.id, e.absoluteX, e.absoluteY);
+      else runOnJS(ctx.cancel)();
+    });
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View>
+        <Pressable onPress={handlePress} style={[styles.allDayChip, { borderLeftColor: color }, ctx.enabled && styles.allDayDraggable]}>
+          <Text style={[styles.allDayText, task.status !== STATUS.OPEN && styles.done]} numberOfLines={1}>
+            {task.title || 'New To-Do'}
+          </Text>
         </Pressable>
       </Animated.View>
     </GestureDetector>
@@ -242,7 +340,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm, paddingVertical: 3, maxWidth: '100%',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
+  allDayDraggable: { ...(Platform.OS === 'web' ? { cursor: 'grab' } : null) },
   allDayText: { ...typography.caption, color: colors.text },
+  dropLine: { position: 'absolute', right: 0, height: 0, flexDirection: 'row', alignItems: 'center' },
+  dropDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent, marginLeft: -4 },
+  dropRule: { flex: 1, height: 2, backgroundColor: colors.accent, borderRadius: 1 },
+  dropTime: { ...typography.caption, color: colors.accent, fontWeight: '700', fontSize: 10, marginLeft: 4, marginRight: 4 },
+  ghost: {
+    position: 'absolute', top: 0, left: 0, zIndex: 1000,
+    ...(Platform.OS === 'web' ? { pointerEvents: 'none' } : null),
+  },
+  ghostChip: {
+    borderLeftWidth: 3, borderLeftColor: colors.accent, borderRadius: 4,
+    backgroundColor: colors.background, paddingHorizontal: spacing.sm, paddingVertical: 4,
+    maxWidth: 220,
+    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8,
+  },
+  ghostText: { ...typography.caption, color: colors.text, fontWeight: '600' },
   scroll: { paddingHorizontal: spacing.lg },
   hourRow: { position: 'absolute', left: 0, right: 0, height: HOUR_H, flexDirection: 'row', alignItems: 'flex-start' },
   hourLabel: { width: GUTTER, ...typography.caption, color: colors.textTertiary, marginTop: -6, fontSize: 10, textAlign: 'right', paddingRight: 4, fontVariant: ['tabular-nums'] },
