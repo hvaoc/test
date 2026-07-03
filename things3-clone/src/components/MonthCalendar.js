@@ -307,6 +307,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
         onClose={() => setPeekDay(null)}
         onOpenTask={(id) => { setPeekDay(null); onOpenTask(id); }}
         onOpenFull={onOpenDay ? () => { const k = peekDay; setPeekDay(null); onOpenDay(k); } : null}
+        onUpdateTask={onUpdateTask}
       />
     </View>
   );
