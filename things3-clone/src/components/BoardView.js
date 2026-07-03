@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, FlatList, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -149,6 +149,9 @@ export default function BoardView({
   const baseCols = buildColumns(grouping, tasks, headings);
   const columns = baseCols.map((c) => ({ ...c, tasks: sortTasks(tasks.filter(c.match), sort) }));
   const lastHeadingId = [...headings].reverse()[0]?.id || null;
+  // Changes on every drag move so each column's virtualized list re-renders the
+  // live placeholder / dimming (FlatList skips renders unless extraData changes).
+  const dragKey = `${dragTask?.id || ''}|${dropTarget?.colKey || ''}|${dropTarget?.index ?? ''}`;
 
   const measureOnly = () => {
     const cols = {};
@@ -264,30 +267,41 @@ export default function BoardView({
                 <Text style={styles.colCount}>{col.tasks.length}</Text>
               </Pressable>
 
-              {/* contentContainer grows to fill the column, so the empty area
-                  below a short column's tasks is still a valid drop zone. */}
-              <ScrollView
+              {/* Virtualized: only the visible cards mount, so switching to a
+                  huge project's board stays fast. contentContainer grows to
+                  fill the column, so the empty area below a short column's
+                  tasks is still a valid drop zone. */}
+              <FlatList
+                data={col.tasks}
                 style={styles.colScroll}
                 contentContainerStyle={styles.colScrollContent}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-              >
-                {col.tasks.map((task, i) => (
-                  <React.Fragment key={task.id}>
-                    {isTarget && dropTarget.index === i && <View style={styles.placeholder} />}
+                keyExtractor={(t) => t.id}
+                extraData={dragKey}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={3}
+                removeClippedSubviews={false}
+                renderItem={({ item, index }) => (
+                  <>
+                    {isTarget && dropTarget.index === index && <View style={styles.placeholder} />}
                     <Card
-                      task={task}
+                      task={item}
                       ctx={dragCtx}
                       onOpen={onOpenTask}
                       cardRefs={cardRefs}
-                      dimmed={dragTask?.id === task.id}
+                      dimmed={dragTask?.id === item.id}
                     />
-                  </React.Fragment>
-                ))}
-                {isTarget && dropTarget.index >= col.tasks.length && <View style={styles.placeholder} />}
-
-                <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
-              </ScrollView>
+                  </>
+                )}
+                ListFooterComponent={
+                  <>
+                    {isTarget && dropTarget.index >= col.tasks.length && <View style={styles.placeholder} />}
+                    <AddInColumn col={col} grouping={grouping} onAddTask={onAddTask} />
+                  </>
+                }
+              />
             </View>
           );
         })}
