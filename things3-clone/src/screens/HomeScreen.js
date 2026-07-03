@@ -87,6 +87,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
               <SidebarRow
                 icon={list.icon}
                 color={list.color}
+                outline={list.outline}
                 title={list.title}
                 badge={badge[list.id]}
                 selected={selectedKey === `list:${list.id}`}
@@ -184,7 +185,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
   );
 }
 
-function SidebarRow({ icon, color, title, badge, onPress, selected }) {
+function SidebarRow({ icon, color, title, badge, onPress, selected, outline }) {
   return (
     <Pressable
       style={({ pressed }) => [
@@ -194,8 +195,8 @@ function SidebarRow({ icon, color, title, badge, onPress, selected }) {
       ]}
       onPress={onPress}
     >
-      <View style={[styles.iconWrap, { backgroundColor: color }]}>
-        <Ionicons name={icon} size={15} color={colors.white} />
+      <View style={[styles.iconWrap, !outline && { backgroundColor: color }]}>
+        <Ionicons name={icon} size={outline ? 20 : 15} color={outline ? color : colors.white} />
       </View>
       <Text style={styles.rowTitle}>{title}</Text>
       {badge > 0 && <Text style={styles.badge}>{badge}</Text>}

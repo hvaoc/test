@@ -2,14 +2,16 @@ import { colors } from '../theme';
 
 // The built-in "smart lists" that live at the top of the Things sidebar.
 // Each has an id used throughout the app, an Ionicons glyph and a tint color.
+// `outline: true` draws the glyph as an outline in the list's color (no filled
+// tile). Today keeps the filled star.
 export const SMART_LISTS = [
-  { id: 'inbox', title: 'Inbox', icon: 'mail', color: colors.inbox },
-  { id: 'today', title: 'Today', icon: 'star', color: colors.today },
-  { id: 'upcoming', title: 'Upcoming', icon: 'calendar', color: colors.upcoming },
-  { id: 'anytime', title: 'Anytime', icon: 'layers', color: colors.anytime },
-  { id: 'someday', title: 'Someday', icon: 'archive', color: colors.someday },
-  { id: 'logbook', title: 'Logbook', icon: 'checkmark-done-circle', color: colors.logbook },
-  { id: 'trash', title: 'Trash', icon: 'trash', color: colors.trash },
+  { id: 'inbox', title: 'Inbox', icon: 'file-tray-outline', color: colors.accent, outline: true },
+  { id: 'today', title: 'Today', icon: 'star', color: colors.today, outline: true },
+  { id: 'upcoming', title: 'Upcoming', icon: 'calendar-outline', color: colors.upcoming, outline: true },
+  { id: 'anytime', title: 'Anytime', icon: 'layers-outline', color: colors.anytime, outline: true },
+  { id: 'someday', title: 'Someday', icon: 'archive-outline', color: colors.someday, outline: true },
+  { id: 'logbook', title: 'Logbook', icon: 'checkmark-done-circle-outline', color: colors.logbook, outline: true },
+  { id: 'trash', title: 'Trash', icon: 'trash-outline', color: colors.trash, outline: true },
 ];
 
 export const SMART_LIST_MAP = SMART_LISTS.reduce((acc, l) => {
