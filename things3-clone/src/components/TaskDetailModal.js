@@ -403,24 +403,14 @@ function TimeField({ task, onUpdate }) {
       <View style={styles.fieldRow}>
         <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : colors.textSecondary} style={styles.fieldIcon} />
         <Text style={styles.fieldLabel}>Start</Text>
-        {Platform.OS === 'web'
-          ? React.createElement('input', {
-              type: 'time',
-              value: start != null ? fmtTime(start) : '',
-              onChange: (e) => {
-                const v = e.target.value;
-                if (!v) { setStart(null); return; }
-                const [h, m] = v.split(':').map(Number);
-                setStart(h * 60 + m);
-              },
-              style: TIME_INPUT_STYLE,
-            })
-          : <Text style={styles.fieldValue}>{start != null ? fmtTime(start) : 'All day'}</Text>}
-        {start != null && (
-          <Pressable onPress={() => setStart(null)} hitSlop={8} style={styles.clearBtn}>
-            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-          </Pressable>
-        )}
+        <View style={styles.timeWrap}>
+          <TimePicker minutes={start} onChange={setStart} />
+          {start != null && (
+            <Pressable onPress={() => setStart(null)} hitSlop={8} style={styles.clearBtn}>
+              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+            </Pressable>
+          )}
+        </View>
       </View>
       {start != null && (
         <View style={styles.fieldRow}>
@@ -437,10 +427,65 @@ function TimeField({ task, onUpdate }) {
   );
 }
 
-const TIME_INPUT_STYLE = {
-  border: '1px solid #dcdde0', borderRadius: 6, padding: '2px 6px',
-  font: 'inherit', fontSize: 13, color: '#1c1c1e', background: '#fff', cursor: 'pointer',
-};
+const ITEM_H = 40;
+const MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// A theme-matched time picker: a pill showing the time that opens a small card
+// with scrollable Hour / Minute columns (no OS chrome).
+function TimePicker({ minutes, onChange }) {
+  const [open, setOpen] = useState(false);
+  const cur = minutes == null ? 9 * 60 : minutes;
+  const h = Math.floor(cur / 60);
+  const m = cur - h * 60;
+  const hourRef = React.useRef(null);
+  const minRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      hourRef.current?.scrollTo({ y: Math.max(0, (h - 1) * ITEM_H), animated: false });
+      const mi = MINUTES.indexOf(m - (m % 5));
+      minRef.current?.scrollTo({ y: Math.max(0, (mi - 1) * ITEM_H), animated: false });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  return (
+    <>
+      <Pressable style={styles.timePill} onPress={() => setOpen(true)}>
+        <Ionicons name="time-outline" size={13} color={colors.accent} />
+        <Text style={styles.timePillText}>{minutes == null ? 'All day' : fmtTime(minutes)}</Text>
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.tpBackdrop} onPress={() => setOpen(false)}>
+          <Pressable style={styles.tpCard} onPress={(e) => e?.stopPropagation?.()}>
+            <View style={styles.tpHeader}>
+              <Text style={styles.tpTitle}>Start time</Text>
+              <Pressable onPress={() => setOpen(false)} hitSlop={8}><Text style={styles.tpDone}>Done</Text></Pressable>
+            </View>
+            <View style={styles.tpCols}>
+              <ScrollView ref={hourRef} style={styles.tpCol} showsVerticalScrollIndicator={false}>
+                {Array.from({ length: 24 }, (_, hh) => (
+                  <Pressable key={hh} style={[styles.tpItem, hh === h && styles.tpItemSel]} onPress={() => onChange(hh * 60 + m)}>
+                    <Text style={[styles.tpItemText, hh === h && styles.tpItemTextSel]}>{pad2(hh)}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <Text style={styles.tpColon}>:</Text>
+              <ScrollView ref={minRef} style={styles.tpCol} showsVerticalScrollIndicator={false}>
+                {MINUTES.map((mm) => (
+                  <Pressable key={mm} style={[styles.tpItem, mm === m && styles.tpItemSel]} onPress={() => onChange(h * 60 + mm)}>
+                    <Text style={[styles.tpItemText, mm === m && styles.tpItemTextSel]}>{pad2(mm)}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
 
 const styles = StyleSheet.create({
   // Wide layout: fills the content pane (over the list), leaving the sidebar.
@@ -543,6 +588,40 @@ const styles = StyleSheet.create({
   fieldValue: { flex: 1, ...typography.subhead, color: colors.text, textAlign: 'right' },
   fieldValueMuted: { color: colors.textTertiary },
   clearBtn: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  timeWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm },
+  timePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong,
+    borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 4,
+    backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  timePillText: { ...typography.subhead, color: colors.text, fontVariant: ['tabular-nums'] },
+  tpBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.25)',
+    alignItems: 'center', justifyContent: 'center', padding: spacing.lg,
+  },
+  tpCard: {
+    width: 240, backgroundColor: colors.background, borderRadius: radius.lg, overflow: 'hidden',
+    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 24, shadowOffset: { width: 0, height: 10 }, elevation: 12,
+  },
+  tpHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator,
+  },
+  tpTitle: { ...typography.subhead, color: colors.text, fontWeight: '600' },
+  tpDone: { ...typography.subhead, color: colors.accent, fontWeight: '600', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  tpCols: { flexDirection: 'row', height: ITEM_H * 5, paddingVertical: spacing.xs },
+  tpCol: { flex: 1 },
+  tpColon: { ...typography.title, color: colors.textTertiary, alignSelf: 'center' },
+  tpItem: {
+    height: ITEM_H, alignItems: 'center', justifyContent: 'center', marginHorizontal: spacing.sm,
+    borderRadius: radius.sm, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  tpItemSel: { backgroundColor: colors.accentSoft },
+  tpItemText: { ...typography.body, color: colors.text, fontVariant: ['tabular-nums'] },
+  tpItemTextSel: { color: colors.accent, fontWeight: '700' },
   stepper: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm,
   },
