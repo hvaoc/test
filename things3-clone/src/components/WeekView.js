@@ -34,10 +34,13 @@ function tint(hex) {
 // A 7-day week grid with a shared hour axis, an all-day row, and a now line.
 // Tasks drag (long-press) between days and times; the right "Unscheduled" Plan
 // panel holds undated tasks that can be dragged onto a day/time.
-export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, showWeekends = false, dateFormat = 'weekday-long' }) {
+export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null, onFocusDateChange, showWeekends = false, dateFormat = 'weekday-long' }) {
   const HOURS = END_HOUR - startHour;
   const startOfWeek = (d) => addDays(d, -keyToDate(d).getDay());
-  const [weekStart, setWeekStart] = useState(startOfWeek(todayKey()));
+  // Open on the week containing the shared focused date; navigating reports the
+  // moved-to day upward so switching back to Day/Month keeps it in view.
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(focusDate || todayKey()));
+  const goToWeek = (start, report) => { setWeekStart(start); onFocusDateChange && onFocusDateChange(report); };
   const [showPanel, setShowPanel] = useState(true);
   const [dragTask, setDragTask] = useState(null);
   const [dropInfo, setDropInfo] = useState(null); // { di, top, mins } — live drop line
@@ -154,13 +157,13 @@ export default function WeekView({ tasks, project, onOpenTask, onUpdateTask, onA
             <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
             <Text style={[styles.planText, showPanel && { color: colors.accent }]}>Plan {unscheduled.length}</Text>
           </Pressable>
-          <Pressable onPress={() => setWeekStart(startOfWeek(todayKey()))} style={styles.todayBtn}>
+          <Pressable onPress={() => goToWeek(startOfWeek(todayKey()), todayKey())} style={styles.todayBtn}>
             <Text style={styles.todayText}>Today</Text>
           </Pressable>
-          <Pressable onPress={() => setWeekStart(addDays(weekStart, -7))} hitSlop={8} style={styles.navBtn}>
+          <Pressable onPress={() => goToWeek(addDays(weekStart, -7), addDays(weekStart, -7))} hitSlop={8} style={styles.navBtn}>
             <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
           </Pressable>
-          <Pressable onPress={() => setWeekStart(addDays(weekStart, 7))} hitSlop={8} style={styles.navBtn}>
+          <Pressable onPress={() => goToWeek(addDays(weekStart, 7), addDays(weekStart, 7))} hitSlop={8} style={styles.navBtn}>
             <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
           </Pressable>
         </View>

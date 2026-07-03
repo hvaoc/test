@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { colors, spacing, typography, radius } from '../theme';
+import { todayKey } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
 import DayPlanner from './DayPlanner';
 import WeekView from './WeekView';
@@ -10,17 +11,21 @@ import MonthCalendar from './MonthCalendar';
 // view; all three fill the pane and manage their own scrolling.
 export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask, onAddTask }) {
   const [mode, setMode] = useState('day');
-  const [focusDate, setFocusDate] = useState(null);
+  // The date currently in focus, shared across the three views. Held in a ref so
+  // a view reporting its scroll position doesn't re-render the calendar; on a
+  // view switch we read the latest value and center the newly-shown view on it.
+  const focusRef = useRef(todayKey());
+  const reportFocus = (d) => { if (d) focusRef.current = d; };
   const { state } = useTasks();
   const startHour = state.settings.dayStartHour ?? 0;
   const dateFormat = state.settings.dateFormat ?? 'weekday-long';
   const showWeekends = state.settings.showWeekends ?? false;
   const common = { tasks, project, onOpenTask, onUpdateTask, onAddTask };
 
-  // Manually picking a view clears any focused date; tapping a day in Month
-  // view jumps to the Day view centered on that date.
-  const selectMode = (key) => { setFocusDate(null); setMode(key); };
-  const openDay = (dayKey) => { setFocusDate(dayKey); setMode('day'); };
+  // Switching views keeps the focused date so the same day stays in view.
+  // Tapping a day in Month view jumps to the Day view centered on that date.
+  const selectMode = (key) => setMode(key);
+  const openDay = (dayKey) => { focusRef.current = dayKey; setMode('day'); };
   return (
     <View style={styles.wrap}>
       <View style={styles.modeRow}>
@@ -40,11 +45,11 @@ export default function CalendarView({ tasks, project, onOpenTask, onUpdateTask,
       </View>
       <View style={styles.body}>
         {mode === 'day' ? (
-          <DayPlanner {...common} startHour={startHour} focusDate={focusDate} dateFormat={dateFormat} />
+          <DayPlanner {...common} startHour={startHour} focusDate={focusRef.current} onFocusDateChange={reportFocus} dateFormat={dateFormat} />
         ) : mode === 'week' ? (
-          <WeekView {...common} startHour={startHour} showWeekends={showWeekends} dateFormat={dateFormat} />
+          <WeekView {...common} startHour={startHour} focusDate={focusRef.current} onFocusDateChange={reportFocus} showWeekends={showWeekends} dateFormat={dateFormat} />
         ) : (
-          <MonthCalendar {...common} onOpenDay={openDay} startHour={startHour} dateFormat={dateFormat} />
+          <MonthCalendar {...common} focusDate={focusRef.current} onFocusDateChange={reportFocus} onOpenDay={openDay} startHour={startHour} dateFormat={dateFormat} />
         )}
       </View>
     </View>

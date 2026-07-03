@@ -32,7 +32,7 @@ const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).p
 // month and pins to the top while that month is the one in view. Task chips drag
 // between days (across months) to reschedule; the right "Unscheduled" panel holds
 // undated tasks that can be dragged onto a day.
-export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask, onOpenDay, startHour = 0, dateFormat = 'weekday-long' }) {
+export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask, onAddTask, onOpenDay, focusDate = null, onFocusDateChange, startHour = 0, dateFormat = 'weekday-long' }) {
   const today = keyToDate(todayKey());
   const startY = today.getFullYear();
   const startM = today.getMonth() - RANGE_BACK; // may be negative; Date normalizes
@@ -40,6 +40,12 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
     const d = new Date(startY, startM + i, 1);
     return { y: d.getFullYear(), m: d.getMonth() };
   });
+  // Which month index holds the focused date (so we open there, not on today),
+  // and its day-of-month, preserved when reporting the scrolled-to month upward.
+  const focusDt = focusDate ? keyToDate(focusDate) : today;
+  const focusDay = focusDt.getDate();
+  const focusIndex = Math.max(0, Math.min(NUM_MONTHS - 1,
+    (focusDt.getFullYear() - startY) * 12 + (focusDt.getMonth() - startM)));
 
   const byDate = {};
   const unscheduled = [];
@@ -68,6 +74,7 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const scrollRef = useRef(null); // FlatList (scrollToOffset only — no measureInWindow)
   const viewRef = useRef(null); // wrapper View around the list, used to measure the drop viewport
   const scrollYRef = useRef(0);
+  const monthReportRef = useRef(focusDate || todayKey());
   const rectsRef = useRef(null);
 
   const ghostX = useSharedValue(0);
@@ -138,11 +145,11 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
   const ghostStyle = useAnimatedStyle(() => ({ transform: [{ translateX: ghostX.value }, { translateY: ghostY.value }] }));
 
   const scrollToMonth = (i, animated) => scrollRef.current?.scrollToOffset({ offset: i * monthH, animated });
-  // Land on the current month once the viewport height is known (and keep it in
-  // view if the height changes, e.g. a resize).
+  // Land on the focused date's month once the viewport height is known (and keep
+  // it in view if the height changes, e.g. a resize).
   useEffect(() => {
     if (viewH > 0) {
-      scrollRef.current?.scrollToOffset({ offset: RANGE_BACK * monthH, animated: false });
+      scrollRef.current?.scrollToOffset({ offset: focusIndex * monthH, animated: false });
       setReady(true);
     }
   }, [viewH]);
@@ -213,7 +220,10 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
             <Ionicons name="albums-outline" size={15} color={showPanel ? colors.accent : colors.textSecondary} />
             <Text style={[styles.planText, showPanel && { color: colors.accent }]}>Plan {unscheduled.length}</Text>
           </Pressable>
-          <Pressable onPress={() => scrollToMonth(RANGE_BACK, true)} style={styles.todayBtn}>
+          <Pressable
+            onPress={() => { scrollToMonth(RANGE_BACK, true); onFocusDateChange && onFocusDateChange(todayKey()); }}
+            style={styles.todayBtn}
+          >
             <Text style={styles.todayText}>Today</Text>
           </Pressable>
         </View>
@@ -233,7 +243,17 @@ export default function MonthCalendar({ tasks, project, onOpenTask, onUpdateTask
             stickyHeaderIndices={stickyIndices}
             onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
             scrollEventThrottle={16}
-            onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+            onScroll={(e) => {
+              const y = e.nativeEvent.contentOffset.y;
+              scrollYRef.current = y;
+              if (onFocusDateChange && ready && monthH > 0) {
+                const mi = Math.max(0, Math.min(NUM_MONTHS - 1, Math.round(y / monthH)));
+                const { y: my, m: mm } = months[mi];
+                const day = Math.min(focusDay, new Date(my, mm + 1, 0).getDate());
+                const d = keyOf(my, mm, day);
+                if (d !== monthReportRef.current) { monthReportRef.current = d; onFocusDateChange(d); }
+              }
+            }}
             snapToInterval={monthH}
             decelerationRate="fast"
             snapToAlignment="start"

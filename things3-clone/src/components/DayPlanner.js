@@ -38,17 +38,19 @@ const fmt = (mins) =>
 // grid. Timed tasks are blocks; undated tasks live in the right "Unscheduled"
 // panel. Tasks drag (long-press) onto any day's hour to time-block them, onto a
 // day's all-day strip to clear the time, or back to the panel to unschedule.
-export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null, dateFormat = 'weekday-long' }) {
+export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, onAddTask, startHour = 0, focusDate = null, onFocusDateChange, dateFormat = 'weekday-long' }) {
   const HOURS = END_HOUR - startHour;
   // Include the final 23:00 → 24:00 slot (one hour past the last hour label) so
   // the last hour is fully visible before the next day's header.
   const GRID_H = (HOURS + 1) * HOUR_H + GRID_BOTTOM_PAD;
   const DAY_H = DHEADER_H + ALLDAY_H + GRID_H;
 
-  // The timeline window is centered on an anchor date (today by default, or a
-  // date tapped in the Month view). Tapping "Today" re-centers on today.
+  // The timeline window is centered on an anchor date — the focused date when
+  // this view opened (today by default). We deliberately don't re-center on
+  // later focusDate changes: as the user scrolls we *report* the top-visible
+  // day upward instead, so switching to Week/Month keeps that day in view.
   const [anchor, setAnchor] = useState(focusDate || todayKey());
-  useEffect(() => { if (focusDate) setAnchor(focusDate); }, [focusDate]);
+  const lastReportRef = useRef(focusDate || todayKey());
 
   const [dragTask, setDragTask] = useState(null);
   const [dropInfo, setDropInfo] = useState(null); // { dayKey, top }
@@ -249,7 +251,15 @@ export default function DayPlanner({ tasks, project, onOpenTask, onUpdateTask, o
             showsVerticalScrollIndicator={false}
             stickyHeaderIndices={stickyIndices}
             scrollEventThrottle={16}
-            onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+            onScroll={(e) => {
+              const y = e.nativeEvent.contentOffset.y;
+              scrollYRef.current = y;
+              if (onFocusDateChange) {
+                const idx = Math.max(0, Math.min(NUM_DAYS - 1, Math.round(y / DAY_H)));
+                const d = days[idx];
+                if (d && d !== lastReportRef.current) { lastReportRef.current = d; onFocusDateChange(d); }
+              }
+            }}
             onContentSizeChange={onContentReady}
             initialNumToRender={4}
             maxToRenderPerBatch={4}
