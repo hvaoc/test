@@ -328,9 +328,8 @@ export function buildSampleData() {
     stressHeadings.push(h);
     for (let k = 0; k < 100; k++) {
       const n = si * 100 + k;
+      // Stress tasks are unscheduled (no When / deadline) — pure list-volume test.
       const over = { projectId: projStress.id, areaId: areaWork.id, headingId: h.id, title: `Task #${n + 1}` };
-      if (n % 4 === 0) over.when = addDays(t, 5 + ((n * 7) % 120)); // future only, keeps Today clean
-      if (n % 5 === 0 && over.when) over.deadline = addDays(over.when, 2 + (n % 6));
       if (n % 7 === 0) over.priority = GPRI[n % 3];
       if (n % 3 === 0) over.tags = [GTAGS[n % GTAGS.length]];
       if (n % 11 === 0) { over.status = STATUS.COMPLETED; over.completedAt = now - (n % 30) * day; }
