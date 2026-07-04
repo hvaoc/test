@@ -334,7 +334,14 @@ async function wasmServerSync() {
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token },
       body: JSON.stringify({ ops: chunk }),
     });
-    if (!r.ok) throw new Error('push failed: ' + r.status); // unpushed ops stay queued
+    if (!r.ok) {
+      // 409 = the server rejected our timestamps as too far in the future.
+      // The unpushed ops stay queued; surface a clear, actionable message.
+      if (r.status === 409) {
+        throw new Error("This device's clock looks wrong (set too far ahead). Fix the date & time, then sync again.");
+      }
+      throw new Error('push failed: ' + r.status); // unpushed ops stay queued
+    }
   }
   if (pending.length) await crdtClient.dropPending(pending.length);
   const cursor = await crdtClient.getCursor();

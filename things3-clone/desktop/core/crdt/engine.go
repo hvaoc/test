@@ -22,6 +22,14 @@ import (
 
 const us = "\x1f" // entity-key separator (matches Go core + JS)
 
+// maxDriftMs bounds how far a REMOTE timestamp may push our clock ahead of real
+// time. A device whose clock is set (accidentally or maliciously) into the
+// future can't drag every other device's logical clock along with it — the
+// damage is capped to this window instead of "until real time catches up".
+// Kept in sync with the same constant in core/hlc.go, src/store/crdt.js, and the
+// server's MaxClockSkewMs.
+const maxDriftMs int64 = 5 * 60 * 1000 // 5 minutes
+
 func ekey(kind, id string) string { return kind + us + id }
 
 var objectKinds = []string{"area", "project", "heading", "task", "customView"}
@@ -156,15 +164,23 @@ func (e *Engine) localStamp() HLC {
 }
 func (e *Engine) witness(r HLC) {
 	wall := e.now()
+	// Cap the remote wall we accept, so a future-stamped op can't advance our
+	// clock beyond real time + maxDrift. We still include e.last.Wall in the max
+	// below, so we NEVER move our own clock backwards (monotonic) — a device that
+	// is legitimately a little ahead is unaffected.
+	rWall := r.Wall
+	if capw := wall + maxDriftMs; rWall > capw {
+		rWall = capw
+	}
 	max := e.last.Wall
-	if r.Wall > max {
-		max = r.Wall
+	if rWall > max {
+		max = rWall
 	}
 	if wall > max {
 		max = wall
 	}
 	switch {
-	case max == e.last.Wall && max == r.Wall:
+	case max == e.last.Wall && max == rWall:
 		c := e.last.Ctr
 		if r.Ctr > c {
 			c = r.Ctr
@@ -172,7 +188,7 @@ func (e *Engine) witness(r HLC) {
 		e.last = HLC{Wall: max, Ctr: c + 1, Node: e.node}
 	case max == e.last.Wall:
 		e.last = HLC{Wall: max, Ctr: e.last.Ctr + 1, Node: e.node}
-	case max == r.Wall:
+	case max == rWall:
 		e.last = HLC{Wall: max, Ctr: r.Ctr + 1, Node: e.node}
 	default:
 		e.last = HLC{Wall: max, Ctr: 0, Node: e.node}

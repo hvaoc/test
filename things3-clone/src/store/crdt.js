@@ -15,6 +15,11 @@
 const US = ''; // entity-key separator (matches Go's \x1f)
 const ekey = (kind, id) => kind + US + id;
 
+// Bound on how far a REMOTE timestamp may push our clock ahead of real time, so
+// a device with a clock set into the future can't drag ours along. Matches the
+// Go engines' maxDriftMs and the server's MaxClockSkewMs.
+const MAX_DRIFT_MS = 5 * 60 * 1000; // 5 minutes
+
 // Kinds with id-bearing object collections in a snapshot.
 const OBJECT_KINDS = ['area', 'project', 'heading', 'task', 'customView'];
 // Fields that are add-wins SET CRDTs rather than scalar LWW registers.
@@ -74,12 +79,16 @@ export class Crdt {
   }
   witness(remote) {
     const wall = this.now();
-    const max = Math.max(this.last.w, remote.w, wall);
-    if (max === this.last.w && max === remote.w) {
+    // Cap the remote wall so a future-stamped op can't push our clock beyond
+    // real time + MAX_DRIFT_MS. We still include this.last.w in the max, so we
+    // never move our own clock backward (monotonic).
+    const rw = Math.min(remote.w, wall + MAX_DRIFT_MS);
+    const max = Math.max(this.last.w, rw, wall);
+    if (max === this.last.w && max === rw) {
       this.last = { w: max, c: Math.max(this.last.c, remote.c) + 1, n: this.node };
     } else if (max === this.last.w) {
       this.last = { w: max, c: this.last.c + 1, n: this.node };
-    } else if (max === remote.w) {
+    } else if (max === rw) {
       this.last = { w: max, c: remote.c + 1, n: this.node };
     } else {
       this.last = { w: max, c: 0, n: this.node };

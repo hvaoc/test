@@ -246,6 +246,16 @@ func seq(base int64) func() int64 {
 	return func() int64 { n++; return n }
 }
 
+// A far-future remote timestamp must not drag the desktop clock into the future.
+func TestBoundedWitnessClock(t *testing.T) {
+	realNow := int64(1_000_000)
+	c := newClock("A", func() int64 { return realNow }, HLC{Node: "A"})
+	c.witness(HLC{Wall: 9_999_999_999, Ctr: 0, Node: "evil"})
+	if h := c.local(); h.Wall > realNow+maxDriftMs {
+		t.Fatalf("clock dragged into the future: %d (cap %d)", h.Wall, realNow+maxDriftMs)
+	}
+}
+
 // TestCanonCompat pins the canonical-JSON contract shared with the browser CRDT
 // (src/store/crdt.js canon()). If these change, update BOTH or cross-platform
 // sync will ping-pong. The JS side has a mirror test with the same cases.

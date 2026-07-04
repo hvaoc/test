@@ -340,6 +340,49 @@ sequenceDiagram
   </div>
 
   <!-- ─────────────────────────────────────────────────────────── -->
+  <h3>What if a device’s clock is set wrong — or lying?</h3>
+  <p>Fair challenge: “newest wins” only works if devices roughly agree on what time it is. So what if one device’s clock is way off, by accident or on purpose? Here’s the honest picture — and what the app does about it.</p>
+
+  <div class="callout note">
+    <b>The risk</b>
+    A device stamping edits from the “future” could win same‑field conflicts it shouldn’t (its timestamp <em>looks</em> newest). And because every device fast‑forwards its clock to the newest stamp it has seen, one bad clock could otherwise drag the whole shared timeline into the future — until real time eventually catches up.
+  </div>
+
+  <p>Two guardrails keep this in check:</p>
+  <ul>
+    <li><strong>Each device caps how far a <em>received</em> timestamp can push its clock</strong> — at most a few minutes past its own real time. So even if a “future” change slips in, it can’t hijack a device’s clock for years; the damage is capped to that small window and heals as real time moves forward. (A device is never pushed <em>backwards</em>, so an honest device that’s legitimately a little ahead is unaffected.)</li>
+    <li><strong>The server rejects timestamps that are too far ahead of its own clock.</strong> The server holds the trusted time, so a change stamped an hour — or a century — in the future is bounced <em>before</em> it ever reaches your other devices.</li>
+  </ul>
+
+  <div class="card">
+    <div class="cap">Sequence · the server refuses a “future” timestamp</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant B as ⏰ Device with a wrong clock
+  participant S as ☁️ Server (trusted time)
+  participant O as 📱💻 Your other devices
+  B->>S: push (edit stamped far in the future)
+  S->>S: is this way ahead of MY clock?
+  S-->>B: ❌ rejected — "your clock looks wrong"
+  Note over S,O: The bad timestamp never enters the shared log,<br/>so it can't hijack conflicts on your other devices.
+  Note over B: Fix the device's date and time → edits sync normally.
+      </pre>
+    </div>
+  </div>
+
+  <div class="callout good">
+    <b>What’s guaranteed no matter what</b>
+    Even in the worst case, a wrong clock <em>never</em> corrupts data or leaves two devices disagreeing — everything still converges to the same state. And it can’t win <em>forever</em>: once its stamp propagates, other devices’ counters tick past it, so ordinary edits win again. A bad clock can, at most, briefly skew <em>which</em> edit wins — never the integrity of your data.
+  </div>
+
+  <div class="callout note">
+    <b>The honest limitation</b>
+    A device whose clock is genuinely, badly wrong simply <em>can’t sync</em> until it’s corrected — the app tells the user “this device’s clock looks wrong.” That’s the right trade‑off: better to pause syncing than to let a broken clock quietly scramble everyone’s ordering. (Edits made while the clock was wrong stay safely queued until it’s fixed.)
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
   <h2 id="glossary"><span class="num">7</span>Glossary — the tech, in plain terms</h2>
   <p class="lead">Each row: what it is, and — more importantly — <em>what problem it solves</em>.</p>
   <table>
@@ -354,6 +397,11 @@ sequenceDiagram
         <td class="term">HLC<span class="full">Hybrid Logical Clock</span></td>
         <td>A smart timestamp = real time + a small counter + the device’s ID.</td>
         <td>Device clocks disagree (“clock skew”). A plain timestamp would let a device with a fast clock always win. HLC gives a fair, consistent order <em>and</em> a tie‑breaker, so every device picks the same winner.</td>
+      </tr>
+      <tr>
+        <td class="term">Clock clamp<span class="full">skew bound / max‑drift</span></td>
+        <td>A limit on how far <em>ahead</em> a timestamp is allowed to be — enforced both on each device (vs. its own clock) and on the server (vs. its trusted clock).</td>
+        <td>Stops a device whose clock is set into the future from unfairly winning conflicts or dragging everyone’s timeline forward. Too‑future timestamps get capped or rejected instead of blindly trusted.</td>
       </tr>
       <tr>
         <td class="term">Op &amp; oplog<span class="full">operation &amp; operation log</span></td>

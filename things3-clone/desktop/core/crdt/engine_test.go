@@ -151,6 +151,20 @@ func TestChangeRowsDelta(t *testing.T) {
 	}
 }
 
+// A device whose clock is set far in the future must not be able to drag our
+// clock along when we witness its op — the advance is capped to real time +
+// maxDrift, so our own later edits stay near real time.
+func TestBoundedWitness(t *testing.T) {
+	e := New("A")
+	realNow := int64(1_000_000)
+	e.now = func() int64 { return realNow }
+	e.witness(HLC{Wall: 9_999_999_999, Ctr: 0, Node: "evil"}) // absurd future stamp
+	h := e.localStamp()
+	if h.Wall > realNow+maxDriftMs {
+		t.Fatalf("clock dragged into the future: wall=%d, cap=%d", h.Wall, realNow+maxDriftMs)
+	}
+}
+
 func TestSerializeRoundTrip(t *testing.T) {
 	a := New("A")
 	a.now = seq(1000)

@@ -109,6 +109,12 @@ func (h *Hub) handlePush(userID string, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.Push(userID, req.Ops); err != nil {
+		if err == ErrClockAhead {
+			// 409: the client's clock is wrong. Hand back the server's time so the
+			// client can tell the user their device clock needs fixing.
+			writeJSON(w, 409, map[string]interface{}{"error": err.Error(), "serverTime": h.now()})
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

@@ -87,21 +87,32 @@ func (c *clock) local() HLC {
 	return c.last
 }
 
+// maxDriftMs bounds how far a REMOTE timestamp may push our clock ahead of real
+// time — see the same constant in core/crdt and the server's MaxClockSkewMs.
+const maxDriftMs int64 = 5 * 60 * 1000 // 5 minutes
+
 // witness advances the local clock past a remote timestamp we just received, so
 // any subsequent local event is causally ordered after it (HLC receive rule).
+// The remote wall is capped to real time + maxDrift so a future-stamped op can't
+// drag our clock (and thus everyone's) into the future; we still never move our
+// own clock backward, preserving monotonicity.
 func (c *clock) witness(remote HLC) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	wall := c.now()
+	rWall := remote.Wall
+	if capw := wall + maxDriftMs; rWall > capw {
+		rWall = capw
+	}
 	max := c.last.Wall
-	if remote.Wall > max {
-		max = remote.Wall
+	if rWall > max {
+		max = rWall
 	}
 	if wall > max {
 		max = wall
 	}
 	switch {
-	case max == c.last.Wall && max == remote.Wall:
+	case max == c.last.Wall && max == rWall:
 		if c.last.Ctr > remote.Ctr {
 			c.last = HLC{Wall: max, Ctr: c.last.Ctr + 1, Node: c.node}
 		} else {
@@ -109,7 +120,7 @@ func (c *clock) witness(remote HLC) {
 		}
 	case max == c.last.Wall:
 		c.last = HLC{Wall: max, Ctr: c.last.Ctr + 1, Node: c.node}
-	case max == remote.Wall:
+	case max == rWall:
 		c.last = HLC{Wall: max, Ctr: remote.Ctr + 1, Node: c.node}
 	default:
 		c.last = HLC{Wall: max, Ctr: 0, Node: c.node}

@@ -16,15 +16,24 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"time"
 
 	"things3-clone-desktop/core"
 )
 
 var (
-	ErrExists   = errors.New("user already exists")
-	ErrBadLogin = errors.New("invalid username or password")
-	ErrNoAuth   = errors.New("unauthorized")
+	ErrExists     = errors.New("user already exists")
+	ErrBadLogin   = errors.New("invalid username or password")
+	ErrNoAuth     = errors.New("unauthorized")
+	ErrClockAhead = errors.New("clock too far ahead of server")
 )
+
+// MaxClockSkewMs is how far ahead of the server's own clock an incoming op's
+// timestamp may be before we reject it. The server owns the trusted clock, so
+// this stops a device with a clock set into the future from injecting
+// future‑stamped ops that would unfairly win conflicts on other devices. Kept in
+// sync with the clients' maxDriftMs. Generous enough for normal clock skew.
+const MaxClockSkewMs int64 = 5 * 60 * 1000 // 5 minutes
 
 type user struct {
 	ID   string `json:"id"`
@@ -42,7 +51,8 @@ type Hub struct {
 	logs      map[string][]core.Op        // userId -> append-only op log
 	subs      map[string]map[int]chan int // userId -> subscriberID -> signal chan
 	nextSub   int
-	path      string // persistence file ("" = memory only)
+	path      string       // persistence file ("" = memory only)
+	now       func() int64 // trusted server clock (ms); injectable for tests
 }
 
 func NewHub(path string) *Hub {
@@ -53,6 +63,7 @@ func NewHub(path string) *Hub {
 		logs:      map[string][]core.Op{},
 		subs:      map[string]map[int]chan int{},
 		path:      path,
+		now:       func() int64 { return time.Now().UnixMilli() },
 	}
 	h.load()
 	return h
@@ -125,6 +136,17 @@ func (h *Hub) Auth(token string) (userID string, err error) {
 // Push appends a user's ops to their log and nudges their other devices. Each
 // user's data is fully isolated — a token only ever touches its own log.
 func (h *Hub) Push(userID string, ops []core.Op) error {
+	// Reject the whole batch if any op is stamped too far into the future
+	// relative to the server's trusted clock. This keeps future-dated ops out of
+	// the shared log entirely (no divergence — they never propagate), rather than
+	// letting one bad clock hijack conflict resolution on the user's devices.
+	limit := h.now() + MaxClockSkewMs
+	for i := range ops {
+		if ops[i].Wall > limit {
+			return ErrClockAhead
+		}
+	}
+
 	h.mu.Lock()
 	h.logs[userID] = append(h.logs[userID], ops...)
 	subs := h.subs[userID]
