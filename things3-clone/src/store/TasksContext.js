@@ -39,6 +39,10 @@ const initialState = {
   headings: [],
   tasks: [],
   tags: [],
+  // User-defined "Custom Views": saved queries that appear in the sidebar and
+  // render through the shared query engine (see store/query.js). Each is
+  // { id, name, icon, color, query } where `query` is a serializable query obj.
+  customViews: [],
   settings: defaultSettings,
 };
 
@@ -373,8 +377,49 @@ function reducer(state, action) {
       if (state.tags.includes(action.tag)) return state;
       return { ...state, tags: [...state.tags, action.tag] };
 
+    // ---- Custom Views (saved queries) ----
+    case 'ADD_CUSTOM_VIEW': {
+      const view = {
+        id: uid('view'),
+        name: action.payload.name || 'New View',
+        icon: action.payload.icon || 'funnel-outline',
+        color: action.payload.color || '#2b6fff',
+        query: action.payload.query || {},
+      };
+      return { ...state, customViews: [...(state.customViews || []), view] };
+    }
+
+    case 'UPDATE_CUSTOM_VIEW':
+      return {
+        ...state,
+        customViews: (state.customViews || []).map((v) =>
+          v.id === action.id ? { ...v, ...action.patch } : v
+        ),
+      };
+
+    case 'DELETE_CUSTOM_VIEW':
+      return {
+        ...state,
+        customViews: (state.customViews || []).filter((v) => v.id !== action.id),
+      };
+
+    case 'REORDER_CUSTOM_VIEWS': {
+      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
+      return {
+        ...state,
+        customViews: (state.customViews || [])
+          .slice()
+          .sort((a, b) => (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0)),
+      };
+    }
+
     case 'RESET':
-      return { ...buildSampleData(), settings: defaultSettings, loaded: true };
+      return {
+        ...buildSampleData(),
+        customViews: [],
+        settings: defaultSettings,
+        loaded: true,
+      };
 
     default:
       return state;
@@ -441,6 +486,13 @@ export function TasksProvider({ children }) {
       deleteArea: (id) => dispatch({ type: 'DELETE_AREA', id }),
 
       addTag: (tag) => dispatch({ type: 'ADD_TAG', tag }),
+
+      addCustomView: (payload) => dispatch({ type: 'ADD_CUSTOM_VIEW', payload }),
+      updateCustomView: (id, patch) =>
+        dispatch({ type: 'UPDATE_CUSTOM_VIEW', id, patch }),
+      deleteCustomView: (id) => dispatch({ type: 'DELETE_CUSTOM_VIEW', id }),
+      reorderCustomViews: (ids) => dispatch({ type: 'REORDER_CUSTOM_VIEWS', ids }),
+
       setSetting: (key, value) => dispatch({ type: 'SET_SETTING', key, value }),
       reset: () => dispatch({ type: 'RESET' }),
     }),

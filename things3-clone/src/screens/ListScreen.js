@@ -38,6 +38,8 @@ import VirtualTaskList from '../components/VirtualTaskList';
 import DraggableVirtualTaskList from '../components/DraggableVirtualTaskList';
 import StickyTaskSections from '../components/StickyTaskSections';
 import SectionEditor from '../components/SectionEditor';
+import SearchScreen from './SearchScreen';
+import CustomViewScreen from './CustomViewScreen';
 import { useIsWide } from '../navigation/responsive';
 import { chevronState, chevronRotate } from '../utils/sections';
 
@@ -311,6 +313,35 @@ export default function ListScreen({
   onToggleSidebar,
   sidebarVisible,
 }) {
+  // Search and Custom Views are distinct selections that render their own
+  // screens. The detail pane remounts per selection (SplitView keys on the
+  // selection), so branching here — before this screen's hooks — keeps hook
+  // order stable within any single mount.
+  const params = route.params || {};
+  if (params.search) {
+    return (
+      <SearchScreen
+        navigation={navigation}
+        scope={params.scope}
+        scopeTitle={params.scopeTitle}
+        embedded={embedded}
+        onToggleSidebar={onToggleSidebar}
+        sidebarVisible={sidebarVisible}
+      />
+    );
+  }
+  if (params.viewId) {
+    return (
+      <CustomViewScreen
+        navigation={navigation}
+        viewId={params.viewId}
+        embedded={embedded}
+        onToggleSidebar={onToggleSidebar}
+        sidebarVisible={sidebarVisible}
+      />
+    );
+  }
+
   const insets = useSafeAreaInsets();
   // Sticky headers for the drag lists: track the page scroll offset and this
   // list's top within the scroll content, both fed to ReorderableTaskList's
@@ -875,6 +906,27 @@ export default function ListScreen({
           <Text style={styles.displayText}>Display</Text>
           {hasFilter && <View style={styles.displayDot} />}
         </Pressable>
+      )}
+      {(project || area) && (
+        <>
+          <View style={{ flex: 1 }} />
+          <Pressable
+            style={styles.displayBtn}
+            onPress={() =>
+              navigation.navigate('List', {
+                search: true,
+                scope: project
+                  ? { type: 'project', id: project.id }
+                  : { type: 'area', id: area.id },
+                scopeTitle: project ? project.name : area.name,
+                title: `Search ${project ? project.name : area.name}`,
+              })
+            }
+          >
+            <Ionicons name="search" size={16} color={colors.textSecondary} />
+            <Text style={styles.displayText}>Search</Text>
+          </Pressable>
+        </>
       )}
       {project && (
         <DisplayMenu

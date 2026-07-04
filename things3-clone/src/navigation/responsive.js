@@ -5,6 +5,13 @@ import { Platform, useWindowDimensions } from 'react-native';
 // detail pane). Mirrors the params shape used by ListScreen's route.
 export function selectionKey(params) {
   if (!params) return null;
+  // A search selection carries its scope so scoped searches (within an Area /
+  // Project) remount independently of the global one.
+  if (params.search) {
+    const s = params.scope;
+    return s && s.id ? `search:${s.type}:${s.id}` : 'search';
+  }
+  if (params.viewId) return `view:${params.viewId}`;
   if (params.listId) return `list:${params.listId}`;
   if (params.projectId) return `project:${params.projectId}`;
   if (params.areaId) return `area:${params.areaId}`;

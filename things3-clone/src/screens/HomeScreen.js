@@ -19,6 +19,8 @@ import { counts, selectProjectTasks, isOpen } from '../store/selectors';
 import { selectionKey } from '../navigation/responsive';
 import NewListSheet from '../components/NewListSheet';
 import SettingsSheet from '../components/SettingsSheet';
+import QueryBuilderSheet from '../components/QueryBuilderSheet';
+import { emptyQuery } from '../store/query';
 import ProgressPie from '../components/ProgressPie';
 import DropTarget from '../components/DropTarget';
 import ReorderableSmartLists from '../components/ReorderableSmartLists';
@@ -33,8 +35,9 @@ import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 // pushing a new screen. On phones both are undefined and it behaves as a stack.
 export default function HomeScreen({ navigation, selectedKey, embedded, onToggleSidebar }) {
   const insets = useSafeAreaInsets();
-  const { state, setSetting } = useTasks();
+  const { state, setSetting, addCustomView } = useTasks();
   const [sheet, setSheet] = useState(false);
+  const [newViewOpen, setNewViewOpen] = useState(false);
   // When the New List sheet is opened from an Area's "+", pre-file the project
   // into that area.
   const [sheetAreaId, setSheetAreaId] = useState(null);
@@ -142,6 +145,24 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Global search — opens the search screen scoped to everything. */}
+        <View style={styles.section}>
+          <SidebarRow
+            icon="search"
+            color={colors.sidebarTextSecondary}
+            outline
+            title="Search"
+            selected={selectedKey === 'search'}
+            onPress={() =>
+              navigation.navigate('List', {
+                search: true,
+                scope: { type: 'all', id: null },
+                title: 'Search',
+              })
+            }
+          />
+        </View>
+
         {/* Smart lists. Inbox is pinned on top, Logbook + Trash pinned at the
             bottom; the middle group (Today/Upcoming/Overdue/Anytime/Someday) is
             drag-reorderable within this zone. Only Inbox and Today accept
@@ -201,6 +222,34 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             ))}
           </View>
         )}
+
+        {/* Custom Views — user-defined saved queries. A "+" adds a new one. */}
+        <View style={styles.section}>
+          <View
+            onPointerEnter={() => {}}
+            style={styles.areaHeader}
+          >
+            <View style={styles.areaHeaderMain}>
+              <Text style={styles.areaTitle}>Views</Text>
+            </View>
+            <Pressable hitSlop={6} style={styles.areaBtn} onPress={() => setNewViewOpen(true)}>
+              <Ionicons name="add" size={18} color={colors.sidebarTextSecondary} />
+            </Pressable>
+          </View>
+          {(state.customViews || []).map((v) => (
+            <SidebarRow
+              key={v.id}
+              icon={v.icon}
+              color={v.color}
+              outline
+              title={v.name}
+              selected={selectedKey === `view:${v.id}`}
+              onPress={() =>
+                navigation.navigate('List', { viewId: v.id, title: v.name })
+              }
+            />
+          ))}
+        </View>
       </ScrollView>
 
       {/* Persistent profile row, pinned to the bottom. Tapping it opens the
@@ -269,6 +318,17 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
         initialAreaId={sheetAreaId}
       />
       <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      <QueryBuilderSheet
+        visible={newViewOpen}
+        onClose={() => setNewViewOpen(false)}
+        mode="view"
+        availableTags={state.tags}
+        initialQuery={emptyQuery()}
+        onSubmit={(query, meta) => {
+          addCustomView({ name: meta.name, icon: meta.icon, color: meta.color, query });
+        }}
+      />
     </View>
   );
 }
