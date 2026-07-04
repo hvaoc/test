@@ -5,7 +5,9 @@ import BottomSheet from './BottomSheet';
 import { colors, spacing, typography } from '../theme';
 import { useTasks } from '../store/TasksContext';
 
-// "Move to" picker — assign a task to Inbox, an Area, or a Project.
+// "Move to" picker — assign a task to Inbox or a Project. Areas can't hold tasks
+// of their own, so they appear only as (non-selectable) headers grouping their
+// projects.
 export default function MoveSheet({ visible, onClose, task, onMove }) {
   const { state } = useTasks();
 
@@ -15,7 +17,6 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
   };
 
   const currentProject = task?.projectId;
-  const currentArea = !task?.projectId ? task?.areaId : null;
 
   const Row = ({ icon, color, label, active, onPress, indent }) => (
     <Pressable
@@ -45,15 +46,10 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
           const projects = state.projects.filter((p) => p.areaId === area.id);
           return (
             <View key={area.id}>
-              <Row
-                icon="cube-outline"
-                color={area.color}
-                label={area.name}
-                active={currentArea === area.id}
-                onPress={() =>
-                  choose({ areaId: area.id, projectId: null, headingId: null })
-                }
-              />
+              <View style={styles.areaHeader}>
+                <Ionicons name="cube-outline" size={15} color={area.color} style={styles.icon} />
+                <Text style={styles.areaHeaderText} numberOfLines={1}>{area.name}</Text>
+              </View>
               {projects.map((p) => (
                 <Row
                   key={p.id}
@@ -99,4 +95,12 @@ const styles = StyleSheet.create({
   },
   icon: { width: 22, textAlign: 'center' },
   label: { flex: 1, ...typography.body, color: colors.text },
+  areaHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingTop: spacing.md, paddingBottom: 4, paddingHorizontal: spacing.sm,
+  },
+  areaHeaderText: {
+    flex: 1, ...typography.caption, color: colors.textTertiary,
+    fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5,
+  },
 });

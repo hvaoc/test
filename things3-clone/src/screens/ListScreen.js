@@ -16,7 +16,6 @@ import { useTasks, newTask } from '../store/TasksContext';
 import {
   selectForList,
   selectProjectTasks,
-  selectAreaTasks,
   selectSubtasks,
   isOpen,
   byOrder,
@@ -87,9 +86,36 @@ function useSections(state, route) {
     }
 
     // ---- Area view ----
+    // Areas hold no tasks of their own — they surface the *dated* work from every
+    // project filed under the area, split into Today / Upcoming / Overdue.
     if (areaId) {
-      const direct = selectAreaTasks(state.tasks, areaId).filter((t) => isOpen(t) && !t.parentId);
-      return [{ key: 'area', title: null, data: direct }];
+      const today = todayKey();
+      const projectIds = new Set(
+        state.projects
+          .filter((p) => p.areaId === areaId && p.status === 'open')
+          .map((p) => p.id)
+      );
+      const whenKeyOf = (t) => {
+        if (t.when === WHEN.TODAY || t.when === WHEN.EVENING) return today;
+        if (!t.when || t.when === WHEN.SOMEDAY) return null;
+        return t.when;
+      };
+      const effKey = (t) => whenKeyOf(t) || t.deadline || null;
+      const buckets = { today: [], upcoming: [], overdue: [] };
+      state.tasks.forEach((t) => {
+        if (!t.projectId || !projectIds.has(t.projectId) || !isOpen(t) || t.parentId) return;
+        const eff = effKey(t);
+        if (!eff) return; // undated work stays inside its project, not the area
+        if (eff === today) buckets.today.push(t);
+        else if (eff > today) buckets.upcoming.push(t);
+        else buckets.overdue.push(t);
+      });
+      const byDate = (a, b) => (effKey(a) < effKey(b) ? -1 : effKey(a) > effKey(b) ? 1 : 0);
+      return [
+        { key: 'today', title: 'Today', data: buckets.today.sort(byDate), showProject: true },
+        { key: 'upcoming', title: 'Upcoming', data: buckets.upcoming.sort(byDate), showProject: true },
+        { key: 'overdue', title: 'Overdue', data: buckets.overdue.sort(byDate), showProject: true },
+      ].filter((s) => s.data.length > 0);
     }
 
     const tasks = selectForList(state.tasks, listId);
@@ -357,7 +383,7 @@ export default function ListScreen({
       defaults.projectId = projectId;
       defaults.areaId = project?.areaId || null;
     }
-    if (areaId) defaults.areaId = areaId;
+    // Areas hold no tasks of their own — nothing to file directly into an area.
 
     const task = newTask(defaults);
     addTask(task);
@@ -372,7 +398,7 @@ export default function ListScreen({
   // and Areas. (Upcoming/Logbook are date-ordered; Project is handled above.)
   // Today can split into Today + This Evening — each section reorders on its own.
   const REORDERABLE_LISTS = ['inbox', 'today', 'anytime', 'someday'];
-  const listReorderable = Boolean(areaId) || REORDERABLE_LISTS.includes(listId);
+  const listReorderable = REORDERABLE_LISTS.includes(listId);
 
   const contentPad = {
     paddingTop: insets.top + spacing.sm,
@@ -818,7 +844,7 @@ export default function ListScreen({
           onToggleDivider={toggleDate}
           onAddTask={handleAddInSection}
         />
-        {listId !== 'logbook' && listId !== 'trash' && !(project && isWide) && (
+        {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
           <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
         )}
         <TaskDetailModal
@@ -936,7 +962,7 @@ export default function ListScreen({
         </View>
       </ScrollView>
 
-      {listId !== 'logbook' && listId !== 'trash' && !(project && isWide) && (
+      {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
         <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
       )}
 
@@ -976,7 +1002,7 @@ export default function ListScreen({
 // Anytime, Someday, Areas). Renders the same header as Section, then a
 // ReorderableTaskList; reordering commits this section's ids via onCommitKeys.
 function ReorderableSection({ section, listId, onOpenTask, onCommitKeys }) {
-  const showProject = !!listId && listId !== 'logbook';
+  const showProject = section.showProject ?? (!!listId && listId !== 'logbook');
   return (
     <View style={styles.section}>
       {section.title ? (
@@ -1007,8 +1033,8 @@ function ReorderableSection({ section, listId, onOpenTask, onCommitKeys }) {
 
 function Section({ section, listId, navigation, onOpenTask }) {
   // Show the project/area label on rows for every smart list (incl. Logbook),
-  // matching the Anytime view.
-  const showProject = !!listId;
+  // matching the Anytime view; sections may also opt in explicitly (Area view).
+  const showProject = section.showProject ?? !!listId;
 
   if (section.data.length === 0 && !section.heading) return null;
 
