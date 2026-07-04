@@ -9,6 +9,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { colors, spacing, typography } from '../theme';
+import { chevronRotate } from '../utils/sections';
 import TaskRow from './TaskRow';
 import ProgressPie from './ProgressPie';
 
@@ -342,7 +343,7 @@ function RowContent({ item, showProject, inProject, onOpenTask, onToggleExpand, 
   if (item.kind === 'heading') {
     return (
       <Pressable style={styles.heading} onPress={() => onToggleCollapse && onToggleCollapse(item.headingId)}>
-        <Ionicons name={item.collapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={colors.textSecondary} />
+        <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} style={{ transform: [{ rotate: chevronRotate(item.chevron ?? (item.collapsed ? 'collapsed' : 'full')) }] }} />
         <Text style={styles.headingText} numberOfLines={1}>{item.title || 'Section'}</Text>
         {item.total > 0 && (
           <View style={styles.count}>
@@ -357,7 +358,7 @@ function RowContent({ item, showProject, inProject, onOpenTask, onToggleExpand, 
     return (
       <Pressable style={styles.divider} onPress={() => item.collapsible && onToggleDivider && onToggleDivider(item.dividerKey)}>
         {item.collapsible && (
-          <Ionicons name={item.collapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={colors.textSecondary} />
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} style={{ transform: [{ rotate: chevronRotate(item.chevron ?? (item.collapsed ? 'collapsed' : 'full')) }] }} />
         )}
         {item.icon && (
           <Ionicons name={item.icon} size={item.iconColor ? 16 : 14} color={item.iconColor || colors.textTertiary} style={{ marginRight: 6 }} />

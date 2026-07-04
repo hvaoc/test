@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { FlatList, View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
+import { chevronRotate } from '../utils/sections';
 import TaskRow from './TaskRow';
 
 // A virtualized list of titled sections whose header STAYS PINNED to the top
@@ -56,10 +57,10 @@ export default function StickyTaskSections({
           <View style={styles.header}>
             {canToggle && (
               <Ionicons
-                name={s.collapsed ? 'chevron-forward' : 'chevron-down'}
+                name="chevron-forward"
                 size={16}
                 color={colors.textSecondary}
-                style={{ marginRight: 4 }}
+                style={{ marginRight: 4, transform: [{ rotate: chevronRotate(s.chevron ?? (s.collapsed ? 'collapsed' : 'full')) }] }}
               />
             )}
             {s.icon && (

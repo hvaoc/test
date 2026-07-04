@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { FlatList, View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
+import { chevronRotate } from '../utils/sections';
 import TaskRow from './TaskRow';
 import ProgressPie from './ProgressPie';
 
@@ -61,9 +62,10 @@ export default function VirtualTaskList({
             onPress={() => onToggleCollapse && onToggleCollapse(item.headingId)}
           >
             <Ionicons
-              name={item.collapsed ? 'chevron-forward' : 'chevron-down'}
+              name="chevron-forward"
               size={16}
               color={colors.textSecondary}
+              style={{ transform: [{ rotate: chevronRotate(item.chevron ?? (item.collapsed ? 'collapsed' : 'full')) }] }}
             />
             <Text style={styles.headingText} numberOfLines={1}>{item.title || 'Section'}</Text>
             {item.total > 0 && (
@@ -83,9 +85,10 @@ export default function VirtualTaskList({
           >
             {item.collapsible && (
               <Ionicons
-                name={item.collapsed ? 'chevron-forward' : 'chevron-down'}
+                name="chevron-forward"
                 size={16}
                 color={colors.textSecondary}
+                style={{ transform: [{ rotate: chevronRotate(item.chevron ?? (item.collapsed ? 'collapsed' : 'full')) }] }}
               />
             )}
             {item.icon && (

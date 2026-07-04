@@ -26,6 +26,7 @@ import PrioritySheet from './PrioritySheet';
 import { useTasks } from '../store/TasksContext';
 import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 import { PRIORITY_MAP } from '../store/constants';
+import { chevronRotate } from '../utils/sections';
 import { colors, spacing, typography, radius } from '../theme';
 
 // Used only until a row reports its real height via onLayout.
@@ -290,6 +291,7 @@ function DividerRow({
   icon,
   collapsible,
   collapsed,
+  chevron,
   dividerKey,
   onToggleCollapse,
   total,
@@ -316,9 +318,10 @@ function DividerRow({
       {showHandle && <View style={styles.rowGutter} />}
       <View style={styles.headingChevron}>
         <Ionicons
-          name={collapsed ? 'chevron-forward' : 'chevron-down'}
+          name="chevron-forward"
           size={16}
           color={colors.textSecondary}
+          style={{ transform: [{ rotate: chevronRotate(chevron ?? (collapsed ? 'collapsed' : 'full')) }] }}
         />
       </View>
       <View style={styles.dividerTitleWrap}>
@@ -410,6 +413,7 @@ function EmptySlotRow({ itemKey, label, ctx }) {
 
 function HeadingRow({
   itemKey,
+  chevron,
   title,
   description,
   headingId,
@@ -534,9 +538,10 @@ function HeadingRow({
           style={styles.headingChevron}
         >
           <Ionicons
-            name={collapsed ? 'chevron-forward' : 'chevron-down'}
+            name="chevron-forward"
             size={16}
             color={colors.textSecondary}
+            style={{ transform: [{ rotate: chevronRotate(chevron ?? (collapsed ? 'collapsed' : 'full')) }] }}
           />
         </Pressable>
       )}
@@ -906,6 +911,7 @@ function StickyHeaderTracker({ items, ctx, scrollY, listOffsetY, onChange }) {
           total: it.total,
           collapsible: it.kind === 'heading' || it.collapsible,
           collapsed: it.collapsed,
+          chevron: it.chevron,
           headingId: it.headingId,
           dividerKey: it.dividerKey,
         })),
@@ -1099,6 +1105,7 @@ export default function ReorderableTaskList({
             description={item.description}
             headingId={item.headingId}
             collapsed={item.collapsed}
+            chevron={item.chevron}
             done={item.done}
             total={item.total}
             color={item.color}
@@ -1118,6 +1125,7 @@ export default function ReorderableTaskList({
             icon={item.icon}
             collapsible={item.collapsible}
             collapsed={item.collapsed}
+            chevron={item.chevron}
             dividerKey={item.dividerKey}
             onToggleCollapse={onToggleDivider}
             total={item.total}

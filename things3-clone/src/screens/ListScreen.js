@@ -38,6 +38,7 @@ import DraggableVirtualTaskList from '../components/DraggableVirtualTaskList';
 import StickyTaskSections from '../components/StickyTaskSections';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
+import { chevronState, chevronRotate } from '../utils/sections';
 
 // Expanded-minimal shows this many items before a "show N more" row.
 const MINIMAL_ITEMS = 10;
@@ -384,7 +385,10 @@ export default function ListScreen({
       mode === 'minimal' && overflow ? { action: 'more', hidden: data.length - rows.length }
       : mode === 'full' && overflow ? { action: 'less' }
       : null;
-    return { rows, more, collapsed: mode === 'collapsed' };
+    // Chevron shows three states; a section with a "show more" affordance is the
+    // "partial" state, everything else expanded reads as full.
+    const chevron = chevronState(mode, !!(more && more.action === 'more'));
+    return { rows, more, collapsed: mode === 'collapsed', chevron };
   };
   // Re-insert each section's hidden task ids after its shown rows so a committed
   // reorder covers every task (hidden ones keep their relative order and their
@@ -538,7 +542,7 @@ export default function ListScreen({
     const items = [];
     dateSections.forEach((s) => {
       const key = `d:${s.key}`;
-      const { rows, more, collapsed } = sliceSection(key, s.data);
+      const { rows, more, collapsed, chevron } = sliceSection(key, s.data);
       items.push({
         key,
         kind: 'divider',
@@ -547,6 +551,7 @@ export default function ListScreen({
         subtitle: s.subtitle,
         collapsible: true,
         collapsed,
+        chevron,
         total: s.total,
         done: s.doneCount,
         color,
@@ -631,9 +636,9 @@ export default function ListScreen({
       // Only heading sections are three-state; the headingless "main" group (no
       // header to click) always shows everything.
       const secKey = s.heading ? `h:${s.heading.id}` : 'main';
-      const { rows, more, collapsed } = s.heading
+      const { rows, more, collapsed, chevron } = s.heading
         ? sliceSection(secKey, s.data)
-        : { rows: s.data, more: null, collapsed: false };
+        : { rows: s.data, more: null, collapsed: false, chevron: 'full' };
       if (s.heading) {
         projectItems.push({
           key: secKey,
@@ -642,6 +647,7 @@ export default function ListScreen({
           description: s.heading.description,
           headingId: s.heading.id,
           collapsed,
+          chevron,
           done: s.doneCount,
           total: s.total,
           color: project.color,
@@ -930,8 +936,8 @@ export default function ListScreen({
   if (useStickySections) {
     // Apply the three-state slicing to each section (collapsed / 10 / full).
     const slicedSections = sections.map((s) => {
-      const { rows, more, collapsed } = sliceSection(s.key, s.data);
-      return { ...s, data: rows, more, collapsed, sectionKey: s.key };
+      const { rows, more, collapsed, chevron } = sliceSection(s.key, s.data);
+      return { ...s, data: rows, more, collapsed, chevron, sectionKey: s.key };
     });
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -1202,9 +1208,10 @@ export default function ListScreen({
           {stickyHeader.collapsible ? (
             <View style={styles.stickyChevron}>
               <Ionicons
-                name={stickyHeader.collapsed ? 'chevron-forward' : 'chevron-down'}
+                name="chevron-forward"
                 size={16}
                 color={colors.textSecondary}
+                style={{ transform: [{ rotate: chevronRotate(stickyHeader.chevron) }] }}
               />
             </View>
           ) : stickyHeader.icon ? (
