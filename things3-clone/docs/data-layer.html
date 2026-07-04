@@ -266,8 +266,10 @@ sequenceDiagram
   <!-- ─────────────────────────────────────────────────────────── -->
   <h2 id="merge"><span class="num">6</span>Two devices, one conflict — solved automatically</h2>
   <p>This is the scenario that breaks naïve apps. Two devices edit the <em>same</em> to‑do while both are offline. What happens when they sync?</p>
+  <h3>Case A — different fields: <em>both</em> changes survive</h3>
+  <p>Phone changes the title; laptop changes the due date. They touched <em>different</em> fields, so there’s nothing to fight over — keep both.</p>
   <div class="card">
-    <div class="cap">Sequence · concurrent edits merge cleanly</div>
+    <div class="cap">Sequence · different fields → both kept</div>
     <div class="diagram">
       <pre class="mermaid">
 sequenceDiagram
@@ -283,13 +285,58 @@ sequenceDiagram
   L->>S: push (due‑date change)
   S-->>L: pull → receives phone's title change
   S-->>P: pull → receives laptop's due‑date change
-  Note over P,L: Different fields → BOTH kept. ✅<br/>Same field twice → the newer timestamp wins,<br/>and every device picks the SAME winner.
+  Note over P,L: Different fields → BOTH changes kept. ✅<br/>(What if they hit the SAME field? See Case B below.)
       </pre>
     </div>
   </div>
   <div class="callout good">
     <b>The trick behind “automatic”</b>
     The engine tracks changes <em>per field</em> (title, due date, priority…) instead of per whole to‑do. Each change carries a special timestamp called an <span class="em">HLC</span> that works even when device clocks disagree. So merging is just: for each field, keep the change with the latest HLC — a rule every device applies identically, arriving at the same answer with no server, no locking, and no “sync conflict” pop‑ups.
+  </div>
+
+  <h3>Case B — the <em>same</em> field: newest wins, and every device agrees</h3>
+  <p>Now the harder case: both devices change the <em>very same</em> field of the <em>very same</em> task — say, both rename a to‑do — while offline. One text box can only hold one value, so something has to give. The app makes that choice <strong>predictable and identical on every device</strong>, with no server casting a deciding vote.</p>
+  <div class="card">
+    <div class="cap">Sequence · same field → newest wins (same answer everywhere)</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant P as 📱 Phone
+  participant S as ☁️ Server
+  participant L as 💻 Laptop
+  Note over P,L: Same task, SAME field (the title). Both offline.
+  P->>P: title = "oat milk"  ·  stamp A
+  L->>L: title = "almond milk"  ·  stamp B (a moment later)
+  P->>S: push (title, stamp A)
+  L->>S: push (title, stamp B)
+  S-->>P: pull → (title, stamp B)
+  P->>P: compare B vs A → B is newer → switch to "almond milk"
+  S-->>L: pull → (title, stamp A)
+  L->>L: compare A vs B → A is older → keep "almond milk"
+  Note over P,L: Both now show "almond milk". ✅<br/>Each device decided on its own — same result.
+      </pre>
+    </div>
+  </div>
+
+  <p>How can each device agree on which edit is “newest” when their clocks might be wrong? It compares the two edits’ <span class="em">HLC</span> stamps. An HLC has three parts, checked from the top — <em>stop at the first one that differs</em>:</p>
+  <table>
+    <thead><tr><th>Checked</th><th>Part of the stamp</th><th>What it decides</th></tr></thead>
+    <tbody>
+      <tr><td class="term">1st</td><td>Physical time</td><td>The later edit wins — the everyday “last edit wins.”</td></tr>
+      <tr><td class="term">2nd</td><td>Counter</td><td>Breaks ties when two edits land in the <em>same</em> millisecond (or when clock skew makes times look equal).</td></tr>
+      <tr><td class="term">3rd</td><td>Device ID</td><td>The final tiebreaker if even the counter matches — an arbitrary but <em>fixed</em> order, so there is always exactly one winner.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout key">
+    <b>Why the two devices never disagree</b>
+    Because that ladder always produces a single, clear winner (right down to the device‑ID tiebreaker), <strong>every device reaches the same verdict by itself</strong> — it doesn’t matter whose change arrives first, and no server has to referee. This per‑field “newest wins” rule has a name: <span class="em">Last‑Writer‑Wins (LWW)</span>. The HLC is the part that makes “newest” trustworthy across devices whose clocks aren’t in sync.
+  </div>
+
+  <div class="callout note">
+    <b>“But didn’t someone lose their edit?”</b>
+    For a single value like a title, yes — one had to win, and the other is cleanly discarded (never mangled or half‑applied). The guarantee is that <em>everyone agrees</em>, so you never end up with two devices showing different titles. And for fields where silently dropping data would be bad — like a task’s <em>tags</em> — the app uses a <em>different</em> CRDT rule, <strong>add‑wins</strong>: tags added on both devices <em>all</em> survive instead of one replacing the other. The engine picks the right rule per field.
   </div>
 
   <!-- ─────────────────────────────────────────────────────────── -->
