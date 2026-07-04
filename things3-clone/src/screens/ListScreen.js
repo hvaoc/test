@@ -779,31 +779,38 @@ export default function ListScreen({
     setProjectLayout({ tasks, headings });
   };
 
-  // Today is one drag surface with a fixed "This Evening" divider so tasks can
-  // be dragged across it. The Evening slot is always present (an empty-drop
-  // placeholder when it has no tasks) so tasks can be moved into it.
+  // Today is one drag surface with a fixed "Morning" header over the daytime
+  // to-dos and a "This Evening" divider below, so tasks can be dragged across.
+  // Both slots are always present (an empty-drop placeholder when they have no
+  // tasks) so tasks can be moved into either.
+  const MORNING_DIVIDER = 'morning-divider';
   const EVENING_DIVIDER = 'evening-divider';
   let todayItems = null;
   if (listId === 'today') {
     const dayData = sections.find((s) => s.key === 'today')?.data || [];
     const eveningData = sections.find((s) => s.key === 'evening')?.data || [];
     todayItems = [
+      { key: MORNING_DIVIDER, kind: 'divider', title: 'Morning', icon: 'sunny-outline' },
       ...dayData.map((t) => ({ key: t.id, kind: 'task', task: t })),
-      { key: EVENING_DIVIDER, kind: 'divider', title: 'This Evening', icon: 'moon' },
-      ...eveningData.map((t) => ({ key: t.id, kind: 'task', task: t })),
     ];
+    if (dayData.length === 0) {
+      todayItems.push({ key: 'morning-empty', kind: 'emptyslot', label: 'No tasks yet' });
+    }
+    todayItems.push({ key: EVENING_DIVIDER, kind: 'divider', title: 'This Evening', icon: 'moon' });
+    todayItems.push(...eveningData.map((t) => ({ key: t.id, kind: 'task', task: t })));
     if (eveningData.length === 0) {
       todayItems.push({ key: 'evening-empty', kind: 'emptyslot', label: 'No tasks yet' });
     }
   }
 
-  // Commit a Today reorder: tasks below the divider become "This Evening"
-  // (when = EVENING); tasks above revert to Today; then persist the order.
+  // Commit a Today reorder: tasks below the Evening divider become "This
+  // Evening" (when = EVENING); tasks above (under Morning) revert to Today; then
+  // persist the order.
   const commitTodayLayout = (keys) => {
     const dividerIdx = keys.indexOf(EVENING_DIVIDER);
     const orderedIds = [];
     keys.forEach((k, i) => {
-      if (k === EVENING_DIVIDER || k === 'evening-empty') return;
+      if (k === MORNING_DIVIDER || k === 'morning-empty' || k === EVENING_DIVIDER || k === 'evening-empty') return;
       orderedIds.push(k);
       const task = state.tasks.find((t) => t.id === k);
       if (!task) return;
