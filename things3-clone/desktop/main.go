@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"things3-clone-desktop/core"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
@@ -68,10 +70,64 @@ func savePrefs(p windowPrefs) {
 	}
 }
 
-// App is bound to the frontend so the Settings screen can read/change the
-// startup-window mode.
+// App is bound to the frontend: it exposes the startup-window mode AND the
+// offline-first data store (embedded SQLite + cloud sync) so the JS layer can
+// persist and sync through the same Go engine the mobile apps use.
 type App struct {
-	ctx context.Context
+	ctx   context.Context
+	store *core.Store
+}
+
+// dataDir is the per-user writable directory for the database + mock cloud file.
+func dataDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	d := filepath.Join(dir, "ThingsClone")
+	_ = os.MkdirAll(d, 0o755)
+	return d
+}
+
+// --- Data store, callable from JS as window.go.main.App.<Method>() ----------
+
+// LoadSnapshot returns the persisted state as a JSON string ("" if the DB is
+// empty, so the frontend falls back to its seed data).
+func (a *App) LoadSnapshot() string {
+	if a.store == nil {
+		return ""
+	}
+	has, err := a.store.HasData()
+	if err != nil || !has {
+		return ""
+	}
+	snap, err := a.store.LoadSnapshot()
+	if err != nil {
+		return ""
+	}
+	return snap
+}
+
+// SaveSnapshot persists the full frontend state (debounced on the JS side). The
+// store diffs it and records an oplog entry per change for sync.
+func (a *App) SaveSnapshot(state string) {
+	if a.store != nil {
+		_ = a.store.SaveSnapshot(state)
+	}
+}
+
+// Sync runs one push/pull cycle against the configured cloud adapter and returns
+// a JSON SyncResult (including the merged snapshot).
+func (a *App) Sync() string {
+	if a.store == nil {
+		return `{"adapter":"none"}`
+	}
+	res, err := a.store.Sync()
+	if err != nil {
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(b)
+	}
+	return res
 }
 
 // GetWindowMode / SetWindowMode are callable from JS as
@@ -91,6 +147,12 @@ func (a *App) SetWindowMode(mode string) {
 // so it appears already in the right size/state — no resize flash.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Open the embedded database and attach the (mock) cloud adapter. Failure is
+	// non-fatal: the frontend keeps working from its in-memory seed.
+	if store, err := core.Open(dataDir()); err == nil {
+		store.SetAdapter(core.NewMockAdapter(dataDir()))
+		a.store = store
+	}
 	p := loadPrefs()
 	if p.Mode == "remember" && p.Width > 0 && p.Height > 0 {
 		if p.Maximized {

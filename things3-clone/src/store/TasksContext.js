@@ -9,9 +9,9 @@ import React, {
 } from 'react';
 import { uid } from '../utils/id';
 import { STATUS } from './constants';
-import { loadState, saveState } from './storage';
 import { buildSampleData } from './sampleData';
 import { setTimeZone } from '../utils/date';
+import { loadSnapshot, saveSnapshot } from './backend';
 
 const TasksContext = createContext(null);
 
@@ -434,15 +434,45 @@ export function TasksProvider({ children }) {
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
   setTimeZone(state.settings?.timezone);
 
-  // Testing mode: always start from the rich sample data so interactive-feature
-  // tests are reproducible. Edits live in memory for the session (and can be
-  // reset any time from Settings), but a reload starts fresh from the seed.
+  // Offline-first hydrate: load the persisted snapshot from the platform store
+  // (Go SQLite on desktop/mobile, IndexedDB on web). First run — or a store
+  // that failed to load — falls back to the rich seed data and immediately
+  // persists it, so the very next launch already restores real data.
   useEffect(() => {
-    dispatch({ type: 'HYDRATE', payload: buildSampleData() });
+    let cancelled = false;
+    (async () => {
+      let payload = null;
+      try {
+        payload = await loadSnapshot();
+      } catch {
+        payload = null;
+      }
+      if (cancelled) return;
+      if (payload && Array.isArray(payload.tasks)) {
+        dispatch({ type: 'HYDRATE', payload });
+      } else {
+        const seed = buildSampleData();
+        dispatch({ type: 'HYDRATE', payload: seed });
+        saveSnapshot(seed).catch(() => {});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Persistence is intentionally disabled in this testing build so every reload
-  // starts from the same seed. (Re-enable by saving `state` here to restore it.)
+  // Persist on change, debounced, once we've hydrated. The platform store diffs
+  // the snapshot and records a per-change oplog entry for cloud sync.
+  useEffect(() => {
+    if (!state.loaded) return undefined;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveSnapshot(state).catch(() => {});
+    }, 500);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [state]);
 
   // Stable action creators.
   const actions = useMemo(
