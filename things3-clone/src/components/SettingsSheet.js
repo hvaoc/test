@@ -1,14 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import {
   View,
   Text,
   Pressable,
   ScrollView,
+  FlatList,
   TextInput,
   StyleSheet,
   Switch,
   Modal,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +45,15 @@ function zoneTime(tz) {
     return '';
   }
 }
+
+// Every IANA time zone the runtime knows about (~400). Falls back to the curated
+// list on older engines without Intl.supportedValuesOf.
+const IANA_ZONES =
+  typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function'
+    ? Intl.supportedValuesOf('timeZone')
+    : TIMEZONES.map((t) => t.id).filter(Boolean);
+// Options for the timezone Select: System default first, then every zone id.
+const TZ_OPTIONS = [{ value: '', label: 'System default' }, ...IANA_ZONES.map((z) => ({ value: z, label: z }))];
 
 // ---- Reusable content primitives -----------------------------------------
 
@@ -91,6 +102,103 @@ function Segment({ options, value, onChange }) {
           </Pressable>
         );
       })}
+    </View>
+  );
+}
+
+// A dropdown select: a pill trigger showing the current value; tapping opens a
+// floating menu anchored below (or above) it. `searchable` adds a filter box —
+// used for the long IANA timezone list. `hintOf` renders a lazy right-side hint
+// per row (so we only compute e.g. current-time for visible rows).
+function Select({ value, options, onChange, searchable, hintOf, placeholder = 'Select…', width = 260 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef(null);
+  const [anchor, setAnchor] = useState(null);
+  const win = useWindowDimensions();
+
+  const selected = options.find((o) => o.value === value);
+  const label = selected ? selected.label : placeholder;
+
+  const openMenu = () => {
+    setQuery('');
+    const node = ref.current;
+    if (node && node.measureInWindow) {
+      node.measureInWindow((x, y, w, h) => { setAnchor({ x, y, w, h }); setOpen(true); });
+    } else {
+      setOpen(true);
+    }
+  };
+
+  const filtered = searchable && query.trim()
+    ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  // Menu geometry: right-align to the trigger, flip above when there's no room.
+  const menuW = Math.min(width, win.width - 24);
+  let left = anchor ? anchor.x + anchor.w - menuW : 12;
+  left = Math.max(12, Math.min(left, win.width - menuW - 12));
+  const spaceBelow = anchor ? win.height - (anchor.y + anchor.h) - 16 : 400;
+  const spaceAbove = anchor ? anchor.y - 16 : 400;
+  const openUp = spaceBelow < 260 && spaceAbove > spaceBelow;
+  const listMax = Math.max(140, Math.min(300, (openUp ? spaceAbove : spaceBelow) - (searchable ? 56 : 8)));
+  const pos = anchor
+    ? openUp
+      ? { left, bottom: win.height - anchor.y + 4 }
+      : { left, top: anchor.y + anchor.h + 4 }
+    : { left: 12, top: 100 };
+
+  return (
+    <View>
+      <Pressable ref={ref} onPress={openMenu} style={[styles.select, { maxWidth: width }]}>
+        <Text style={styles.selectText} numberOfLines={1}>{label}</Text>
+        <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
+      </Pressable>
+      <Modal visible={open} transparent animationType="none" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.selectOverlay} onPress={() => setOpen(false)}>
+          {anchor && (
+            <Pressable style={[styles.menu, { width: menuW }, pos]} onPress={() => {}}>
+              {searchable && (
+                <View style={styles.menuSearch}>
+                  <Ionicons name="search" size={15} color={colors.textTertiary} />
+                  <TextInput
+                    autoFocus
+                    style={styles.menuSearchInput}
+                    placeholder="Search time zones"
+                    placeholderTextColor={colors.placeholder}
+                    value={query}
+                    onChangeText={setQuery}
+                  />
+                </View>
+              )}
+              <FlatList
+                data={filtered}
+                keyExtractor={(o) => String(o.value) || '__default'}
+                style={{ maxHeight: listMax }}
+                keyboardShouldPersistTaps="handled"
+                initialNumToRender={24}
+                maxToRenderPerBatch={24}
+                windowSize={8}
+                renderItem={({ item: o }) => {
+                  const active = o.value === value;
+                  const hint = hintOf ? hintOf(o) : o.hint;
+                  return (
+                    <Pressable
+                      style={[styles.menuItem, active && styles.menuItemActive]}
+                      onPress={() => { onChange(o.value); setOpen(false); }}
+                    >
+                      <Text style={[styles.menuItemText, active && styles.menuItemTextActive]} numberOfLines={1}>{o.label}</Text>
+                      {hint ? <Text style={styles.menuItemHint}>{hint}</Text> : null}
+                      {active && <Ionicons name="checkmark" size={16} color={colors.accent} style={{ marginLeft: spacing.sm }} />}
+                    </Pressable>
+                  );
+                }}
+                ListEmptyComponent={<Text style={styles.menuEmpty}>No matches</Text>}
+              />
+            </Pressable>
+          )}
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -194,26 +302,28 @@ function GeneralSection({ settings, setSetting }) {
         <Toggle value={settings.centeredContent} onValueChange={(v) => setSetting('centeredContent', v)} />
       </Field>
 
-      <View style={styles.hr} />
-      <GroupTitle>Date format</GroupTitle>
-      <Text style={styles.fieldHint}>Used for the date headers in the Calendar Day view.</Text>
-      <OptionList
-        options={DATE_FORMATS.map((id) => ({ value: id, label: formatDayKey(sampleKey, id) }))}
-        value={settings.dateFormat || 'weekday-long'}
-        onChange={(v) => setSetting('dateFormat', v)}
-      />
-
-      <View style={styles.hr} />
-      <GroupTitle>Time zone</GroupTitle>
-      <Text style={styles.fieldHint}>
-        Sets what counts as "now"/"today" — affects Today, relative dates, overdue, and the current-time line.
-      </Text>
-      <OptionList
-        options={TIMEZONES.map((tz) => ({ value: tz.id, label: tz.label }))}
-        value={settings.timezone || ''}
-        onChange={(v) => setSetting('timezone', v)}
-        rightOf={(o) => zoneTime(o.value)}
-      />
+      <Field label="Date format" hint="Used for the date headers in the Calendar Day view.">
+        <Select
+          value={settings.dateFormat || 'weekday-long'}
+          onChange={(v) => setSetting('dateFormat', v)}
+          options={DATE_FORMATS.map((id) => ({ value: id, label: formatDayKey(sampleKey, id) }))}
+          width={220}
+        />
+      </Field>
+      <Field
+        label="Time zone"
+        hint='Sets what counts as "now"/"today" — affects Today, relative dates, overdue, and the current-time line.'
+        last
+      >
+        <Select
+          value={settings.timezone || ''}
+          onChange={(v) => setSetting('timezone', v)}
+          options={TZ_OPTIONS}
+          hintOf={(o) => zoneTime(o.value)}
+          searchable
+          width={300}
+        />
+      </Field>
     </>
   );
 }
@@ -628,6 +738,60 @@ const styles = StyleSheet.create({
   segBtnActive: { backgroundColor: colors.background },
   segText: { ...typography.subhead, color: colors.textSecondary },
   segTextActive: { color: colors.text, fontWeight: '600' },
+
+  // --- Select (dropdown) ---
+  select: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.sm,
+    height: 34,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  selectText: { flex: 1, ...typography.subhead, color: colors.text, fontWeight: '500' },
+  selectOverlay: { flex: 1, ...(Platform.OS === 'web' ? { cursor: 'default' } : null) },
+  menu: {
+    position: 'absolute',
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
+    paddingVertical: spacing.xs,
+    overflow: 'hidden',
+    ...Platform.select({
+      web: { boxShadow: '0 12px 32px rgba(0,0,0,0.18)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 20, shadowOffset: { width: 0, height: 10 }, elevation: 16 },
+    }),
+  },
+  menuSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    height: 34,
+    borderRadius: radius.sm,
+    backgroundColor: colors.separator,
+  },
+  menuSearchInput: { flex: 1, ...typography.subhead, color: colors.text, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  menuItemActive: { backgroundColor: colors.accentSoft },
+  menuItemText: { flex: 1, ...typography.subhead, color: colors.text },
+  menuItemTextActive: { color: colors.accent, fontWeight: '600' },
+  menuItemHint: { ...typography.caption, color: colors.textTertiary, fontVariant: ['tabular-nums'], marginLeft: spacing.sm },
+  menuEmpty: { ...typography.subhead, color: colors.textTertiary, padding: spacing.md, textAlign: 'center' },
 
   // --- Option list ---
   optionList: { marginTop: spacing.md, gap: 4 },
