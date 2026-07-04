@@ -111,10 +111,18 @@ function useSections(state, route) {
         else buckets.overdue.push(t);
       });
       const byDate = (a, b) => (effKey(a) < effKey(b) ? -1 : effKey(a) > effKey(b) ? 1 : 0);
+      const sec = (id, title, data) => ({
+        key: id,
+        title,
+        icon: SMART_LIST_MAP[id]?.icon,
+        iconColor: SMART_LIST_MAP[id]?.color,
+        data: data.sort(byDate),
+        showProject: true,
+      });
       return [
-        { key: 'today', title: 'Today', data: buckets.today.sort(byDate), showProject: true },
-        { key: 'upcoming', title: 'Upcoming', data: buckets.upcoming.sort(byDate), showProject: true },
-        { key: 'overdue', title: 'Overdue', data: buckets.overdue.sort(byDate), showProject: true },
+        sec('today', 'Today', buckets.today),
+        sec('upcoming', 'Upcoming', buckets.upcoming),
+        sec('overdue', 'Overdue', buckets.overdue),
       ].filter((s) => s.data.length > 0);
     }
 
@@ -818,6 +826,7 @@ export default function ListScreen({
       if (s.title) {
         flat.push({
           key: `d:${s.key}`, kind: 'divider', title: s.title, subtitle: s.subtitle || null,
+          icon: s.icon || null, iconColor: s.iconColor || null,
           collapsible: false, total: s.total || 0, done: s.doneCount || 0,
         });
       }
@@ -1043,9 +1052,16 @@ function Section({ section, listId, navigation, onOpenTask }) {
       {section.title ? (
         <View style={styles.sectionHeader}>
           {section.icon && (
-            <Ionicons name={section.icon} size={14} color={colors.textTertiary} style={{ marginRight: 6 }} />
+            <Ionicons
+              name={section.icon}
+              size={section.iconColor ? 16 : 14}
+              color={section.iconColor || colors.textTertiary}
+              style={{ marginRight: 6 }}
+            />
           )}
-          <Text style={styles.sectionTitle}>{section.title}</Text>
+          <Text style={[styles.sectionTitle, section.iconColor && { color: section.iconColor }]}>
+            {section.title}
+          </Text>
           {section.subtitle && (
             <Text style={styles.sectionSubtitle}>{section.subtitle}</Text>
           )}

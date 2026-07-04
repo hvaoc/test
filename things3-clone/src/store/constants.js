@@ -8,6 +8,7 @@ export const SMART_LISTS = [
   { id: 'inbox', title: 'Inbox', icon: 'file-tray-outline', color: colors.accent, outline: true },
   { id: 'today', title: 'Today', icon: 'star', color: colors.today, outline: true },
   { id: 'upcoming', title: 'Upcoming', icon: 'calendar-outline', color: colors.upcoming, outline: true },
+  { id: 'overdue', title: 'Overdue', icon: 'alert-circle-outline', color: colors.overdue, outline: true },
   { id: 'anytime', title: 'Anytime', icon: 'layers-outline', color: colors.anytime, outline: true },
   { id: 'someday', title: 'Someday', icon: 'archive-outline', color: colors.someday, outline: true },
   { id: 'logbook', title: 'Logbook', icon: 'checkmark-done-circle-outline', color: colors.logbook, outline: true },

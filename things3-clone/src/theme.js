@@ -24,6 +24,7 @@ export const colors = {
   inbox: '#5b6b7b',
   today: '#f5c518',
   upcoming: '#e8554e',
+  overdue: '#d0342c',
   anytime: '#1f9d55',
   someday: '#c39a3f',
   logbook: '#1f9d55',

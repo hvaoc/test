@@ -72,6 +72,25 @@ export function selectUpcoming(tasks) {
     .sort((a, b) => (a.when < b.when ? -1 : a.when > b.when ? 1 : 0));
 }
 
+// Overdue: open tasks whose scheduled date or deadline is strictly in the past.
+// (These also surface in Today, which shows "due today or overdue".)
+const overdueKey = (t) => {
+  const w =
+    t.when && ![WHEN.SOMEDAY, WHEN.TODAY, WHEN.EVENING].includes(t.when) && isPast(t.when)
+      ? t.when
+      : null;
+  const d = t.deadline && isPast(t.deadline) ? t.deadline : null;
+  return w && d ? (w < d ? w : d) : w || d;
+};
+export function selectOverdue(tasks) {
+  return tasks
+    .filter((t) => isOpen(t) && isTopLevel(t) && overdueKey(t) != null)
+    .sort((a, b) => {
+      const ka = overdueKey(a), kb = overdueKey(b);
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+}
+
 // Anytime: open, available-now tasks that live in a project or area (not Inbox,
 // not Someday, not scheduled for the future).
 export function selectAnytime(tasks) {
@@ -124,6 +143,7 @@ export function counts(tasks) {
   return {
     inbox: selectInbox(tasks).length,
     today: selectToday(tasks).length,
+    overdue: selectOverdue(tasks).length,
   };
 }
 
@@ -135,6 +155,8 @@ export function selectForList(tasks, listId) {
       return selectToday(tasks);
     case 'upcoming':
       return selectUpcoming(tasks);
+    case 'overdue':
+      return selectOverdue(tasks);
     case 'anytime':
       return selectAnytime(tasks);
     case 'someday':

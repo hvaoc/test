@@ -73,7 +73,15 @@ export default function VirtualTaskList({
                 color={colors.textSecondary}
               />
             )}
-            <Text style={styles.dividerText} numberOfLines={1}>{item.title}</Text>
+            {item.icon && (
+              <Ionicons
+                name={item.icon}
+                size={item.iconColor ? 16 : 14}
+                color={item.iconColor || colors.textTertiary}
+                style={{ marginRight: 6 }}
+              />
+            )}
+            <Text style={[styles.dividerText, item.iconColor && { color: item.iconColor }]} numberOfLines={1}>{item.title}</Text>
             {item.subtitle ? <Text style={styles.dividerSub} numberOfLines={1}>{item.subtitle}</Text> : null}
             {item.total > 0 && (
               <View style={styles.count}>
