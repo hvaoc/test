@@ -35,7 +35,7 @@ import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 // pushing a new screen. On phones both are undefined and it behaves as a stack.
 export default function HomeScreen({ navigation, selectedKey, embedded, onToggleSidebar }) {
   const insets = useSafeAreaInsets();
-  const { state, setSetting, addCustomView } = useTasks();
+  const { state, setSetting, addCustomView, reorderProjects } = useTasks();
   const [sheet, setSheet] = useState(false);
   const [newViewOpen, setNewViewOpen] = useState(false);
   // When the New List sheet is opened from an Area's "+", pre-file the project
@@ -117,10 +117,13 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
     );
   };
 
+  // Manual sidebar order within an area/group (drag-to-reorder writes `order`).
+  const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+
   // Projects grouped under their area, plus any area-less projects.
-  const looseProjects = state.projects.filter(
-    (p) => !p.areaId && p.status === 'open'
-  );
+  const looseProjects = state.projects
+    .filter((p) => !p.areaId && p.status === 'open')
+    .sort(byOrder);
 
   const projectStats = (projectId) => {
     const tasks = selectProjectTasks(state.tasks, projectId);
@@ -184,9 +187,9 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
           <AreaSection
             key={area.id}
             area={area}
-            projects={state.projects.filter(
-              (p) => p.areaId === area.id && p.status === 'open'
-            )}
+            projects={state.projects
+              .filter((p) => p.areaId === area.id && p.status === 'open')
+              .sort(byOrder)}
             collapsed={collapsedAreas.has(area.id)}
             selectedKey={selectedKey}
             projectStats={projectStats}
@@ -198,28 +201,36 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             onOpenProject={(p) =>
               navigation.navigate('List', { projectId: p.id, title: p.name })
             }
+            onReorderProjects={reorderProjects}
           />
         ))}
 
-        {/* Loose projects */}
+        {/* Loose projects — drag to reorder within the group. */}
         {looseProjects.length > 0 && (
           <View style={styles.section}>
-            {looseProjects.map((p) => (
-              <DropTarget
-                key={p.id}
-                targetKey={`project:${p.id}`}
-                meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
-              >
-                <ProjectRow
-                  project={p}
-                  stats={projectStats(p.id)}
-                  selected={selectedKey === `project:${p.id}`}
-                  onPress={() =>
-                    navigation.navigate('List', { projectId: p.id, title: p.name })
-                  }
-                />
-              </DropTarget>
-            ))}
+            <ReorderableSmartLists
+              ids={looseProjects.map((p) => p.id)}
+              renderRow={(id) => {
+                const p = looseProjects.find((x) => x.id === id);
+                if (!p) return null;
+                return (
+                  <DropTarget
+                    targetKey={`project:${id}`}
+                    meta={{ kind: 'project', id, areaId: p.areaId }}
+                  >
+                    <ProjectRow
+                      project={p}
+                      stats={projectStats(id)}
+                      selected={selectedKey === `project:${id}`}
+                      onPress={() =>
+                        navigation.navigate('List', { projectId: id, title: p.name })
+                      }
+                    />
+                  </DropTarget>
+                );
+              }}
+              onReorder={reorderProjects}
+            />
           </View>
         )}
 
@@ -347,6 +358,7 @@ function AreaSection({
   onAddProject,
   onToggle,
   onOpenProject,
+  onReorderProjects,
 }) {
   const [hovered, setHovered] = useState(false);
   const selected = selectedKey === `area:${area.id}`;
@@ -381,21 +393,29 @@ function AreaSection({
           />
         </Pressable>
       </View>
-      {!collapsed &&
-        projects.map((p) => (
-          <DropTarget
-            key={p.id}
-            targetKey={`project:${p.id}`}
-            meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
-          >
-            <ProjectRow
-              project={p}
-              stats={projectStats(p.id)}
-              selected={selectedKey === `project:${p.id}`}
-              onPress={() => onOpenProject(p)}
-            />
-          </DropTarget>
-        ))}
+      {!collapsed && projects.length > 0 && (
+        <ReorderableSmartLists
+          ids={projects.map((p) => p.id)}
+          renderRow={(id) => {
+            const p = projects.find((x) => x.id === id);
+            if (!p) return null;
+            return (
+              <DropTarget
+                targetKey={`project:${id}`}
+                meta={{ kind: 'project', id, areaId: p.areaId }}
+              >
+                <ProjectRow
+                  project={p}
+                  stats={projectStats(id)}
+                  selected={selectedKey === `project:${id}`}
+                  onPress={() => onOpenProject(p)}
+                />
+              </DropTarget>
+            );
+          }}
+          onReorder={onReorderProjects}
+        />
+      )}
     </View>
   );
 }

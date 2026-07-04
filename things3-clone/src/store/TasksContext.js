@@ -282,8 +282,24 @@ function reducer(state, action) {
         status: STATUS.OPEN,
         createdAt: Date.now(),
         completedAt: null,
+        // Manual sidebar order within the area (drag-to-reorder writes this).
+        // New projects sort to the bottom; existing seeds default to 0.
+        order: Date.now(),
       };
       return { ...state, projects: [...state.projects, project] };
+    }
+
+    case 'REORDER_PROJECTS': {
+      // action.ids is the new order of one area's (or the loose group's)
+      // projects. Write each project's `order` to its index. Orders are only
+      // ever compared within a single area, so per-area 0..n indices are fine.
+      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          orderOf.has(p.id) ? { ...p, order: orderOf.get(p.id) } : p
+        ),
+      };
     }
 
     case 'UPDATE_PROJECT':
@@ -513,6 +529,7 @@ export function TasksProvider({ children }) {
       addProject: (payload) => dispatch({ type: 'ADD_PROJECT', payload }),
       updateProject: (id, patch) => dispatch({ type: 'UPDATE_PROJECT', id, patch }),
       deleteProject: (id) => dispatch({ type: 'DELETE_PROJECT', id }),
+      reorderProjects: (ids) => dispatch({ type: 'REORDER_PROJECTS', ids }),
 
       addHeading: (projectId, opts = {}) =>
         dispatch({
