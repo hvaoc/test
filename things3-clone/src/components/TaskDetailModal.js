@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Modal,
   View,
@@ -9,18 +9,18 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Checkbox from './Checkbox';
-import WhenSheet from './WhenSheet';
 import DeadlineSheet from './DeadlineSheet';
 import MoveSheet from './MoveSheet';
 import TagSheet from './TagSheet';
-import PrioritySheet from './PrioritySheet';
 import LocationSheet from './LocationSheet';
+import MiniCalendar from './MiniCalendar';
 import { colors, spacing, typography, radius } from '../theme';
-import { WHEN, STATUS, PRIORITY_MAP } from '../store/constants';
+import { WHEN, STATUS, PRIORITY_MAP, PRIORITIES } from '../store/constants';
 import { relativeLabel } from '../utils/date';
 import { useTasks, newTask } from '../store/TasksContext';
 import { selectSubtasks } from '../store/selectors';
@@ -291,12 +291,6 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
          </View>
         </KeyboardAvoidingView>
 
-        <WhenSheet
-          visible={sheet === 'when'}
-          onClose={() => setSheet(null)}
-          value={task.when}
-          onChange={(when) => updateTask(task.id, { when })}
-        />
         <DeadlineSheet
           visible={sheet === 'deadline'}
           onClose={() => setSheet(null)}
@@ -314,12 +308,6 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
           onClose={() => setSheet(null)}
           selected={task.tags}
           onChange={(tags) => updateTask(task.id, { tags })}
-        />
-        <PrioritySheet
-          visible={sheet === 'priority'}
-          onClose={() => setSheet(null)}
-          value={task.priority}
-          onChange={(priority) => updateTask(task.id, { priority })}
         />
         <LocationSheet
           visible={sheet === 'location'}
@@ -353,28 +341,122 @@ const fmtDur = (m) => (m % 60 === 0 ? `${m / 60}h` : m < 60 ? `${m}m` : `${Math.
 // The always-visible, first-class attributes for a task. Each row shows the
 // current value and opens the matching editor sheet; Start/Duration edit inline.
 function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpdate, style }) {
+  // Date and Priority edit inline via a popover anchored to their row; the rest
+  // still open their bottom sheets.
+  const [popover, setPopover] = useState(null); // { kind, anchor }
+  const open = (kind) => (anchor) => setPopover({ kind, anchor });
+  const close = () => setPopover(null);
   return (
     <View style={[styles.panel, style]}>
       <Text style={styles.panelHeader}>Details</Text>
-      <FieldRow icon="ellipse" iconColor={containerColor} label="List" value={containerLabel} active onPress={() => onEdit('move')} />
-      <FieldRow icon={when.icon} iconColor={when.color} label="When" value={when.label} active={!!task.when} onPress={() => onEdit('when')} />
+      <FieldRow icon="ellipse" iconColor={containerColor} label="Project" value={containerLabel} active onPress={() => onEdit('move')} />
+      <FieldRow icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={popover?.kind === 'when'} onPress={open('when')} />
       <TimeField task={task} onUpdate={onUpdate} />
       <FieldRow icon="alarm-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
-      <FieldRow icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} onPress={() => onEdit('priority')} />
+      <FieldRow icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={popover?.kind === 'priority'} onPress={open('priority')} />
       <FieldRow icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
       <FieldRow icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
+
+      <AnchoredPopover visible={popover?.kind === 'priority'} anchor={popover?.anchor} onClose={close}>
+        <PriorityMenu value={task.priority} onChange={(p) => { onUpdate({ priority: p }); close(); }} />
+      </AnchoredPopover>
+      <AnchoredPopover visible={popover?.kind === 'when'} anchor={popover?.anchor} onClose={close} width={300}>
+        <WhenMenu value={task.when} onChange={(w) => { onUpdate({ when: w }); close(); }} />
+      </AnchoredPopover>
     </View>
   );
 }
 
-function FieldRow({ icon, iconColor, label, value, active, onPress }) {
+// A field row: gray label on top, icon + value below, hairline divider. Tapping
+// measures itself and passes its screen rect so a popover can anchor to it.
+function FieldRow({ icon, iconColor, label, value, active, highlighted, onPress }) {
+  const ref = useRef(null);
+  const handlePress = () => {
+    const node = ref.current;
+    if (node && node.measureInWindow) {
+      node.measureInWindow((x, y, width, height) => onPress({ x, y, width, height }));
+    } else {
+      onPress(null);
+    }
+  };
   return (
-    <Pressable style={styles.fieldRow} onPress={onPress}>
-      <Ionicons name={icon} size={18} color={iconColor || colors.textSecondary} style={styles.fieldIcon} />
+    <Pressable ref={ref} style={[styles.fieldRow, highlighted && styles.fieldRowOpen]} onPress={handlePress}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={[styles.fieldValue, !active && styles.fieldValueMuted]} numberOfLines={1}>{value}</Text>
-      <Ionicons name="chevron-forward" size={15} color={colors.separatorStrong} />
+      <View style={styles.fieldValueRow}>
+        <Ionicons name={icon} size={18} color={iconColor || colors.textSecondary} style={styles.fieldIcon} />
+        <Text style={[styles.fieldValue, !active && styles.fieldValueMuted]} numberOfLines={1}>{value}</Text>
+      </View>
     </Pressable>
+  );
+}
+
+// A dropdown/popover anchored just below a field row (flips above when there's
+// not enough room). Positions in window coordinates inside a full-screen Modal.
+function AnchoredPopover({ visible, anchor, onClose, children, width }) {
+  if (!visible || !anchor) return null;
+  const win = Dimensions.get('window');
+  const w = Math.max(width || anchor.width, 220);
+  const gap = 6;
+  const belowTop = anchor.y + anchor.height + gap;
+  const spaceBelow = win.height - belowTop - 8;
+  const spaceAbove = anchor.y - gap - 8;
+  const placeAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
+  let left = anchor.x;
+  if (left + w > win.width - 8) left = win.width - 8 - w;
+  if (left < 8) left = 8;
+  const posStyle = placeAbove
+    ? { left, bottom: win.height - (anchor.y - gap), maxHeight: spaceAbove }
+    : { left, top: belowTop, maxHeight: spaceBelow };
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.popBackdrop} onPress={onClose}>
+        <Pressable style={[styles.popCard, { width: w }, posStyle]} onPress={(e) => e?.stopPropagation?.()}>
+          <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function PriorityMenu({ value, onChange }) {
+  return (
+    <View style={styles.menu}>
+      {PRIORITIES.map((p) => (
+        <Pressable key={p.key} style={styles.menuRow} onPress={() => onChange(p.key)}>
+          <Ionicons name="flag" size={18} color={p.color} style={styles.menuIcon} />
+          <Text style={styles.menuLabel}>{p.label}</Text>
+          {value === p.key && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+        </Pressable>
+      ))}
+      <Pressable style={styles.menuRow} onPress={() => onChange(null)}>
+        <Ionicons name="flag-outline" size={18} color={colors.textTertiary} style={styles.menuIcon} />
+        <Text style={styles.menuLabel}>None</Text>
+        {!value && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+      </Pressable>
+    </View>
+  );
+}
+
+function WhenMenu({ value, onChange }) {
+  const isDate = value && ![WHEN.TODAY, WHEN.EVENING, WHEN.SOMEDAY].includes(value);
+  const Opt = ({ icon, color, label, active, onPress }) => (
+    <Pressable style={styles.menuRow} onPress={onPress}>
+      <Ionicons name={icon} size={18} color={color} style={styles.menuIcon} />
+      <Text style={styles.menuLabel}>{label}</Text>
+      {active && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+    </Pressable>
+  );
+  return (
+    <View style={styles.menu}>
+      <Opt icon="star" color={colors.today} label="Today" active={value === WHEN.TODAY} onPress={() => onChange(WHEN.TODAY)} />
+      <Opt icon="moon" color={colors.someday} label="This Evening" active={value === WHEN.EVENING} onPress={() => onChange(WHEN.EVENING)} />
+      <Opt icon="archive" color={colors.someday} label="Someday" active={value === WHEN.SOMEDAY} onPress={() => onChange(WHEN.SOMEDAY)} />
+      {value ? (
+        <Opt icon="close-circle" color={colors.textSecondary} label="No Date" active={false} onPress={() => onChange(null)} />
+      ) : null}
+      <View style={styles.menuDivider} />
+      <MiniCalendar selected={isDate ? value : null} onSelect={(key) => onChange(key)} />
+    </View>
   );
 }
 
@@ -392,18 +474,20 @@ function TimeField({ task, onUpdate }) {
   if (!scheduled) {
     return (
       <View style={styles.fieldRow}>
-        <Ionicons name="time-outline" size={18} color={colors.textTertiary} style={styles.fieldIcon} />
-        <Text style={styles.fieldLabel}>Start</Text>
-        <Text style={[styles.fieldValue, styles.fieldValueMuted]} numberOfLines={1}>Set a date first</Text>
+        <Text style={styles.fieldLabel}>Time</Text>
+        <View style={styles.fieldValueRow}>
+          <Ionicons name="time-outline" size={18} color={colors.textTertiary} style={styles.fieldIcon} />
+          <Text style={[styles.fieldValue, styles.fieldValueMuted]} numberOfLines={1}>Set a date first</Text>
+        </View>
       </View>
     );
   }
   return (
     <>
       <View style={styles.fieldRow}>
-        <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : colors.textSecondary} style={styles.fieldIcon} />
-        <Text style={styles.fieldLabel}>Start</Text>
-        <View style={styles.timeWrap}>
+        <Text style={styles.fieldLabel}>Time</Text>
+        <View style={styles.fieldValueRow}>
+          <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : colors.textSecondary} style={styles.fieldIcon} />
           <TimePicker minutes={start} onChange={setStart} />
           {start != null && (
             <Pressable onPress={() => setStart(null)} hitSlop={8} style={styles.clearBtn}>
@@ -414,12 +498,14 @@ function TimeField({ task, onUpdate }) {
       </View>
       {start != null && (
         <View style={styles.fieldRow}>
-          <Ionicons name="hourglass-outline" size={18} color={colors.textSecondary} style={styles.fieldIcon} />
           <Text style={styles.fieldLabel}>Duration</Text>
-          <View style={styles.stepper}>
-            <Pressable onPress={() => stepDur(-15)} style={styles.stepBtn}><Ionicons name="remove" size={16} color={colors.textSecondary} /></Pressable>
-            <Text style={styles.stepValue}>{fmtDur(dur)}</Text>
-            <Pressable onPress={() => stepDur(15)} style={styles.stepBtn}><Ionicons name="add" size={16} color={colors.textSecondary} /></Pressable>
+          <View style={styles.fieldValueRow}>
+            <Ionicons name="hourglass-outline" size={18} color={colors.textSecondary} style={styles.fieldIcon} />
+            <View style={styles.stepper}>
+              <Pressable onPress={() => stepDur(-15)} style={styles.stepBtn}><Ionicons name="remove" size={16} color={colors.textSecondary} /></Pressable>
+              <Text style={styles.stepValue}>{fmtDur(dur)}</Text>
+              <Pressable onPress={() => stepDur(15)} style={styles.stepBtn}><Ionicons name="add" size={16} color={colors.textSecondary} /></Pressable>
+            </View>
           </View>
         </View>
       )}
@@ -579,16 +665,50 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs,
   },
   fieldRow: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    paddingVertical: 7, minHeight: 34,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: 6,
+    marginHorizontal: -6,
+    gap: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
+  fieldRowOpen: { backgroundColor: colors.accentSoft, borderRadius: radius.sm, borderBottomColor: 'transparent' },
+  fieldValueRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 24 },
   fieldIcon: { width: 20, textAlign: 'center' },
-  fieldLabel: { ...typography.subhead, color: colors.textSecondary, width: 76, flexShrink: 0 },
-  fieldValue: { flex: 1, ...typography.subhead, color: colors.text, textAlign: 'right' },
+  fieldLabel: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
+  fieldValue: { flex: 1, ...typography.subhead, color: colors.text, textAlign: 'left' },
   fieldValueMuted: { color: colors.textTertiary },
   clearBtn: { ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  timeWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm },
+  timeWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  // Anchored popover (Priority dropdown / Date picker).
+  popBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' },
+  popCard: {
+    position: 'absolute',
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  menu: { paddingHorizontal: spacing.xs },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm + 1,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  menuIcon: { width: 22, textAlign: 'center' },
+  menuLabel: { flex: 1, ...typography.subhead, color: colors.text },
+  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginVertical: spacing.xs },
   timePill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separatorStrong,

@@ -19,6 +19,8 @@ const TasksContext = createContext(null);
 // saved payloads that predate a setting still get a sensible value on hydrate.
 const defaultSettings = {
   showCompleted: true, // show completed to-dos inside projects
+  keepCompletedInPlace: false, // leave completed to-dos in place vs. sinking them to the bottom
+  partialExpandCount: 10, // items a section shows in its partially-expanded state before "show more"
   centeredContent: false, // constrain the content pane to a centered column
   dayStartHour: 0, // first hour shown in Calendar Day/Week timelines (0 or 6)
   dateFormat: 'weekday-long', // absolute-date format for Calendar Day headers

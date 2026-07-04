@@ -23,6 +23,7 @@ import {
 } from '../store/selectors';
 import { relativeLabel, monthTitle, longLabel, todayKey, addDays, formatDayKey } from '../utils/date';
 import TaskRow from '../components/TaskRow';
+import SidebarToggle from '../components/SidebarToggle';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
@@ -57,15 +58,20 @@ function useSections(state, route) {
         (t) => t.status === STATUS.COMPLETED || t.status === STATUS.CANCELED
       );
       const showCompleted = state.settings?.showCompleted;
+      const keepInPlace = state.settings?.keepCompletedInPlace;
       const headings = state.headings
         .filter((h) => h.projectId === projectId)
         .sort(byOrder);
       const sections = [];
 
       const inHeading = (t, hid) => (hid ? t.headingId === hid : !t.headingId);
-      // A heading's rows: open (by manual order), then its completed tasks below
-      // them — a finished to-do stays under the heading it belonged to.
+      // A heading's rows: normally open (by manual order) then its completed
+      // tasks below; with "keep completed in place" on, a finished to-do stays at
+      // its manual position instead of sinking to the bottom of the heading.
       const sectionData = (hid) => {
+        if (showCompleted && keepInPlace) {
+          return tasks.filter((t) => inHeading(t, hid)).sort(byOrder);
+        }
         const rows = open.filter((t) => inHeading(t, hid)).sort(byOrder);
         if (showCompleted) {
           rows.push(...done.filter((t) => inHeading(t, hid)).sort(byOrder));
@@ -187,7 +193,7 @@ function useSections(state, route) {
 // Someday/undated tasks collect in a "No Date" section at the bottom. Each bucket
 // mirrors a heading: open to-dos first (by order), then completed below when the
 // setting is on, and a done/total count for the header pie.
-function groupByDate(tasks, showCompleted, dateFormat = 'weekday-long') {
+function groupByDate(tasks, showCompleted, dateFormat = 'weekday-long', keepInPlace = false) {
   const buckets = {}; // dateKey -> { open: [], done: [] }
   const noDate = { open: [], done: [] };
   const bucketFor = (key) => (buckets[key] = buckets[key] || { open: [], done: [] });
@@ -204,6 +210,7 @@ function groupByDate(tasks, showCompleted, dateFormat = 'weekday-long') {
   const make = (key, b) => {
     const open = b.open.slice().sort(byOrder);
     const done = b.done.slice().sort(byOrder);
+    const inPlace = b.open.concat(b.done).sort(byOrder);
     // Header follows the Display/settings date format; "Today"/"Tomorrow" keep
     // their relative word (the formatted date moves to the subtitle) and every
     // other day is just the formatted date (no redundant weekday + long label).
@@ -217,7 +224,7 @@ function groupByDate(tasks, showCompleted, dateFormat = 'weekday-long') {
       key: key === null ? 'no-date' : key,
       title,
       subtitle,
-      data: showCompleted ? [...open, ...done] : open,
+      data: showCompleted ? (keepInPlace ? inPlace : [...open, ...done]) : open,
       total: open.length + done.length,
       doneCount: done.length,
     };
@@ -264,11 +271,13 @@ function sortData(arr, sorting) {
 
 // Regroup a flat task list into { key, title, subtitle, data, total, doneCount }
 // sections for grouping modes other than the default heading "Section" view.
-function groupTasks(tasks, grouping, showCompleted, sorting, dateFormat) {
-  if (grouping === 'date') return groupByDate(tasks, showCompleted, dateFormat);
+function groupTasks(tasks, grouping, showCompleted, sorting, dateFormat, keepInPlace) {
+  if (grouping === 'date') return groupByDate(tasks, showCompleted, dateFormat, keepInPlace);
   const open = tasks.filter(isOpen);
   const done = tasks.filter((t) => !isOpen(t));
-  const src = showCompleted ? tasks : open;
+  // `tasks` is in manual order (completed interleaved). Keep-in-place preserves
+  // that; otherwise completed sink below the open ones.
+  const src = showCompleted ? (keepInPlace ? tasks : [...open, ...done]) : open;
   const section = (key, title, pred) => {
     const data = sortData(src.filter(pred), sorting);
     return {
@@ -365,7 +374,10 @@ export default function ListScreen({
   // values and scramble. A section key is 'h:<headingId>' or 'd:<dateKey>' (or a
   // smart-list section's own key), matching its item key.
   const [sectionMode, setSectionMode] = useState({});
-  const modeOf = (key) => sectionMode[key] || 'minimal';
+  // Today's Morning / This Evening default to fully expanded (show everything);
+  // every other section still defaults to the 10-item "minimal" state.
+  const modeOf = (key) =>
+    sectionMode[key] || (key === 'd:morning' || key === 'd:evening' ? 'full' : 'minimal');
   const setMode = (key, mode) => setSectionMode((m) => ({ ...m, [key]: mode }));
   // Tapping the header/chevron cycles through all three states:
   // collapsed → minimal → full → collapsed. A section with no overflow (≤10
@@ -387,13 +399,15 @@ export default function ListScreen({
   // the cycle handler.
   const hiddenBySection = {};
   const overflowSections = new Set();
+  // How many rows the "partially expanded" (minimal) state shows — configurable.
+  const partialCount = Math.max(1, state.settings?.partialExpandCount ?? MINIMAL_ITEMS);
   // Slice a section's rows for its current mode and record its hidden ids.
   const sliceSection = (key, data) => {
     const mode = modeOf(key);
-    const rows = mode === 'collapsed' ? [] : mode === 'full' ? data : data.slice(0, MINIMAL_ITEMS);
+    const rows = mode === 'collapsed' ? [] : mode === 'full' ? data : data.slice(0, partialCount);
     const hidden = data.slice(rows.length).map((t) => t.id);
     if (hidden.length) hiddenBySection[key] = hidden;
-    const overflow = data.length > MINIMAL_ITEMS;
+    const overflow = data.length > partialCount;
     if (overflow) overflowSections.add(key);
     const more =
       mode === 'minimal' && overflow ? { action: 'more', hidden: data.length - rows.length }
@@ -458,8 +472,8 @@ export default function ListScreen({
     if (!project0 || grouping === 'section') return null;
     let flat = selectProjectTasks(state.tasks, project0.id).filter((tk) => !tk.parentId);
     if (hasFilter) flat = flat.filter(taskFilter);
-    return groupTasks(flat, grouping, state.settings?.showCompleted, sorting, dateFormat);
-  }, [project0, grouping, state.tasks, hasFilter, taskFilter, sorting, state.settings?.showCompleted, dateFormat]);
+    return groupTasks(flat, grouping, state.settings?.showCompleted, sorting, dateFormat, state.settings?.keepCompletedInPlace);
+  }, [project0, grouping, state.tasks, hasFilter, taskFilter, sorting, state.settings?.showCompleted, dateFormat, state.settings?.keepCompletedInPlace]);
   const projectLabels = useMemo(
     () => (project0 ? [...new Set(selectProjectTasks(state.tasks, project0.id).flatMap((tk) => tk.tags || []))].sort() : []),
     [project0, state.tasks]
@@ -533,7 +547,8 @@ export default function ListScreen({
       ? groupByDate(
           selectProjectTasks(state.tasks, project.id).filter(hasFilter ? taskFilter : () => true),
           state.settings?.showCompleted,
-          dateFormat
+          dateFormat,
+          state.settings?.keepCompletedInPlace
         )
       : [];
 
@@ -783,30 +798,41 @@ export default function ListScreen({
   // to-dos and a "This Evening" divider below, so tasks can be dragged across.
   // Both slots are always present (an empty-drop placeholder when they have no
   // tasks) so tasks can be moved into either.
-  const MORNING_DIVIDER = 'morning-divider';
-  const EVENING_DIVIDER = 'evening-divider';
+  // The two slots reuse the three-state collapse infra (keys 'd:morning' /
+  // 'd:evening'), so their headers collapse/expand like every other section.
+  const MORNING_DIVIDER = 'd:morning';
+  const EVENING_DIVIDER = 'd:evening';
   let todayItems = null;
   if (listId === 'today') {
     const dayData = sections.find((s) => s.key === 'today')?.data || [];
     const eveningData = sections.find((s) => s.key === 'evening')?.data || [];
+    const morning = sliceSection(MORNING_DIVIDER, dayData);
+    const eve = sliceSection(EVENING_DIVIDER, eveningData);
+    const slot = (dividerKey, key, title, icon, sliced, data) => {
+      const out = [
+        { key, kind: 'divider', dividerKey, title, icon, collapsible: true, collapsed: sliced.collapsed, chevron: sliced.chevron },
+        ...sliced.rows.map((t) => ({ key: t.id, kind: 'task', task: t })),
+      ];
+      if (sliced.more) {
+        out.push({ key: `more:${key}`, kind: 'more', sectionKey: key, action: sliced.more.action, hidden: sliced.more.hidden });
+      } else if (!sliced.collapsed && data.length === 0) {
+        out.push({ key: `${dividerKey}-empty`, kind: 'emptyslot', label: 'No tasks yet' });
+      }
+      return out;
+    };
     todayItems = [
-      { key: MORNING_DIVIDER, kind: 'divider', title: 'Morning', icon: 'sunny-outline' },
-      ...dayData.map((t) => ({ key: t.id, kind: 'task', task: t })),
+      ...slot('morning', MORNING_DIVIDER, 'Morning', 'sunny-outline', morning, dayData),
+      ...slot('evening', EVENING_DIVIDER, 'This Evening', 'moon', eve, eveningData),
     ];
-    if (dayData.length === 0) {
-      todayItems.push({ key: 'morning-empty', kind: 'emptyslot', label: 'No tasks yet' });
-    }
-    todayItems.push({ key: EVENING_DIVIDER, kind: 'divider', title: 'This Evening', icon: 'moon' });
-    todayItems.push(...eveningData.map((t) => ({ key: t.id, kind: 'task', task: t })));
-    if (eveningData.length === 0) {
-      todayItems.push({ key: 'evening-empty', kind: 'emptyslot', label: 'No tasks yet' });
-    }
   }
 
   // Commit a Today reorder: tasks below the Evening divider become "This
   // Evening" (when = EVENING); tasks above (under Morning) revert to Today; then
   // persist the order.
-  const commitTodayLayout = (keys) => {
+  const commitTodayLayout = (rawKeys) => {
+    // Fold any collapsed/overflow-hidden rows back in after their divider so the
+    // committed order still covers every task.
+    const keys = reinsertHidden(rawKeys);
     const dividerIdx = keys.indexOf(EVENING_DIVIDER);
     const orderedIds = [];
     keys.forEach((k, i) => {
@@ -826,13 +852,13 @@ export default function ListScreen({
   const navBar = (
     <View style={styles.navBar}>
       {embedded ? (
-        <Pressable hitSlop={10} onPress={onToggleSidebar} style={styles.back}>
-          <Ionicons
-            name={sidebarVisible ? 'chevron-back' : 'menu'}
-            size={26}
-            color={colors.accent}
-          />
-        </Pressable>
+        // The collapse control now lives in the sidebar header; the detail pane
+        // only needs a reopen affordance while the sidebar is hidden.
+        sidebarVisible ? (
+          <View style={styles.back} />
+        ) : (
+          <SidebarToggle onPress={onToggleSidebar} color={colors.accent} style={styles.back} />
+        )
       ) : (
         <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
           <Ionicons name="chevron-back" size={26} color={colors.accent} />
@@ -1186,6 +1212,8 @@ export default function ListScreen({
             showProject
             onOpenTask={setOpenTaskId}
             onCommitKeys={commitTodayLayout}
+            onToggleDivider={onDividerToggle}
+            onToggleMore={onToggleMore}
             stickyScrollY={scrollY}
             stickyOffsetY={listOffsetY}
             onStickyHeaderChange={setStickyHeader}

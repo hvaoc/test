@@ -35,7 +35,12 @@ export default function SplitView() {
       <View style={styles.root}>
         {!collapsed && (
           <View style={styles.sidebar}>
-            <HomeScreen navigation={sidebarNav} embedded selectedKey={key} />
+            <HomeScreen
+              navigation={sidebarNav}
+              embedded
+              selectedKey={key}
+              onToggleSidebar={toggleSidebar}
+            />
           </View>
         )}
         <View style={styles.detail}>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,15 @@ import { colors, spacing, typography, radius } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { useIsWide } from '../navigation/responsive';
 import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
+import {
+  getZoom,
+  setZoom,
+  subscribeZoom,
+  ZOOM_STEP,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_DEFAULT,
+} from '../utils/zoom';
 
 // Curated IANA timezones ('' = the device's local zone).
 const TIMEZONES = [
@@ -78,6 +87,65 @@ function Toggle({ value, onValueChange }) {
       trackColor={{ true: colors.accent, false: colors.separatorStrong }}
       ios_backgroundColor={colors.separatorStrong}
     />
+  );
+}
+
+// A numeric stepper: −/+ around an editable value. Lets the user set any count
+// (clamped to [min, max]) either by tapping or typing.
+function Stepper({ value, onChange, min = 1, max = 99, step = 1 }) {
+  const [text, setText] = useState(String(value));
+  React.useEffect(() => { setText(String(value)); }, [value]);
+  const clamp = (n) => Math.max(min, Math.min(max, n));
+  const set = (n) => { const c = clamp(n); onChange(c); setText(String(c)); };
+  const commit = () => {
+    const n = parseInt(text, 10);
+    set(Number.isFinite(n) ? n : value);
+  };
+  return (
+    <View style={styles.stepper}>
+      <Pressable onPress={() => set(value - step)} hitSlop={6} style={styles.stepBtn}>
+        <Ionicons name="remove" size={18} color={value <= min ? colors.separatorStrong : colors.textSecondary} />
+      </Pressable>
+      <TextInput
+        style={styles.stepValue}
+        value={text}
+        onChangeText={(t) => setText(t.replace(/[^0-9]/g, ''))}
+        onBlur={commit}
+        onSubmitEditing={commit}
+        keyboardType="number-pad"
+        inputMode="numeric"
+        maxLength={3}
+        returnKeyType="done"
+        selectTextOnFocus
+      />
+      <Pressable onPress={() => set(value + step)} hitSlop={6} style={styles.stepBtn}>
+        <Ionicons name="add" size={18} color={value >= max ? colors.separatorStrong : colors.textSecondary} />
+      </Pressable>
+    </View>
+  );
+}
+
+// App zoom control: −/+ percentage stepper plus a Reset-to-100% button. Reads
+// and writes the shared zoom module, and reflects keyboard/menu zooming live.
+function ZoomControl() {
+  const [zoom, setZoomState] = useState(() => getZoom());
+  useEffect(() => subscribeZoom(setZoomState), []);
+  const atDefault = Math.abs(zoom - ZOOM_DEFAULT) < 0.001;
+  return (
+    <View style={styles.zoomRow}>
+      <View style={styles.stepper}>
+        <Pressable onPress={() => setZoom(zoom - ZOOM_STEP)} hitSlop={6} style={styles.stepBtn}>
+          <Ionicons name="remove" size={18} color={zoom <= ZOOM_MIN ? colors.separatorStrong : colors.textSecondary} />
+        </Pressable>
+        <Text style={styles.stepValue}>{Math.round(zoom * 100)}%</Text>
+        <Pressable onPress={() => setZoom(zoom + ZOOM_STEP)} hitSlop={6} style={styles.stepBtn}>
+          <Ionicons name="add" size={18} color={zoom >= ZOOM_MAX ? colors.separatorStrong : colors.textSecondary} />
+        </Pressable>
+      </View>
+      <Pressable onPress={() => setZoom(ZOOM_DEFAULT)} disabled={atDefault} style={styles.zoomReset} hitSlop={6}>
+        <Text style={[styles.zoomResetText, atDefault && styles.zoomResetTextOff]}>Reset</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -295,12 +363,37 @@ function GeneralSection({ settings, setSetting }) {
         <Toggle value={settings.showCompleted} onValueChange={(v) => setSetting('showCompleted', v)} />
       </Field>
       <Field
+        label="Keep completed in place"
+        hint="Leave finished to-dos at their position instead of moving them to the bottom of the list."
+      >
+        <Toggle value={settings.keepCompletedInPlace} onValueChange={(v) => setSetting('keepCompletedInPlace', v)} />
+      </Field>
+      <Field
+        label="Partially expanded count"
+        hint='How many to-dos a section shows in its partially-expanded state before a "show more" row.'
+      >
+        <Stepper
+          value={settings.partialExpandCount ?? 10}
+          onChange={(v) => setSetting('partialExpandCount', v)}
+          min={1}
+          max={99}
+        />
+      </Field>
+      <Field
         label="Center content"
         hint="Constrain lists and projects to a centered column instead of the full width."
-        last
       >
         <Toggle value={settings.centeredContent} onValueChange={(v) => setSetting('centeredContent', v)} />
       </Field>
+      {Platform.OS === 'web' && (
+        <Field
+          label="Zoom"
+          hint="Scale the whole app. Also adjustable with ⌘+ / ⌘- / ⌘0 (or the View menu on desktop)."
+          last
+        >
+          <ZoomControl />
+        </Field>
+      )}
 
       <Field label="Date format" hint="Used for the date headers in the Calendar Day view.">
         <Select
@@ -731,6 +824,40 @@ const styles = StyleSheet.create({
   value: { ...typography.body, color: colors.text, marginTop: 4 },
   bigValue: { ...typography.title, color: colors.text, marginTop: 2 },
   hr: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginVertical: spacing.lg },
+
+  // --- Stepper ---
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: colors.background,
+  },
+  stepBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  stepValue: {
+    minWidth: 44,
+    textAlign: 'center',
+    ...typography.body,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
+    paddingVertical: 4,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+  },
+
+  // --- Zoom ---
+  zoomRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  zoomReset: { paddingVertical: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
+  zoomResetText: { ...typography.subhead, color: colors.accent, fontWeight: '600' },
+  zoomResetTextOff: { color: colors.textTertiary, fontWeight: '400' },
 
   // --- Segment ---
   segment: { flexDirection: 'row', backgroundColor: colors.separator, borderRadius: 8, padding: 2, gap: 2 },

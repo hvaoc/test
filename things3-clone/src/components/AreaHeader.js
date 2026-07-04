@@ -5,7 +5,6 @@ import {
   TextInput,
   Pressable,
   StyleSheet,
-  Alert,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,26 +16,8 @@ import EmojiPicker from './EmojiPicker';
 // feels identical: tap the icon to change its emoji and color, edit the title
 // inline, and delete. (Areas have no notes/progress in the data model.)
 export default function AreaHeader({ area, navigation }) {
-  const { updateArea, deleteArea } = useTasks();
+  const { updateArea } = useTasks();
   const [pickerOpen, setPickerOpen] = useState(false);
-
-  const confirmDelete = () => {
-    Alert.alert(
-      'Delete Area',
-      `Delete "${area.name}"? Its projects and to-dos will be kept (moved out of the area).`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteArea(area.id);
-            navigation.goBack();
-          },
-        },
-      ]
-    );
-  };
 
   return (
     <View style={styles.wrap}>
@@ -57,13 +38,6 @@ export default function AreaHeader({ area, navigation }) {
           placeholder="Area name"
           placeholderTextColor={colors.placeholder}
         />
-      </View>
-
-      <View style={styles.actions}>
-        <Pressable style={styles.actionBtn} onPress={confirmDelete}>
-          <Ionicons name="trash-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionText}>Delete</Text>
-        </Pressable>
       </View>
 
       <EmojiPicker
@@ -96,12 +70,4 @@ const styles = StyleSheet.create({
   },
   emojiText: { fontSize: 26, color: colors.text, textAlign: 'center' },
   title: { flex: 1, ...typography.largeTitle, fontSize: 28, color: colors.text, padding: 0 },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-    marginTop: spacing.md,
-    marginLeft: 34,
-  },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionText: { ...typography.subhead, color: colors.textSecondary },
 });

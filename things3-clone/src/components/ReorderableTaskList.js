@@ -331,6 +331,7 @@ function DividerRow({
           style={{ transform: [{ rotate: chevronRotate(chevron ?? (collapsed ? 'collapsed' : 'full')) }] }}
         />
       </View>
+      {icon && <Ionicons name={icon} size={15} color={colors.textTertiary} style={styles.dividerLeadIcon} />}
       <View style={styles.dividerTitleWrap}>
         <Text style={styles.dividerTitle}>{title}</Text>
         {subtitle ? <Text style={styles.dividerSubtitle}>{subtitle}</Text> : null}
@@ -1244,6 +1245,7 @@ const styles = StyleSheet.create({
   // On mobile (no grip gutter) a collapsible date header still needs the same
   // left inset the grip would otherwise provide.
   dividerRowInset: { paddingLeft: spacing.lg },
+  dividerLeadIcon: { marginRight: 6 },
   dividerTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'baseline' },
   dividerSubtitle: { ...typography.subhead, color: colors.textTertiary, marginLeft: spacing.sm },
   // Pie + done/total pushed to the right edge of a date divider (mirrors the

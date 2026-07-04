@@ -149,6 +149,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.xs,
+    // Gap between sections. Margin (not padding) keeps the pinned header compact
+    // while separating a section from the one above it in the scroll.
+    marginTop: spacing.lg,
     // Opaque so tasks scroll *under* the pinned header, not through it.
     backgroundColor: colors.background,
     borderBottomWidth: StyleSheet.hairlineWidth,

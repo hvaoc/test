@@ -5,10 +5,8 @@ import {
   TextInput,
   Pressable,
   StyleSheet,
-  Alert,
   Platform,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { selectProjectTasks, isOpen } from '../store/selectors';
@@ -19,27 +17,13 @@ import EmojiPicker from './EmojiPicker';
 // Delete action. Scheduling/priority/etc. live on the individual tasks; adding
 // a section is done inline in the project body.
 export default function ProjectHeader({ project, navigation }) {
-  const { state, updateProject, deleteProject } = useTasks();
+  const { state, updateProject } = useTasks();
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const tasks = selectProjectTasks(state.tasks, project.id);
   const total = tasks.length;
   const done = tasks.filter((t) => !isOpen(t)).length;
   const progress = total ? done / total : 0;
-
-  const confirmDelete = () => {
-    Alert.alert('Delete Project', `Delete "${project.name}"? Its to-dos will move to your Inbox.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          deleteProject(project.id);
-          navigation.goBack();
-        },
-      },
-    ]);
-  };
 
   return (
     <View style={styles.wrap}>
@@ -76,13 +60,6 @@ export default function ProjectHeader({ project, navigation }) {
         placeholderTextColor={colors.placeholder}
         multiline
       />
-
-      <View style={styles.actions}>
-        <Pressable style={styles.actionBtn} onPress={confirmDelete}>
-          <Ionicons name="trash-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionText}>Delete</Text>
-        </Pressable>
-      </View>
 
       <EmojiPicker
         visible={pickerOpen}
@@ -124,12 +101,4 @@ const styles = StyleSheet.create({
     marginLeft: 34,
     padding: 0,
   },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-    marginTop: spacing.md,
-    marginLeft: 34,
-  },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionText: { ...typography.subhead, color: colors.textSecondary },
 });
