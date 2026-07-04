@@ -843,6 +843,93 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
   );
 }
 
+// Tracks which section the top-of-screen row belongs to and reports it upward,
+// so the page can render a *fixed* sticky header bar OUTSIDE the scroll view.
+//
+// The reorder surface is one tall block of absolutely-positioned rows inside the
+// page ScrollView, so a FlatList/CSS sticky header can't be used here. An
+// earlier version floated a bar *inside* the scroll and JS-compensated its top
+// against the scroll offset every frame — which visibly tears when you scroll
+// faster than the JS handler updates. Instead this component only *computes* the
+// active section (from the SAME measured row heights the drag engine tracks) and
+// hands it to ListScreen, which draws a bar that never scrolls, so nothing can
+// tear. Purely passive: it renders nothing and never touches the drag state.
+//
+// It needs, from the page ScrollView: `scrollY` (shared value of the scroll
+// offset) and `listOffsetY` (shared value of this list's top within the scroll
+// content). The viewport top in this list's coordinates is `scrollY -
+// listOffsetY`; the active header is the last one at or above it. Reports null
+// while dragging (heights are in flux) and before the first header reaches top.
+function StickyHeaderTracker({ items, ctx, scrollY, listOffsetY, onChange }) {
+  const { heights, dragging } = ctx;
+  const headers = React.useMemo(
+    () =>
+      items
+        .filter((it) => it.kind === 'heading' || (it.kind === 'divider' && it.title))
+        .map((it) => ({
+          key: it.key,
+          kind: it.kind,
+          title: it.title,
+          subtitle: it.subtitle,
+          icon: it.icon,
+          color: it.color,
+          done: it.done,
+          total: it.total,
+          collapsible: it.kind === 'heading' || it.collapsible,
+          collapsed: it.collapsed,
+          headingId: it.headingId,
+          dividerKey: it.dividerKey,
+        })),
+    [items]
+  );
+  const order = React.useMemo(() => items.map((it) => it.key), [items]);
+  const headerIndexByKey = React.useMemo(() => {
+    const m = {};
+    headers.forEach((h, idx) => { m[h.key] = idx; });
+    return m;
+  }, [headers]);
+
+  // Always report against the latest headers, even if the reaction closure is
+  // one render stale.
+  const headersRef = React.useRef(headers);
+  headersRef.current = headers;
+  const lastActive = useSharedValue(-1);
+  const report = React.useCallback(
+    (idx) => onChange(idx >= 0 ? headersRef.current[idx] : null),
+    [onChange]
+  );
+
+  useAnimatedReaction(
+    () => scrollY.value - listOffsetY.value,
+    (viewTop) => {
+      if (dragging.value || headers.length === 0 || viewTop < 0) {
+        if (lastActive.value !== -1) { lastActive.value = -1; runOnJS(report)(-1); }
+        return;
+      }
+      // Walk rows in order, summing heights, tracking the last header whose top
+      // is at or above the viewport top.
+      let acc = 0;
+      let active = -1;
+      for (let i = 0; i < order.length; i++) {
+        const k = order[i];
+        const hIdx = headerIndexByKey[k];
+        if (hIdx !== undefined) {
+          if (acc <= viewTop + 0.5) active = hIdx;
+          else break; // later headers are further down — nothing more to find
+        }
+        acc += heights.value[k] ?? FALLBACK_H;
+      }
+      if (active !== lastActive.value) { lastActive.value = active; runOnJS(report)(active); }
+    },
+    [order, headerIndexByKey, headers.length]
+  );
+
+  // Clear the bar when this list unmounts (e.g. switching to a non-drag view).
+  React.useEffect(() => () => onChange(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null;
+}
+
 // A drop-target placeholder for the item being dragged: a faint slot with a
 // red insertion line + dot at its top, marking where the row will land. Only
 // shown for single-task drags (activeId set); block/heading drags skip it.
@@ -887,6 +974,13 @@ export default function ReorderableTaskList({
   onAddTask,
   onAddSection,
   onEditSection,
+  // Optional sticky section headers: the page ScrollView's scroll offset and
+  // this list's top within the scroll content (both shared values), plus a
+  // callback that receives the active section header (or null). When all are
+  // supplied, ListScreen draws a fixed sticky bar from what this reports.
+  stickyScrollY,
+  stickyOffsetY,
+  onStickyHeaderChange,
 }) {
   // Non-mobile (iPad / web / desktop): drag from an explicit handle.
   const showHandle = useIsWide();
@@ -940,6 +1034,15 @@ export default function ReorderableTaskList({
 
   return (
     <Animated.View style={containerStyle}>
+      {stickyScrollY && stickyOffsetY && onStickyHeaderChange && (
+        <StickyHeaderTracker
+          items={items}
+          ctx={ctx}
+          scrollY={stickyScrollY}
+          listOffsetY={stickyOffsetY}
+          onChange={onStickyHeaderChange}
+        />
+      )}
       <DropIndicator ctx={ctx} overSidebar={drag?.overSidebar} />
       {items.map((item) =>
         item.kind === 'addtask' ? (

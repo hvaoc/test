@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { FlatList, View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
@@ -21,8 +21,22 @@ export default function VirtualTaskList({
   onToggleDivider, // (dividerKey)
   onAddTask, // (headingId)
 }) {
+  // The page title rides as the first (non-sticky) row instead of
+  // ListHeaderComponent, so the section headers (headings + titled dividers) can
+  // be sticky by plain data index — the same technique the calendar views use.
+  const { data, stickyIndices } = useMemo(() => {
+    const rows = header ? [{ kind: '__title', key: '__title__' }] : [];
+    const sticky = [];
+    items.forEach((it) => {
+      if (it.kind === 'heading' || (it.kind === 'divider' && it.title)) sticky.push(rows.length);
+      rows.push(it);
+    });
+    return { data: rows, stickyIndices: sticky };
+  }, [items, header]);
+
   const renderItem = useCallback(
     ({ item }) => {
+      if (item.kind === '__title') return header || null;
       if (item.kind === 'task') {
         return (
           <TaskRow
@@ -102,16 +116,16 @@ export default function VirtualTaskList({
       }
       return null; // addsection etc. omitted in the virtualized list
     },
-    [onOpenTask, showProject, inProject, onToggleExpand, onToggleCollapse, onToggleDivider, onAddTask]
+    [header, onOpenTask, showProject, inProject, onToggleExpand, onToggleCollapse, onToggleDivider, onAddTask]
   );
 
   return (
     <FlatList
       style={styles.list}
-      data={items}
+      data={data}
       keyExtractor={(item) => item.key}
       renderItem={renderItem}
-      ListHeaderComponent={header}
+      stickyHeaderIndices={stickyIndices}
       keyboardShouldPersistTaps="handled"
       // Windowing: keep the DOM small regardless of list length.
       initialNumToRender={24}
@@ -133,6 +147,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xs,
+    // Opaque so rows scroll *under* the pinned (sticky) header.
+    backgroundColor: colors.background,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   headingText: { flex: 1, ...typography.heading, color: colors.text },
@@ -145,6 +161,8 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.separator,
+    // Opaque so rows scroll *under* the pinned (sticky) divider.
+    backgroundColor: colors.background,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   dividerText: { ...typography.heading, color: colors.text },

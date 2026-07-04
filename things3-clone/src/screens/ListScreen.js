@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useLayoutEffect } from 'react';
+import React, { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSharedValue } from 'react-native-reanimated';
 import { colors, spacing, typography, radius } from '../theme';
 import { SMART_LIST_MAP, WHEN, STATUS } from '../store/constants';
 import { useTasks, newTask } from '../store/TasksContext';
@@ -27,11 +28,13 @@ import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
 import AreaHeader from '../components/AreaHeader';
 import ReorderableTaskList from '../components/ReorderableTaskList';
+import ProgressPie from '../components/ProgressPie';
 import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
 import GanttView from '../components/GanttView';
 import DisplayMenu from '../components/DisplayMenu';
 import VirtualTaskList from '../components/VirtualTaskList';
+import StickyTaskSections from '../components/StickyTaskSections';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
 
@@ -295,6 +298,24 @@ export default function ListScreen({
   sidebarVisible,
 }) {
   const insets = useSafeAreaInsets();
+  // Sticky headers for the drag lists: track the page scroll offset and this
+  // list's top within the scroll content, both fed to ReorderableTaskList's
+  // floating header overlay.
+  const scrollY = useSharedValue(0);
+  // Starts as a large "not yet measured" sentinel so the sticky bar stays hidden
+  // (viewTop = scrollY - listOffsetY is hugely negative) until the list's
+  // onLayout reports its real top — otherwise the first header flashes over the
+  // title on the first frame. Re-armed on every view change (see below).
+  const listOffsetY = useSharedValue(1e6);
+  // Plain (non-worklet) scroll handler: writing the shared value from JS drives
+  // the sticky-header overlay's reaction reliably on web, where reanimated's
+  // useAnimatedScrollHandler can miss/lag scroll events.
+  const onScroll = (e) => {
+    scrollY.value = e.nativeEvent.contentOffset.y;
+  };
+  // The active section for the fixed sticky-header bar (drag lists report it up
+  // via StickyHeaderTracker). Drawn OUTSIDE the scroll view so it never tears.
+  const [stickyHeader, setStickyHeader] = useState(null);
   const { listId, projectId, areaId, title } = route.params || {};
   const {
     state,
@@ -380,6 +401,18 @@ export default function ListScreen({
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
+  // On a view change, synchronously (during render, before the new list paints)
+  // hide the sticky bar and re-arm the offset sentinel, so it can't flash the
+  // previous header or the new list's first header before onLayout re-measures.
+  const viewKey = `${listId}|${projectId}|${areaId}|${projectView}|${grouping}`;
+  const prevViewKeyRef = useRef(viewKey);
+  if (prevViewKeyRef.current !== viewKey) {
+    prevViewKeyRef.current = viewKey;
+    scrollY.value = 0;
+    listOffsetY.value = 1e6;
+    setStickyHeader(null);
+  }
+
   const totalTasks = sections.reduce((n, s) => n + s.data.length, 0);
   const isEmpty = totalTasks === 0;
 
@@ -408,8 +441,11 @@ export default function ListScreen({
   const REORDERABLE_LISTS = ['inbox', 'today', 'anytime', 'someday'];
   const listReorderable = REORDERABLE_LISTS.includes(listId);
 
+  // The nav bar now sits fixed above the scroll (so sticky section headers can
+  // pin to the very top), and the container owns the top safe-area inset — so
+  // the scroll content only needs a small top gap.
   const contentPad = {
-    paddingTop: insets.top + spacing.sm,
+    paddingTop: spacing.sm,
     paddingBottom: insets.bottom + 100,
   };
 
@@ -493,6 +529,9 @@ export default function ListScreen({
         onOpenTask={setOpenTaskId}
         onCommitKeys={commitDateLayout}
         onToggleDivider={toggleDate}
+        stickyScrollY={scrollY}
+        stickyOffsetY={listOffsetY}
+        onStickyHeaderChange={setStickyHeader}
       />
     );
   };
@@ -513,6 +552,9 @@ export default function ListScreen({
         onOpenTask={setOpenTaskId}
         onCommitKeys={onCommit}
         onToggleDivider={toggleDate}
+        stickyScrollY={scrollY}
+        stickyOffsetY={listOffsetY}
+        onStickyHeaderChange={setStickyHeader}
       />
     );
   };
@@ -801,6 +843,44 @@ export default function ListScreen({
     );
   }
 
+  // Plain, non-drag multi-section lists — an Area's Today/Upcoming/Overdue
+  // roll-up and the Logbook's by-month groups (plus Overdue/Trash) — render in a
+  // SectionList so each group header STAYS PINNED to the top while you scroll its
+  // tasks, then gets pushed up by the next group's header. These lists aren't
+  // drag-reorderable, so a SectionList (virtualized + sticky) is the clean fit;
+  // the drag surfaces (project/Today/Upcoming) keep their own layout.
+  // StickyTaskSections is a windowed FlatList (the calendar-views technique), so
+  // it scales to any length — no row cap needed.
+  const useStickySections =
+    !project && !listReorderable && listId !== 'upcoming' && !isEmpty;
+  if (useStickySections) {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        {navBar}
+        <StickyTaskSections
+          sections={sections}
+          header={
+            <View style={[styles.contentCol, centered && styles.contentColCentered]}>
+              {titleHeader}
+            </View>
+          }
+          showProject
+          onOpenTask={setOpenTaskId}
+          contentPadding={{ paddingBottom: insets.bottom + 100 }}
+        />
+        {listId !== 'logbook' && listId !== 'trash' && !areaId && (
+          <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
+        )}
+        <TaskDetailModal
+          visible={!!openTaskId}
+          taskId={openTaskId}
+          onClose={() => setOpenTaskId(null)}
+          onOpenTask={setOpenTaskId}
+        />
+      </View>
+    );
+  }
+
   // Flat items for whichever non-full-pane list surface is active, so any of
   // them can fall back to a virtualized (windowed) list. Only rows near the
   // viewport stay in the DOM, so every list scales to any number of tasks.
@@ -867,11 +947,19 @@ export default function ListScreen({
   }
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={contentPad} keyboardShouldPersistTaps="handled">
-        {navBar}
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {navBar}
+      <ScrollView
+        contentContainerStyle={contentPad}
+        keyboardShouldPersistTaps="handled"
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+      >
         <View style={[styles.contentCol, centered && styles.contentColCentered]}>
         {titleHeader}
+        {/* Measure the list surface's top within the scroll content so the drag
+            lists' sticky header overlay knows where the sections begin. */}
+        <View onLayout={(e) => { listOffsetY.value = spacing.sm + e.nativeEvent.layout.y; }}>
         {project ? (
           projectView === 'board' ? (
             // Board view: Kanban with user-changeable grouping/sort and cards
@@ -928,6 +1016,9 @@ export default function ListScreen({
               onAddTask={handleAddInSection}
               onAddSection={handleAddSectionAfter}
               onEditSection={setEditSectionId}
+              stickyScrollY={scrollY}
+              stickyOffsetY={listOffsetY}
+              onStickyHeaderChange={setStickyHeader}
             />
           )
         ) : isEmpty ? (
@@ -946,6 +1037,9 @@ export default function ListScreen({
             showProject
             onOpenTask={setOpenTaskId}
             onCommitKeys={commitTodayLayout}
+            stickyScrollY={scrollY}
+            stickyOffsetY={listOffsetY}
+            onStickyHeaderChange={setStickyHeader}
           />
         ) : (
           sections.map((section) =>
@@ -969,7 +1063,56 @@ export default function ListScreen({
           )
         )}
         </View>
+        </View>
       </ScrollView>
+
+      {/* Fixed sticky section header for the drag lists. Drawn OUTSIDE the scroll
+          view (pinned just under the nav bar) so it never lags or tears when
+          scrolling fast — StickyHeaderTracker only tells it which section to show. */}
+      {stickyHeader && (
+        <Pressable
+          style={styles.stickyBar}
+          onPress={() => {
+            if (stickyHeader.kind === 'heading') toggleHeadingCollapsed(stickyHeader.headingId);
+            else if (stickyHeader.collapsible) toggleDate(stickyHeader.dividerKey);
+          }}
+        >
+          {stickyHeader.collapsible ? (
+            <View style={styles.stickyChevron}>
+              <Ionicons
+                name={stickyHeader.collapsed ? 'chevron-forward' : 'chevron-down'}
+                size={16}
+                color={colors.textSecondary}
+              />
+            </View>
+          ) : stickyHeader.icon ? (
+            <Ionicons
+              name={stickyHeader.icon}
+              size={15}
+              color={colors.textTertiary}
+              style={{ marginRight: spacing.md }}
+            />
+          ) : null}
+          <View style={styles.stickyTitleWrap}>
+            <Text style={styles.stickyBarTitle} numberOfLines={1}>{stickyHeader.title}</Text>
+            {stickyHeader.subtitle ? (
+              <Text style={styles.stickyBarSubtitle} numberOfLines={1}>{stickyHeader.subtitle}</Text>
+            ) : null}
+          </View>
+          {stickyHeader.total > 0 && (
+            <View style={styles.stickyBarProgress}>
+              <Text style={styles.stickyBarCount}>
+                {stickyHeader.done}/{stickyHeader.total}
+              </Text>
+              <ProgressPie
+                progress={stickyHeader.total ? stickyHeader.done / stickyHeader.total : 0}
+                color={stickyHeader.color || colors.accent}
+                size={14}
+              />
+            </View>
+          )}
+        </Pressable>
+      )}
 
       {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
         <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
@@ -1106,6 +1249,40 @@ function EmptyState({ listId }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  // Fixed sticky section-header bar for the drag lists. Pinned just under the
+  // 36px nav bar (absolute `top` is measured from the container's padding box,
+  // which already starts below the top safe-area inset).
+  stickyBar: {
+    position: 'absolute',
+    top: 36,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+    backgroundColor: colors.background,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
+    zIndex: 20,
+    ...Platform.select({
+      web: { boxShadow: '0 2px 4px rgba(0,0,0,0.05)' },
+      default: {
+        shadowColor: '#000',
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        shadowOffset: { width: 0, height: 1 },
+        elevation: 2,
+      },
+    }),
+  },
+  stickyChevron: { paddingRight: spacing.sm },
+  stickyTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'baseline' },
+  stickyBarTitle: { ...typography.heading, color: colors.text },
+  stickyBarSubtitle: { ...typography.subhead, color: colors.textTertiary, marginLeft: spacing.sm },
+  stickyBarProgress: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  stickyBarCount: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
   contentCol: { width: '100%' },
   contentColCentered: { maxWidth: 1280, alignSelf: 'center' },
   fillCol: { flex: 1, width: '100%' },
