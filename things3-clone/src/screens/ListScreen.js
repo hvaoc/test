@@ -367,13 +367,26 @@ export default function ListScreen({
   const [sectionMode, setSectionMode] = useState({});
   const modeOf = (key) => sectionMode[key] || 'minimal';
   const setMode = (key, mode) => setSectionMode((m) => ({ ...m, [key]: mode }));
-  // Header tap toggles collapsed ↔ minimal; the more/less row jumps to/from full.
-  const toggleSectionMode = (key) => setMode(key, modeOf(key) === 'collapsed' ? 'minimal' : 'collapsed');
+  // Tapping the header/chevron cycles through all three states:
+  // collapsed → minimal → full → collapsed. A section with no overflow (≤10
+  // items) has no distinct minimal state, so it cycles collapsed ↔ shown.
+  const cycleSection = (key) => {
+    const mode = modeOf(key);
+    const hasOverflow = overflowSections.has(key);
+    const next =
+      mode === 'collapsed' ? 'minimal'
+      : mode === 'minimal' ? (hasOverflow ? 'full' : 'collapsed')
+      : 'collapsed';
+    setMode(key, next);
+  };
+  // The more/less row is a direct shortcut between minimal and full.
   const onToggleMore = (key, action) => setMode(key, action === 'more' ? 'full' : 'minimal');
-  const onDividerToggle = (dividerKey) => toggleSectionMode(`d:${dividerKey}`);
-  const onHeadingToggle = (headingId) => toggleSectionMode(`h:${headingId}`);
-  // Populated during item-building each render; read by the commit wrappers.
+  const onDividerToggle = (dividerKey) => cycleSection(`d:${dividerKey}`);
+  const onHeadingToggle = (headingId) => cycleSection(`h:${headingId}`);
+  // Populated during item-building each render; read by the commit wrappers /
+  // the cycle handler.
   const hiddenBySection = {};
+  const overflowSections = new Set();
   // Slice a section's rows for its current mode and record its hidden ids.
   const sliceSection = (key, data) => {
     const mode = modeOf(key);
@@ -381,6 +394,7 @@ export default function ListScreen({
     const hidden = data.slice(rows.length).map((t) => t.id);
     if (hidden.length) hiddenBySection[key] = hidden;
     const overflow = data.length > MINIMAL_ITEMS;
+    if (overflow) overflowSections.add(key);
     const more =
       mode === 'minimal' && overflow ? { action: 'more', hidden: data.length - rows.length }
       : mode === 'full' && overflow ? { action: 'less' }
@@ -951,7 +965,7 @@ export default function ListScreen({
           }
           showProject
           onOpenTask={setOpenTaskId}
-          onToggleSection={toggleSectionMode}
+          onToggleSection={cycleSection}
           onToggleMore={onToggleMore}
           contentPadding={{ paddingBottom: insets.bottom + 100 }}
         />
