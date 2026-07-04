@@ -24,6 +24,9 @@ const defaultSettings = {
   dateFormat: 'weekday-long', // absolute-date format for Calendar Day headers
   showWeekends: false, // include Sat/Sun in the Calendar Week view
   timezone: '', // IANA zone for "now"/"today"; '' = device local
+  // User-arranged order of the reorderable smart lists (Inbox/Logbook/Trash are
+  // pinned and never included). Missing/new ids are appended automatically.
+  smartListOrder: ['today', 'upcoming', 'overdue', 'anytime', 'someday'],
 };
 
 const initialState = {

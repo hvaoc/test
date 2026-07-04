@@ -10,7 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius } from '../theme';
-import { SMART_LISTS } from '../store/constants';
+import { SMART_LISTS, SMART_LIST_MAP } from '../store/constants';
 import { useTasks } from '../store/TasksContext';
 import { counts, selectProjectTasks, isOpen } from '../store/selectors';
 import { selectionKey } from '../navigation/responsive';
@@ -18,6 +18,7 @@ import NewListSheet from '../components/NewListSheet';
 import SettingsSheet from '../components/SettingsSheet';
 import ProgressPie from '../components/ProgressPie';
 import DropTarget from '../components/DropTarget';
+import ReorderableSmartLists from '../components/ReorderableSmartLists';
 import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 
 // The Things sidebar / home: smart lists at the top, then your Areas and
@@ -28,7 +29,7 @@ import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 // pushing a new screen. On phones both are undefined and it behaves as a stack.
 export default function HomeScreen({ navigation, selectedKey, embedded }) {
   const insets = useSafeAreaInsets();
-  const { state } = useTasks();
+  const { state, setSetting } = useTasks();
   const [sheet, setSheet] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -43,6 +44,40 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
   }, [drag, embedded]);
 
   const badge = useMemo(() => counts(state.tasks), [state.tasks]);
+
+  // Smart lists split into pinned (Inbox on top; Logbook + Trash on the bottom)
+  // and a reorderable middle group. The stored order is reconciled with the
+  // current set so new lists (e.g. Overdue) appear and stale ids drop out.
+  const PINNED = new Set(['inbox', 'logbook', 'trash']);
+  const reorderableIds = useMemo(() => {
+    const valid = SMART_LISTS.filter((l) => !PINNED.has(l.id)).map((l) => l.id);
+    const stored = (state.settings?.smartListOrder || []).filter((id) => valid.includes(id));
+    return [...stored, ...valid.filter((id) => !stored.includes(id))];
+  }, [state.settings?.smartListOrder]);
+
+  const smartRow = (id) => {
+    const list = SMART_LIST_MAP[id];
+    if (!list) return null;
+    const row = (
+      <SidebarRow
+        icon={list.icon}
+        color={list.color}
+        outline={list.outline}
+        title={list.title}
+        badge={badge[list.id]}
+        selected={selectedKey === `list:${list.id}`}
+        onPress={() => navigation.navigate('List', { listId: list.id, title: list.title })}
+      />
+    );
+    const droppable = id === 'inbox' || id === 'today';
+    return droppable ? (
+      <DropTarget key={id} targetKey={`list:${id}`} meta={{ kind: 'list', id }}>
+        {row}
+      </DropTarget>
+    ) : (
+      <React.Fragment key={id}>{row}</React.Fragment>
+    );
+  };
 
   // Projects grouped under their area, plus any area-less projects.
   const looseProjects = state.projects.filter(
@@ -79,36 +114,19 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-        {/* Smart lists. Only Inbox and Today accept dropped tasks; the rest
-            (Upcoming, Anytime, Someday, Logbook, Trash) are not drop targets. */}
+        {/* Smart lists. Inbox is pinned on top, Logbook + Trash pinned at the
+            bottom; the middle group (Today/Upcoming/Overdue/Anytime/Someday) is
+            drag-reorderable within this zone. Only Inbox and Today accept
+            dropped tasks. */}
         <View style={styles.section}>
-          {SMART_LISTS.map((list) => {
-            const row = (
-              <SidebarRow
-                icon={list.icon}
-                color={list.color}
-                outline={list.outline}
-                title={list.title}
-                badge={badge[list.id]}
-                selected={selectedKey === `list:${list.id}`}
-                onPress={() =>
-                  navigation.navigate('List', { listId: list.id, title: list.title })
-                }
-              />
-            );
-            const droppable = list.id === 'inbox' || list.id === 'today';
-            return droppable ? (
-              <DropTarget
-                key={list.id}
-                targetKey={`list:${list.id}`}
-                meta={{ kind: 'list', id: list.id }}
-              >
-                {row}
-              </DropTarget>
-            ) : (
-              <React.Fragment key={list.id}>{row}</React.Fragment>
-            );
-          })}
+          {smartRow('inbox')}
+          <ReorderableSmartLists
+            ids={reorderableIds}
+            renderRow={smartRow}
+            onReorder={(next) => setSetting('smartListOrder', next)}
+          />
+          {smartRow('logbook')}
+          {smartRow('trash')}
         </View>
 
         {/* Areas with their projects */}
