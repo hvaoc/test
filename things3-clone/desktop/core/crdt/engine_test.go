@@ -1,0 +1,136 @@
+package crdt
+
+import (
+	"encoding/json"
+	"sort"
+	"testing"
+)
+
+func seq(base int64) func() int64 {
+	n := base - 1
+	return func() int64 { n++; return n }
+}
+
+func materialize(t *testing.T, e *Engine) map[string]interface{} {
+	t.Helper()
+	js, err := e.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(js), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func task(t *testing.T, m map[string]interface{}, id string) map[string]interface{} {
+	t.Helper()
+	for _, r := range m["tasks"].([]interface{}) {
+		tk := r.(map[string]interface{})
+		if tk["id"] == id {
+			return tk
+		}
+	}
+	return nil
+}
+
+// Simulate a server relay: A's pending → B.
+func relay(t *testing.T, from, to *Engine) {
+	t.Helper()
+	ops, _ := from.TakePending()
+	if _, _, err := to.ApplyRemote(ops); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCanonContract(t *testing.T) {
+	// MUST match core.TestCanonCompat and the JS mirror.
+	cases := []struct{ in, want string }{
+		{`"hello"`, `"hello"`},
+		{`"a<b>&c"`, `"a<b>&c"`},
+		{`1751000000000`, `1751000000000`},
+		{`{"b":1,"a":2}`, `{"a":2,"b":1}`},
+		{`{"z":{"y":1,"x":2},"a":[1,2]}`, `{"a":[1,2],"z":{"x":2,"y":1}}`},
+	}
+	for _, c := range cases {
+		if got := canon(json.RawMessage(c.in)); got != c.want {
+			t.Errorf("canon(%s) = %q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestConcurrentDifferentFields(t *testing.T) {
+	a, b := New("A"), New("B")
+	a.now, b.now = seq(1000), seq(1000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"Orig","deadline":null}],"tags":[],"settings":{}}`)
+	relay(t, a, b)
+	a.now, b.now = seq(2000), seq(2000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"A's","deadline":null}],"tags":[],"settings":{}}`)
+	_, _ = b.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"Orig","deadline":"2026-08-01"}],"tags":[],"settings":{}}`)
+	relay(t, a, b)
+	relay(t, b, a)
+	for _, e := range []*Engine{a, b} {
+		tk := task(t, materialize(t, e), "t1")
+		if tk["title"] != "A's" || tk["deadline"] != "2026-08-01" {
+			t.Fatalf("did not merge different fields: %v", tk)
+		}
+	}
+}
+
+func TestConcurrentTagAdds(t *testing.T) {
+	a, b := New("A"), New("B")
+	a.now, b.now = seq(1000), seq(1000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"T","tags":["Base"]}],"tags":["Base"],"settings":{}}`)
+	relay(t, a, b)
+	a.now, b.now = seq(3000), seq(3000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"T","tags":["Base","FromA"]}],"tags":["Base","FromA"],"settings":{}}`)
+	_, _ = b.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"T","tags":["Base","FromB"]}],"tags":["Base","FromB"],"settings":{}}`)
+	relay(t, a, b)
+	relay(t, b, a)
+	tk := task(t, materialize(t, a), "t1")
+	var got []string
+	for _, v := range tk["tags"].([]interface{}) {
+		got = append(got, v.(string))
+	}
+	sort.Strings(got)
+	if len(got) != 3 || got[0] != "Base" || got[1] != "FromA" || got[2] != "FromB" {
+		t.Fatalf("tags did not merge add-wins: %v", got)
+	}
+}
+
+func TestSameFieldLWW(t *testing.T) {
+	a, b := New("A"), New("B")
+	a.now, b.now = seq(1000), seq(1000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"base"}],"tags":[],"settings":{}}`)
+	relay(t, a, b)
+	a.now, b.now = seq(4000), seq(9000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"edit-A"}],"tags":[],"settings":{}}`)
+	_, _ = b.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"edit-B"}],"tags":[],"settings":{}}`)
+	relay(t, a, b)
+	relay(t, b, a)
+	if task(t, materialize(t, a), "t1")["title"] != "edit-B" || task(t, materialize(t, b), "t1")["title"] != "edit-B" {
+		t.Fatal("same-field LWW not deterministic")
+	}
+}
+
+func TestSerializeRoundTrip(t *testing.T) {
+	a := New("A")
+	a.now = seq(1000)
+	_, _ = a.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"x","tags":["Q"]}],"tags":["Q"],"settings":{"showCompleted":true}}`)
+	blob, err := a.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Load(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := materialize(t, b)
+	if len(m["tasks"].([]interface{})) != 1 {
+		t.Fatal("round-trip lost the task")
+	}
+	if b.Node() != "A" {
+		t.Fatalf("round-trip lost node id: %q", b.Node())
+	}
+}

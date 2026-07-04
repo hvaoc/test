@@ -26,6 +26,9 @@ fi
 export LANG="${LANG:-en_US.UTF-8}"
 export PATH="$PATH:$(go env GOPATH)/bin"
 
+echo "▸ Building CRDT WASM…"
+bash "$DESKTOP/build-wasm.sh"
+
 echo "▸ Exporting Expo web build…"
 cd "$ROOT"
 npx expo export --platform web --output-dir dist-web >/dev/null

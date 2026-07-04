@@ -5,16 +5,20 @@
 //   • Wails desktop  → the embedded Go SQLite CRDT engine (window.go.main.App)
 //   • iOS / Android  → the same Go engine via a gomobile native module
 //                       (NativeModules.Playdata)
-//   • Web / anything → the JS CRDT engine (store/crdt.js), persisted to
-//                       IndexedDB (localStorage fallback)
+//   • Web / anything → the Go CRDT engine compiled to WASM, run in a Web Worker
+//                       (store/crdtClient.js + public/crdt.worker.js), persisted
+//                       to IndexedDB. Falls back to the pure-JS CRDT (store/
+//                       crdt.js) if WASM/Workers are unavailable.
 //
-// All three run the SAME field-level CRDT (Go on desktop/mobile, its JS mirror
-// in the browser) and speak the same op wire format, so every platform is a
-// first-class replica that converges through the sync server. They share one
-// async interface: loadSnapshot(), saveSnapshot(state), sync().
+// All platforms run the SAME field-level CRDT — Go on desktop/mobile, that same
+// Go engine compiled to WASM in the browser — and speak the same op wire format,
+// so every platform is a first-class replica that converges through the sync
+// server. They share one async interface: loadSnapshot(), saveSnapshot(state),
+// sync().
 
 import { Platform } from 'react-native';
 import { Crdt } from './crdt';
+import { crdtClient, crdtWorkerAvailable } from './crdtClient';
 
 // Only the persisted slices of state travel to storage (never `loaded`, etc.).
 export function serializableState(state) {
@@ -317,7 +321,62 @@ async function serverSync(crdt) {
   };
 }
 
-function webAdapter() {
+// --- WASM-worker adapter: the Go engine compiled to WASM, in a Web Worker ---
+
+async function wasmServerSync() {
+  const base = _server.url.replace(/\/$/, '');
+  const pending = JSON.parse(await crdtClient.peekPending());
+  for (let i = 0; i < pending.length; i += PUSH_CHUNK) {
+    const chunk = pending.slice(i, i + PUSH_CHUNK);
+    const r = await fetch(base + '/v1/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token },
+      body: JSON.stringify({ ops: chunk }),
+    });
+    if (!r.ok) throw new Error('push failed: ' + r.status); // unpushed ops stay queued
+  }
+  if (pending.length) await crdtClient.dropPending(pending.length);
+  const cursor = await crdtClient.getCursor();
+  const pr = await fetch(base + '/v1/pull?cursor=' + encodeURIComponent(cursor || ''), {
+    headers: { authorization: 'Bearer ' + _server.token },
+  });
+  if (!pr.ok) throw new Error('pull failed: ' + pr.status);
+  const body = await pr.json();
+  const merged = await crdtClient.applyRemote(JSON.stringify(body.ops || []));
+  await crdtClient.setCursor(body.cursor || cursor);
+  return {
+    adapter: 'server',
+    pushed: pending.length,
+    pulled: (body.ops || []).length,
+    applied: merged.applied,
+    skipped: merged.skipped,
+    cursor: body.cursor,
+    snapshot: await crdtClient.materialize(),
+  };
+}
+
+function wasmWebAdapter() {
+  return {
+    name: 'wasm',
+    async loadSnapshot() {
+      await crdtClient.init();
+      if (!(await crdtClient.hasData())) return null;
+      return JSON.parse(await crdtClient.materialize());
+    },
+    async saveSnapshot(state) {
+      await crdtClient.applyLocalSnapshot(JSON.stringify(serializableState(state)));
+    },
+    async sync() {
+      await crdtClient.init();
+      if (_server) return wasmServerSync();
+      return { adapter: 'local' };
+    },
+  };
+}
+
+// --- pure-JS adapter (fallback when WASM/Workers are unavailable) ---
+
+function jsWebAdapter() {
   return {
     name: idbAvailable() ? 'indexeddb' : 'localstorage',
     async loadSnapshot() {
@@ -332,9 +391,13 @@ function webAdapter() {
     async sync() {
       const c = await loadCrdt();
       if (_server) return serverSync(c);
-      return { adapter: 'local' }; // full replica, no peer configured yet
+      return { adapter: 'local' };
     },
   };
+}
+
+function webAdapter() {
+  return crdtWorkerAvailable() ? wasmWebAdapter() : jsWebAdapter();
 }
 
 // ---------------------------------------------------------------------------

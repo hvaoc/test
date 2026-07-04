@@ -439,6 +439,11 @@ export function TasksProvider({ children }) {
   const saveTimer = useRef(null);
   // Bumped after sign-in / sign-out so the realtime effect re-subscribes.
   const [syncGen, setSyncGen] = useState(0);
+  // Serialize syncs: a sync in flight coalesces further requests into a single
+  // follow-up run, so concurrent triggers (initial sync + WebSocket nudges)
+  // can't each push the same backlog and duplicate ops.
+  const syncingRef = useRef(false);
+  const resyncQueuedRef = useRef(false);
 
   // Keep the date utils' active timezone in sync before descendants render, so
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
@@ -536,20 +541,35 @@ export function TasksProvider({ children }) {
       setSetting: (key, value) => dispatch({ type: 'SET_SETTING', key, value }),
       reset: () => dispatch({ type: 'RESET' }),
 
-      // Run one cloud-sync cycle. On the Go-backed platforms the merged snapshot
-      // comes back in the result — rehydrate from it so pulled remote changes
-      // appear immediately. Returns the raw SyncResult for the UI.
+      // Run one cloud-sync cycle. Coalesced: if a sync is already running, the
+      // request is deferred and a single follow-up runs after — never two at
+      // once (which would double-push the pending backlog). On the Go-backed
+      // platforms the merged snapshot comes back in the result; rehydrate from
+      // it so pulled remote changes appear immediately.
       syncNow: async () => {
-        const res = await backendSync();
-        if (res && res.snapshot) {
-          try {
-            const payload = JSON.parse(res.snapshot);
-            if (payload && Array.isArray(payload.tasks)) {
-              dispatch({ type: 'HYDRATE', payload });
+        if (syncingRef.current) {
+          resyncQueuedRef.current = true;
+          return null;
+        }
+        syncingRef.current = true;
+        let res = null;
+        try {
+          do {
+            resyncQueuedRef.current = false;
+            res = await backendSync();
+            if (res && res.snapshot) {
+              try {
+                const payload = JSON.parse(res.snapshot);
+                if (payload && Array.isArray(payload.tasks)) {
+                  dispatch({ type: 'HYDRATE', payload });
+                }
+              } catch {
+                /* ignore malformed snapshot */
+              }
             }
-          } catch {
-            /* ignore malformed snapshot */
-          }
+          } while (resyncQueuedRef.current);
+        } finally {
+          syncingRef.current = false;
         }
         return res;
       },

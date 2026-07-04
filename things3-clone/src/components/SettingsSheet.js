@@ -522,6 +522,7 @@ function SyncSection() {
   const label = {
     wails: 'Embedded SQLite CRDT (desktop)',
     native: 'Embedded SQLite CRDT (mobile)',
+    wasm: 'Go CRDT via WASM + Worker (browser)',
     indexeddb: 'CRDT + IndexedDB (browser)',
     localstorage: 'CRDT + local storage',
   }[backend] || backend;
