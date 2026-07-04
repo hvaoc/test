@@ -928,11 +928,16 @@ export default function ListScreen({
   const useStickySections =
     !project && !listReorderable && listId !== 'upcoming' && !isEmpty;
   if (useStickySections) {
+    // Apply the three-state slicing to each section (collapsed / 10 / full).
+    const slicedSections = sections.map((s) => {
+      const { rows, more, collapsed } = sliceSection(s.key, s.data);
+      return { ...s, data: rows, more, collapsed, sectionKey: s.key };
+    });
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {navBar}
         <StickyTaskSections
-          sections={sections}
+          sections={slicedSections}
           header={
             <View style={[styles.contentCol, centered && styles.contentColCentered]}>
               {titleHeader}
@@ -940,6 +945,8 @@ export default function ListScreen({
           }
           showProject
           onOpenTask={setOpenTaskId}
+          onToggleSection={toggleSectionMode}
+          onToggleMore={onToggleMore}
           contentPadding={{ paddingBottom: insets.bottom + 100 }}
         />
         {listId !== 'logbook' && listId !== 'trash' && !areaId && (

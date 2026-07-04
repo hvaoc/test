@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { FlatList, View, Text, StyleSheet, Platform } from 'react-native';
+import { FlatList, View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../theme';
 import TaskRow from './TaskRow';
@@ -24,6 +24,8 @@ export default function StickyTaskSections({
   header,
   showProject = false,
   onOpenTask,
+  onToggleSection,
+  onToggleMore,
   contentPadding,
 }) {
   const { data, stickyIndices } = useMemo(() => {
@@ -37,6 +39,9 @@ export default function StickyTaskSections({
       }
       const sp = section.showProject ?? showProject;
       section.data.forEach((task) => rows.push({ type: 'task', key: task.id, task, showProject: sp }));
+      if (section.more) {
+        rows.push({ type: 'more', key: `more:${section.sectionKey}`, section });
+      }
     });
     return { data: rows, stickyIndices: sticky };
   }, [sections, showProject, header]);
@@ -46,8 +51,17 @@ export default function StickyTaskSections({
       if (item.type === 'title') return header || null;
       if (item.type === 'header') {
         const s = item.section;
-        return (
+        const canToggle = onToggleSection && s.sectionKey != null;
+        const inner = (
           <View style={styles.header}>
+            {canToggle && (
+              <Ionicons
+                name={s.collapsed ? 'chevron-forward' : 'chevron-down'}
+                size={16}
+                color={colors.textSecondary}
+                style={{ marginRight: 4 }}
+              />
+            )}
             {s.icon && (
               <Ionicons
                 name={s.icon}
@@ -69,6 +83,26 @@ export default function StickyTaskSections({
             ) : null}
           </View>
         );
+        return canToggle ? (
+          <Pressable onPress={() => onToggleSection(s.sectionKey)}>{inner}</Pressable>
+        ) : (
+          inner
+        );
+      }
+      if (item.type === 'more') {
+        const s = item.section;
+        const tint = s.iconColor || colors.accent;
+        return (
+          <Pressable
+            style={styles.more}
+            onPress={() => onToggleMore && onToggleMore(s.sectionKey, s.more.action)}
+          >
+            <Ionicons name={s.more.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+            <Text style={[styles.moreText, { color: tint }]}>
+              {s.more.action === 'more' ? `Show ${s.more.hidden} more` : 'Show less'}
+            </Text>
+          </Pressable>
+        );
       }
       return (
         <TaskRow
@@ -78,7 +112,7 @@ export default function StickyTaskSections({
         />
       );
     },
-    [header, onOpenTask]
+    [header, onOpenTask, onToggleSection, onToggleMore]
   );
 
   return (
@@ -114,4 +148,13 @@ const styles = StyleSheet.create({
   },
   title: { ...typography.heading, color: colors.text },
   subtitle: { ...typography.subhead, color: colors.textTertiary, marginLeft: spacing.sm },
+  more: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  moreText: { ...typography.subhead, fontWeight: '600' },
 });
