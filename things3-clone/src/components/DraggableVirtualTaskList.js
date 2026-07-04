@@ -64,6 +64,7 @@ export default function DraggableVirtualTaskList({
   onToggleExpand,
   onToggleCollapse,
   onToggleDivider,
+  onToggleMore,
   onAddTask,
   onCommitKeys,
 }) {
@@ -233,12 +234,13 @@ export default function DraggableVirtualTaskList({
             onToggleExpand={onToggleExpand}
             onToggleCollapse={onToggleCollapse}
             onToggleDivider={onToggleDivider}
+            onToggleMore={onToggleMore}
             onAddTask={onAddTask}
           />
         </Cell>
       );
     },
-    [header, showProject, inProject, onOpenTask, onToggleExpand, onToggleCollapse, onToggleDivider, onAddTask]
+    [header, showProject, inProject, onOpenTask, onToggleExpand, onToggleCollapse, onToggleDivider, onToggleMore, onAddTask]
   );
 
   return (
@@ -309,7 +311,18 @@ function Cell({ itemKey, index, draggable, positions, activeKey, activeTranslate
 }
 
 // Row visuals — mirrors VirtualTaskList's row rendering.
-function RowContent({ item, showProject, inProject, onOpenTask, onToggleExpand, onToggleCollapse, onToggleDivider, onAddTask }) {
+function RowContent({ item, showProject, inProject, onOpenTask, onToggleExpand, onToggleCollapse, onToggleDivider, onToggleMore, onAddTask }) {
+  if (item.kind === 'more') {
+    const tint = item.color || colors.accent;
+    return (
+      <Pressable style={styles.more} onPress={() => onToggleMore && onToggleMore(item.sectionKey, item.action)}>
+        <Ionicons name={item.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+        <Text style={[styles.moreText, { color: tint }]}>
+          {item.action === 'more' ? `Show ${item.hidden} more` : 'Show less'}
+        </Text>
+      </Pressable>
+    );
+  }
   if (item.kind === 'task') {
     return (
       <TaskRow
@@ -409,4 +422,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   addText: { ...typography.body, color: colors.textTertiary },
+  more: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    height: ROW_H,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  moreText: { ...typography.subhead, fontWeight: '600' },
 });

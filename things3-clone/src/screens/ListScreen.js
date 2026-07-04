@@ -27,7 +27,7 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
 import ProjectHeader from '../components/ProjectHeader';
 import AreaHeader from '../components/AreaHeader';
-import ReorderableTaskList from '../components/ReorderableTaskList';
+import ReorderableTaskList, { HANDLE_W } from '../components/ReorderableTaskList';
 import ProgressPie from '../components/ProgressPie';
 import BoardView from '../components/BoardView';
 import CalendarView from '../components/CalendarView';
@@ -38,6 +38,9 @@ import DraggableVirtualTaskList from '../components/DraggableVirtualTaskList';
 import StickyTaskSections from '../components/StickyTaskSections';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
+
+// Expanded-minimal shows this many items before a "show N more" row.
+const MINIMAL_ITEMS = 10;
 
 // Builds the grouped sections shown in a given context. Each section is
 // { key, title, subtitle?, color?, data: task[] }.
@@ -352,6 +355,60 @@ export default function ListScreen({
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  // --- Three-state sections (collapsed / minimal-10 / full) -----------------
+  // Every section header cycles: collapsed → expanded-minimal (up to 10 items +
+  // a "show N more" row) → expanded-full. Minimal is the default. Kept local
+  // (resets on reload like the rest of the testing state). `hiddenBySection`
+  // records each section's non-rendered task ids during item-building so a
+  // drag-reorder can re-insert them — otherwise the hidden rows keep stale order
+  // values and scramble. A section key is 'h:<headingId>' or 'd:<dateKey>' (or a
+  // smart-list section's own key), matching its item key.
+  const [sectionMode, setSectionMode] = useState({});
+  const modeOf = (key) => sectionMode[key] || 'minimal';
+  const setMode = (key, mode) => setSectionMode((m) => ({ ...m, [key]: mode }));
+  // Header tap toggles collapsed ↔ minimal; the more/less row jumps to/from full.
+  const toggleSectionMode = (key) => setMode(key, modeOf(key) === 'collapsed' ? 'minimal' : 'collapsed');
+  const onToggleMore = (key, action) => setMode(key, action === 'more' ? 'full' : 'minimal');
+  const onDividerToggle = (dividerKey) => toggleSectionMode(`d:${dividerKey}`);
+  const onHeadingToggle = (headingId) => toggleSectionMode(`h:${headingId}`);
+  // Populated during item-building each render; read by the commit wrappers.
+  const hiddenBySection = {};
+  // Slice a section's rows for its current mode and record its hidden ids.
+  const sliceSection = (key, data) => {
+    const mode = modeOf(key);
+    const rows = mode === 'collapsed' ? [] : mode === 'full' ? data : data.slice(0, MINIMAL_ITEMS);
+    const hidden = data.slice(rows.length).map((t) => t.id);
+    if (hidden.length) hiddenBySection[key] = hidden;
+    const overflow = data.length > MINIMAL_ITEMS;
+    const more =
+      mode === 'minimal' && overflow ? { action: 'more', hidden: data.length - rows.length }
+      : mode === 'full' && overflow ? { action: 'less' }
+      : null;
+    return { rows, more, collapsed: mode === 'collapsed' };
+  };
+  // Re-insert each section's hidden task ids after its shown rows so a committed
+  // reorder covers every task (hidden ones keep their relative order and their
+  // heading/date), and drop the non-task "more" markers.
+  const reinsertHidden = (keys) => {
+    const out = [];
+    const done = new Set();
+    let cur = null;
+    const flush = () => {
+      if (cur && !done.has(cur) && hiddenBySection[cur]?.length) {
+        out.push(...hiddenBySection[cur]);
+        done.add(cur);
+      }
+    };
+    keys.forEach((k) => {
+      if (k.startsWith('h:') || k.startsWith('d:')) { flush(); cur = k; out.push(k); }
+      else if (k.startsWith('more:')) { flush(); /* drop marker */ }
+      else if (k.startsWith('add:') || k.startsWith('sec:')) { flush(); out.push(k); }
+      else out.push(k);
+    });
+    flush();
+    return out;
+  };
+
   // Collapsed date sections (by date key) for the date views (project + Upcoming).
   const [collapsedDates, setCollapsedDates] = useState(() => new Set());
   const toggleDate = (key) =>
@@ -480,9 +537,10 @@ export default function ListScreen({
   const buildDateItems = (dateSections, color) => {
     const items = [];
     dateSections.forEach((s) => {
-      const collapsed = collapsedDates.has(s.key);
+      const key = `d:${s.key}`;
+      const { rows, more, collapsed } = sliceSection(key, s.data);
       items.push({
-        key: `d:${s.key}`,
+        key,
         kind: 'divider',
         dividerKey: s.key,
         title: s.title,
@@ -493,8 +551,9 @@ export default function ListScreen({
         done: s.doneCount,
         color,
       });
-      if (!collapsed) {
-        s.data.forEach((t) => items.push({ key: t.id, kind: 'task', task: t }));
+      rows.forEach((t) => items.push({ key: t.id, kind: 'task', task: t }));
+      if (more) {
+        items.push({ key: `more:${key}`, kind: 'more', sectionKey: key, action: more.action, hidden: more.hidden, color });
       }
     });
     return items;
@@ -503,7 +562,8 @@ export default function ListScreen({
   // Commit a date-view drag: each task adopts the `when` of the divider above it
   // ('no-date' clears it), then the visible order is persisted.
   const whenForDivider = (dividerKey) => (dividerKey === 'no-date' ? null : dividerKey);
-  const commitDateLayout = (keys) => {
+  const commitDateLayout = (rawKeys) => {
+    const keys = reinsertHidden(rawKeys); // fold hidden (three-state) tasks back in
     const orderedIds = [];
     const firstDivider = keys.find((k) => k.startsWith('d:'));
     let currentWhen = firstDivider ? whenForDivider(firstDivider.slice(2)) : null;
@@ -529,7 +589,8 @@ export default function ListScreen({
         showProject={!project}
         onOpenTask={setOpenTaskId}
         onCommitKeys={commitDateLayout}
-        onToggleDivider={toggleDate}
+        onToggleDivider={onDividerToggle}
+        onToggleMore={onToggleMore}
         stickyScrollY={scrollY}
         stickyOffsetY={listOffsetY}
         onStickyHeaderChange={setStickyHeader}
@@ -552,7 +613,8 @@ export default function ListScreen({
         showProject={false}
         onOpenTask={setOpenTaskId}
         onCommitKeys={onCommit}
-        onToggleDivider={toggleDate}
+        onToggleDivider={onDividerToggle}
+        onToggleMore={onToggleMore}
         stickyScrollY={scrollY}
         stickyOffsetY={listOffsetY}
         onStickyHeaderChange={setStickyHeader}
@@ -566,15 +628,20 @@ export default function ListScreen({
   if (project) {
     sections.forEach((s) => {
       const hid = s.heading ? s.heading.id : null;
-      const collapsed = s.heading && s.heading.collapsed;
+      // Only heading sections are three-state; the headingless "main" group (no
+      // header to click) always shows everything.
+      const secKey = s.heading ? `h:${s.heading.id}` : 'main';
+      const { rows, more, collapsed } = s.heading
+        ? sliceSection(secKey, s.data)
+        : { rows: s.data, more: null, collapsed: false };
       if (s.heading) {
         projectItems.push({
-          key: `h:${s.heading.id}`,
+          key: secKey,
           kind: 'heading',
           title: s.title,
           description: s.heading.description,
           headingId: s.heading.id,
-          collapsed: !!collapsed,
+          collapsed,
           done: s.doneCount,
           total: s.total,
           color: project.color,
@@ -596,7 +663,10 @@ export default function ListScreen({
           });
           if (kids.length > 0 && expandedTasks.has(t.id)) kids.forEach((k) => emit(k, depth + 1));
         };
-        s.data.forEach((t) => emit(t, 0));
+        rows.forEach((t) => emit(t, 0));
+        if (more) {
+          projectItems.push({ key: `more:${secKey}`, kind: 'more', sectionKey: secKey, action: more.action, hidden: more.hidden, color: project.color });
+        }
         // Inline "+ Add task" only on wide layouts — phones use the floating
         // add button to save the vertical space.
         if (isWide) {
@@ -653,7 +723,10 @@ export default function ListScreen({
     projectItems.filter((i) => i.kind === 'task').map((i) => [i.key, i.depth || 0])
   );
   const NEST_THRESHOLD = 18; // drag this far right to nest under the row above
-  const commitProjectLayout = (keys, meta = {}) => {
+  const commitProjectLayout = (rawKeys, meta = {}) => {
+    // Fold each section's hidden (three-state) tasks back in as top-level rows
+    // after their shown ones, so every task gets a fresh, non-colliding order.
+    const keys = reinsertHidden(rawKeys);
     const { draggedKey, dx = 0 } = meta;
     let currentHeading = null;
     const tasks = [];
@@ -951,8 +1024,9 @@ export default function ListScreen({
             showProject={surfaceShowProject}
             onOpenTask={setOpenTaskId}
             onToggleExpand={toggleTaskExpand}
-            onToggleCollapse={toggleHeadingCollapsed}
-            onToggleDivider={toggleDate}
+            onToggleCollapse={onHeadingToggle}
+            onToggleDivider={onDividerToggle}
+            onToggleMore={onToggleMore}
             onAddTask={handleAddInSection}
             onCommitKeys={surfaceCommit}
           />
@@ -964,8 +1038,9 @@ export default function ListScreen({
             showProject={surfaceShowProject}
             onOpenTask={setOpenTaskId}
             onToggleExpand={toggleTaskExpand}
-            onToggleCollapse={toggleHeadingCollapsed}
-            onToggleDivider={toggleDate}
+            onToggleCollapse={onHeadingToggle}
+            onToggleDivider={onDividerToggle}
+            onToggleMore={onToggleMore}
             onAddTask={handleAddInSection}
           />
         )}
@@ -1048,7 +1123,8 @@ export default function ListScreen({
               onCommitKeys={commitProjectLayout}
               onDeleteHeading={deleteHeading}
               onUpdateHeading={updateHeading}
-              onToggleCollapse={toggleHeadingCollapsed}
+              onToggleCollapse={onHeadingToggle}
+              onToggleMore={onToggleMore}
               onAddTask={handleAddInSection}
               onAddSection={handleAddSectionAfter}
               onEditSection={setEditSectionId}
@@ -1107,12 +1183,15 @@ export default function ListScreen({
           scrolling fast — StickyHeaderTracker only tells it which section to show. */}
       {stickyHeader && (
         <Pressable
-          style={styles.stickyBar}
+          style={[styles.stickyBar, isWide && styles.stickyBarHandled]}
           onPress={() => {
-            if (stickyHeader.kind === 'heading') toggleHeadingCollapsed(stickyHeader.headingId);
-            else if (stickyHeader.collapsible) toggleDate(stickyHeader.dividerKey);
+            if (stickyHeader.kind === 'heading') onHeadingToggle(stickyHeader.headingId);
+            else if (stickyHeader.collapsible) onDividerToggle(stickyHeader.dividerKey);
           }}
         >
+          {/* On wide layouts the real heading rows have a drag-handle gutter
+              before the chevron; mirror it so the sticky bar lines up exactly. */}
+          {isWide && <View style={{ width: HANDLE_W }} />}
           {stickyHeader.collapsible ? (
             <View style={styles.stickyChevron}>
               <Ionicons
@@ -1313,6 +1392,9 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  // Wide layouts: drop the left padding so the HANDLE_W gutter alone offsets the
+  // chevron, matching the drag rows' handle column exactly.
+  stickyBarHandled: { paddingLeft: 0 },
   stickyChevron: { paddingRight: spacing.sm },
   stickyTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'baseline' },
   stickyBarTitle: { ...typography.heading, color: colors.text },

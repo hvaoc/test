@@ -8,7 +8,9 @@ import ProgressPie from './ProgressPie';
 // Reveal drag handles on hover (mouse); always show on touch surfaces.
 const HOVERABLE = Platform.OS === 'web';
 // Width of the drag-handle gutter (paddingLeft + 20px icon + paddingRight).
-const HANDLE_W = spacing.sm + 20 + spacing.xs;
+// Exported so the sticky-header bar can reserve the same gutter and stay aligned
+// with the real heading rows on wide (handled) layouts.
+export const HANDLE_W = spacing.sm + 20 + spacing.xs;
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -192,6 +194,32 @@ function AddTaskRow({ itemKey, headingId, onAddTask, ctx }) {
             <Ionicons name="add" size={20} color={colors.accent} />
           </View>
           <Text style={styles.addTaskText}>Add task</Text>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// The three-state "show N more" / "show less" row at the tail of a section that
+// has more than the minimal 10 items. Rides the layout like the other rows.
+function MoreRow({ itemKey, sectionKey, action, hidden, color, onToggleMore, ctx }) {
+  const { heights, showHandle } = ctx;
+  const top = useRowTop(itemKey, ctx);
+  const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
+  const tint = color || colors.accent;
+  return (
+    <Animated.View style={style}>
+      <Pressable
+        style={styles.moreRow}
+        onLayout={measure(heights, itemKey)}
+        onPress={() => onToggleMore && onToggleMore(sectionKey, action)}
+      >
+        {showHandle && <View style={styles.rowGutter} />}
+        <View style={styles.moreInner}>
+          <Ionicons name={action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+          <Text style={[styles.moreText, { color: tint }]}>
+            {action === 'more' ? `Show ${hidden} more` : 'Show less'}
+          </Text>
         </View>
       </Pressable>
     </Animated.View>
@@ -700,7 +728,8 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
       while (
         newIndex > 0 &&
         (kinds.value[rest[newIndex - 1]] === 'addtask' ||
-          kinds.value[rest[newIndex - 1]] === 'addsection')
+          kinds.value[rest[newIndex - 1]] === 'addsection' ||
+          kinds.value[rest[newIndex - 1]] === 'more')
       ) {
         newIndex -= 1;
       }
@@ -971,6 +1000,7 @@ export default function ReorderableTaskList({
   onUpdateHeading,
   onToggleCollapse,
   onToggleDivider,
+  onToggleMore,
   onAddTask,
   onAddSection,
   onEditSection,
@@ -1095,6 +1125,17 @@ export default function ReorderableTaskList({
             color={item.color}
             ctx={ctx}
           />
+        ) : item.kind === 'more' ? (
+          <MoreRow
+            key={item.key}
+            itemKey={item.key}
+            sectionKey={item.sectionKey}
+            action={item.action}
+            hidden={item.hidden}
+            color={item.color}
+            onToggleMore={onToggleMore}
+            ctx={ctx}
+          />
         ) : item.kind === 'emptyslot' ? (
           <EmptySlotRow key={item.key} itemKey={item.key} label={item.label} ctx={ctx} />
         ) : (
@@ -1203,6 +1244,21 @@ const styles = StyleSheet.create({
   emptySlotInner: { flex: 1, paddingLeft: spacing.lg + 22 + spacing.md, paddingRight: spacing.lg },
   emptySlotText: { ...typography.subhead, color: colors.textTertiary, fontStyle: 'italic' },
   addSectionTextHidden: { opacity: 0 },
+  // "Show N more" / "Show less" row — aligns with task titles.
+  moreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  moreInner: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingLeft: spacing.lg,
+  },
+  moreText: { ...typography.subhead, fontWeight: '600' },
   rowBody: { flex: 1 },
   // Drop-target placeholder shown under the floating dragged row.
   dropSlot: { position: 'absolute', left: 0, right: 0 },

@@ -19,6 +19,7 @@ export default function VirtualTaskList({
   onToggleExpand,
   onToggleCollapse, // (headingId)
   onToggleDivider, // (dividerKey)
+  onToggleMore, // (sectionKey, 'more'|'less')
   onAddTask, // (headingId)
 }) {
   // The page title rides as the first (non-sticky) row instead of
@@ -114,9 +115,20 @@ export default function VirtualTaskList({
           </Pressable>
         );
       }
+      if (item.kind === 'more') {
+        const tint = item.color || colors.accent;
+        return (
+          <Pressable style={styles.more} onPress={() => onToggleMore && onToggleMore(item.sectionKey, item.action)}>
+            <Ionicons name={item.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+            <Text style={[styles.moreText, { color: tint }]}>
+              {item.action === 'more' ? `Show ${item.hidden} more` : 'Show less'}
+            </Text>
+          </Pressable>
+        );
+      }
       return null; // addsection etc. omitted in the virtualized list
     },
-    [header, onOpenTask, showProject, inProject, onToggleExpand, onToggleCollapse, onToggleDivider, onAddTask]
+    [header, onOpenTask, showProject, inProject, onToggleExpand, onToggleCollapse, onToggleDivider, onToggleMore, onAddTask]
   );
 
   return (
@@ -178,4 +190,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   addText: { ...typography.body, color: colors.textTertiary },
+  more: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  moreText: { ...typography.subhead, fontWeight: '600' },
 });
