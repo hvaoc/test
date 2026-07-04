@@ -2,16 +2,19 @@
 // hands this module whole-state snapshots; the module routes them to the best
 // available durable store for the current platform:
 //
-//   • Wails desktop  → the embedded Go SQLite engine (window.go.main.App)
+//   • Wails desktop  → the embedded Go SQLite CRDT engine (window.go.main.App)
 //   • iOS / Android  → the same Go engine via a gomobile native module
 //                       (NativeModules.Playdata)
-//   • Web / anything → IndexedDB (with a localStorage fallback)
+//   • Web / anything → the JS CRDT engine (store/crdt.js), persisted to
+//                       IndexedDB (localStorage fallback)
 //
-// All three share one async interface: loadSnapshot(), saveSnapshot(state),
-// sync(). The Go-backed platforms also do real cloud sync; the web fallback
-// is local-only (sync() is a no-op there) but still fully offline-first.
+// All three run the SAME field-level CRDT (Go on desktop/mobile, its JS mirror
+// in the browser) and speak the same op wire format, so every platform is a
+// first-class replica that converges through the sync server. They share one
+// async interface: loadSnapshot(), saveSnapshot(state), sync().
 
 import { Platform } from 'react-native';
+import { Crdt } from './crdt';
 
 // Only the persisted slices of state travel to storage (never `loaded`, etc.).
 export function serializableState(state) {
@@ -133,41 +136,118 @@ function idbSet(db, key, value) {
   });
 }
 
+const CRDT_KEY = 'crdt:v1';
+
+// Persist/restore the raw serialized CRDT (a JSON string) through IndexedDB or,
+// failing that, localStorage.
+async function readRaw(key) {
+  try {
+    if (idbAvailable()) {
+      const db = await openIDB();
+      return (await idbGet(db, key)) || null;
+    }
+    if (typeof localStorage !== 'undefined') return localStorage.getItem(key);
+  } catch {
+    /* unavailable */
+  }
+  return null;
+}
+async function writeRaw(key, value) {
+  try {
+    if (idbAvailable()) {
+      const db = await openIDB();
+      await idbSet(db, key, value);
+    } else if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, value);
+    }
+  } catch {
+    /* quota / private mode — stay in memory */
+  }
+}
+
+// The browser replica: a single in-memory CRDT rehydrated from storage. Its
+// node id (device identity) persists inside the serialized blob, so the same
+// browser keeps a stable identity across reloads — required for HLC tie-breaks.
+let _crdt = null;
+async function loadCrdt() {
+  if (_crdt) return _crdt;
+  const raw = await readRaw(CRDT_KEY);
+  if (raw) {
+    try {
+      _crdt = Crdt.fromJSON(JSON.parse(raw));
+      return _crdt;
+    } catch {
+      /* corrupt → fresh replica */
+    }
+  }
+  _crdt = new Crdt();
+  return _crdt;
+}
+async function persistCrdt() {
+  if (_crdt) await writeRaw(CRDT_KEY, JSON.stringify(_crdt.toJSON()));
+}
+
+// Server config for web sync (set by the Settings sign-in). Until configured,
+// web is offline-only but still a full CRDT replica — it just has no peer.
+let _server = null; // { url, token }
+export function configureServer(cfg) {
+  _server = cfg && cfg.url && cfg.token ? cfg : null;
+}
+export function serverConfig() {
+  return _server;
+}
+
+async function serverSync(crdt) {
+  const pending = crdt.takePending();
+  // Push local ops.
+  if (pending.length) {
+    const r = await fetch(_server.url.replace(/\/$/, '') + '/v1/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token },
+      body: JSON.stringify({ ops: pending }),
+    });
+    if (!r.ok) {
+      crdt.pending.unshift(...pending); // requeue on failure
+      throw new Error('push failed: ' + r.status);
+    }
+  }
+  // Pull remote ops since our cursor.
+  const pr = await fetch(
+    _server.url.replace(/\/$/, '') + '/v1/pull?cursor=' + encodeURIComponent(crdt.cursor || ''),
+    { headers: { authorization: 'Bearer ' + _server.token } }
+  );
+  if (!pr.ok) throw new Error('pull failed: ' + pr.status);
+  const body = await pr.json();
+  const { applied, skipped } = crdt.applyRemote(body.ops || []);
+  crdt.cursor = body.cursor || crdt.cursor;
+  await persistCrdt();
+  return {
+    adapter: 'server',
+    pushed: pending.length,
+    pulled: (body.ops || []).length,
+    applied,
+    skipped,
+    cursor: crdt.cursor,
+    snapshot: JSON.stringify(crdt.materialize()),
+  };
+}
+
 function webAdapter() {
   return {
     name: idbAvailable() ? 'indexeddb' : 'localstorage',
     async loadSnapshot() {
-      try {
-        if (idbAvailable()) {
-          const db = await openIDB();
-          const v = await idbGet(db, KEY);
-          return v ? JSON.parse(v) : null;
-        }
-        if (typeof localStorage !== 'undefined') {
-          const v = localStorage.getItem(KEY);
-          return v ? JSON.parse(v) : null;
-        }
-      } catch {
-        /* corrupt or unavailable → seed */
-      }
-      return null;
+      const c = await loadCrdt();
+      return c.hasData() ? c.materialize() : null;
     },
     async saveSnapshot(state) {
-      const json = JSON.stringify(serializableState(state));
-      try {
-        if (idbAvailable()) {
-          const db = await openIDB();
-          await idbSet(db, KEY, json);
-        } else if (typeof localStorage !== 'undefined') {
-          localStorage.setItem(KEY, json);
-        }
-      } catch {
-        /* quota / private mode — stay in memory */
-      }
+      const c = await loadCrdt();
+      c.applyLocalSnapshot(serializableState(state));
+      await persistCrdt();
     },
-    // Web is local-only; a real cloud adapter lives in the Go engine.
     async sync() {
-      return { adapter: 'local' };
+      const c = await loadCrdt();
+      if (_server) return serverSync(c);
+      return { adapter: 'local' }; // full replica, no peer configured yet
     },
   };
 }

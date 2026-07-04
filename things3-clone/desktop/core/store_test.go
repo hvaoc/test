@@ -245,3 +245,26 @@ func seq(base int64) func() int64 {
 	n := base - 1
 	return func() int64 { n++; return n }
 }
+
+// TestCanonCompat pins the canonical-JSON contract shared with the browser CRDT
+// (src/store/crdt.js canon()). If these change, update BOTH or cross-platform
+// sync will ping-pong. The JS side has a mirror test with the same cases.
+func TestCanonCompat(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`"hello"`, `"hello"`},
+		{`"a<b>&c"`, `"a<b>&c"`},           // NO HTML escaping
+		{`1751000000000`, `1751000000000`}, // large int (task.order), no exponent
+		{`30`, `30`},
+		{`true`, `true`},
+		{`null`, `null`},
+		{`[3,1,2]`, `[3,1,2]`},             // array order preserved
+		{`{"b":1,"a":2}`, `{"a":2,"b":1}`}, // keys sorted
+		{`{"z":{"y":1,"x":2},"a":[1,2]}`, `{"a":[1,2],"z":{"x":2,"y":1}}`}, // nested sort
+	}
+	for _, c := range cases {
+		got := canon(json.RawMessage(c.in))
+		if got != c.want {
+			t.Errorf("canon(%s) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

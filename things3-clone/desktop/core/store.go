@@ -141,6 +141,12 @@ CREATE TABLE IF NOT EXISTS meta (
 // Canonical JSON. Marshalling through interface{} sorts object keys, so two
 // snapshots that differ only in key order don't look like a change (no spurious
 // ops) and register comparisons are stable.
+//
+// CRITICAL: this must produce byte-identical output to the browser CRDT's
+// canon() (src/store/crdt.js) for the same logical value, or a value written on
+// one platform and read on another looks "changed" and the two replicas emit
+// ops back and forth forever. That means HTML escaping OFF (Go escapes <>&  by
+// default; JSON.stringify does not) and sorted object keys (both do this).
 // ---------------------------------------------------------------------------
 
 func canon(raw json.RawMessage) string {
@@ -148,11 +154,13 @@ func canon(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return string(raw)
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return string(raw)
 	}
-	return string(b)
+	return strings.TrimRight(buf.String(), "\n") // Encoder appends a newline
 }
 
 func ekey(kind, id string) string { return kind + "\x1f" + id }
