@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, Modal, ScrollView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet from './BottomSheet';
@@ -9,7 +9,7 @@ import EmojiPicker from './EmojiPicker';
 import ColorPickerSwatch from './ColorPickerSwatch';
 
 // Create a new Project or Area, the two organizing containers in Things.
-export default function NewListSheet({ visible, onClose, navigation }) {
+export default function NewListSheet({ visible, onClose, navigation, initialAreaId }) {
   const { state, addProject, addArea } = useTasks();
   const [mode, setMode] = useState('project'); // 'project' | 'area'
   const [name, setName] = useState('');
@@ -29,6 +29,14 @@ export default function NewListSheet({ visible, onClose, navigation }) {
     setAreaQuery('');
     setMode('project');
   };
+
+  // Opened from an Area's "+" — start as a Project pre-filed into that area.
+  useEffect(() => {
+    if (visible) {
+      setMode('project');
+      setAreaId(initialAreaId ?? null);
+    }
+  }, [visible, initialAreaId]);
 
   const selectedArea = state.areas.find((a) => a.id === areaId) || null;
   const filteredAreas = state.areas.filter((a) =>

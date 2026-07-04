@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
   TextInput,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,7 +32,22 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
   const insets = useSafeAreaInsets();
   const { state, setSetting } = useTasks();
   const [sheet, setSheet] = useState(false);
+  // When the New List sheet is opened from an Area's "+", pre-file the project
+  // into that area.
+  const [sheetAreaId, setSheetAreaId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Collapsed areas (by id) — hides their projects in the sidebar.
+  const [collapsedAreas, setCollapsedAreas] = useState(() => new Set());
+  const toggleArea = (id) =>
+    setCollapsedAreas((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const openNewList = (areaId = null) => {
+    setSheetAreaId(areaId);
+    setSheet(true);
+  };
 
   // Register the whole sidebar as a drag "zone" so a task drag can tell when
   // the pointer is anywhere over the sidebar (not just over a drop target).
@@ -107,7 +123,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
           <Pressable hitSlop={10} onPress={() => setSettingsOpen(true)}>
             <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
           </Pressable>
-          <Pressable hitSlop={10} onPress={() => setSheet(true)}>
+          <Pressable hitSlop={10} onPress={() => openNewList()}>
             <Ionicons name="add" size={26} color={colors.accent} />
           </Pressable>
         </View>
@@ -129,51 +145,63 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
           {smartRow('trash')}
         </View>
 
-        {/* Areas with their projects */}
+        {/* Areas with their projects. The header carries a "+" (add a project
+            into this area) and a chevron to collapse/expand its projects. */}
         {state.areas.map((area) => {
           const projects = state.projects.filter(
             (p) => p.areaId === area.id && p.status === 'open'
           );
+          const collapsed = collapsedAreas.has(area.id);
           return (
             <View key={area.id} style={styles.section}>
-              <Pressable
+              <View
                 style={[
                   styles.areaHeader,
                   selectedKey === `area:${area.id}` && styles.rowSelected,
                 ]}
-                onPress={() =>
-                  navigation.navigate('List', {
-                    areaId: area.id,
-                    title: area.name,
-                  })
-                }
               >
-                {area.emoji ? (
-                  <Text style={styles.areaEmoji}>{area.emoji}</Text>
-                ) : (
-                  <Ionicons name="cube-outline" size={16} color={area.color} />
-                )}
-                <Text style={styles.areaTitle}>{area.name}</Text>
-              </Pressable>
-              {projects.map((p) => (
-                <DropTarget
-                  key={p.id}
-                  targetKey={`project:${p.id}`}
-                  meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
+                <Pressable
+                  style={styles.areaHeaderMain}
+                  onPress={() =>
+                    navigation.navigate('List', { areaId: area.id, title: area.name })
+                  }
                 >
-                  <ProjectRow
-                    project={p}
-                    stats={projectStats(p.id)}
-                    selected={selectedKey === `project:${p.id}`}
-                    onPress={() =>
-                      navigation.navigate('List', {
-                        projectId: p.id,
-                        title: p.name,
-                      })
-                    }
+                  {area.emoji ? (
+                    <Text style={styles.areaEmoji}>{area.emoji}</Text>
+                  ) : (
+                    <Ionicons name="cube-outline" size={16} color={area.color} />
+                  )}
+                  <Text style={styles.areaTitle} numberOfLines={1}>{area.name}</Text>
+                </Pressable>
+                <Pressable hitSlop={6} style={styles.areaBtn} onPress={() => openNewList(area.id)}>
+                  <Ionicons name="add" size={18} color={colors.textSecondary} />
+                </Pressable>
+                <Pressable hitSlop={6} style={styles.areaBtn} onPress={() => toggleArea(area.id)}>
+                  <Ionicons
+                    name="chevron-down"
+                    size={16}
+                    color={colors.textSecondary}
+                    style={{ transform: [{ rotate: collapsed ? '-90deg' : '0deg' }] }}
                   />
-                </DropTarget>
-              ))}
+                </Pressable>
+              </View>
+              {!collapsed &&
+                projects.map((p) => (
+                  <DropTarget
+                    key={p.id}
+                    targetKey={`project:${p.id}`}
+                    meta={{ kind: 'project', id: p.id, areaId: p.areaId }}
+                  >
+                    <ProjectRow
+                      project={p}
+                      stats={projectStats(p.id)}
+                      selected={selectedKey === `project:${p.id}`}
+                      onPress={() =>
+                        navigation.navigate('List', { projectId: p.id, title: p.name })
+                      }
+                    />
+                  </DropTarget>
+                ))}
             </View>
           );
         })}
@@ -201,7 +229,12 @@ export default function HomeScreen({ navigation, selectedKey, embedded }) {
         )}
       </ScrollView>
 
-      <NewListSheet visible={sheet} onClose={() => setSheet(false)} navigation={navigation} />
+      <NewListSheet
+        visible={sheet}
+        onClose={() => setSheet(false)}
+        navigation={navigation}
+        initialAreaId={sheetAreaId}
+      />
       <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </View>
   );
@@ -305,12 +338,25 @@ const styles = StyleSheet.create({
   areaHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+  },
+  areaHeaderMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  areaBtn: {
+    padding: 2,
+    marginLeft: 2,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   areaEmoji: { fontSize: 15, width: 16, textAlign: 'center' },
   areaTitle: {
+    flex: 1,
     ...typography.subhead,
     fontWeight: '700',
     color: colors.textSecondary,
