@@ -113,7 +113,10 @@ export default function VirtualTaskList({
       if (item.kind === 'addtask') {
         return (
           <Pressable style={styles.add} onPress={() => onAddTask && onAddTask(item.headingId ?? null)}>
-            <Ionicons name="add" size={18} color={colors.textTertiary} />
+            {inProject && <View style={styles.moreDisclosure} />}
+            <View style={styles.moreCheckCol}>
+              <Ionicons name="add" size={18} color={colors.textTertiary} />
+            </View>
             <Text style={styles.addText}>Add task</Text>
           </Pressable>
         );
@@ -190,7 +193,7 @@ const styles = StyleSheet.create({
   add: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),

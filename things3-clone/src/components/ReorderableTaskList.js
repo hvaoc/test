@@ -191,6 +191,7 @@ function AddTaskRow({ itemKey, headingId, onAddTask, ctx }) {
       >
         {ctx.showHandle && <View style={styles.addTaskGutter} />}
         <View style={styles.addTaskInner}>
+          {ctx.inProject && <View style={styles.moreDisclosure} />}
           <View style={styles.addTaskIconCol}>
             <Ionicons name="add" size={20} color={colors.accent} />
           </View>
