@@ -27,6 +27,9 @@ export default function StickyTaskSections({
   onOpenTask,
   onToggleSection,
   onToggleMore,
+  // Left inset applied to headers/rows (not the title) so these non-drag lists
+  // line up with the project drag list's handle-gutter on wide layouts.
+  inset = 0,
   contentPadding,
 }) {
   const { data, stickyIndices } = useMemo(() => {
@@ -54,7 +57,7 @@ export default function StickyTaskSections({
         const s = item.section;
         const canToggle = onToggleSection && s.sectionKey != null;
         const inner = (
-          <View style={styles.header}>
+          <View style={[styles.header, inset ? { paddingLeft: spacing.lg + inset } : null]}>
             {canToggle && (
               <Ionicons
                 name="chevron-forward"
@@ -95,7 +98,7 @@ export default function StickyTaskSections({
         const tint = s.iconColor || colors.accent;
         return (
           <Pressable
-            style={styles.more}
+            style={[styles.more, inset ? { paddingLeft: spacing.lg + inset } : null]}
             onPress={() => onToggleMore && onToggleMore(s.sectionKey, s.more.action)}
           >
             <View style={styles.moreCheckCol}>
@@ -108,14 +111,16 @@ export default function StickyTaskSections({
         );
       }
       return (
-        <TaskRow
-          task={item.task}
-          showProject={item.showProject}
-          onPress={() => onOpenTask(item.task.id)}
-        />
+        <View style={inset ? { paddingLeft: inset } : null}>
+          <TaskRow
+            task={item.task}
+            showProject={item.showProject}
+            onPress={() => onOpenTask(item.task.id)}
+          />
+        </View>
       );
     },
-    [header, onOpenTask, onToggleSection, onToggleMore]
+    [header, onOpenTask, onToggleSection, onToggleMore, inset]
   );
 
   return (

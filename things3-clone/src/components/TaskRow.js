@@ -132,11 +132,6 @@ export default function TaskRow({
                   </Text>
                 </View>
               )}
-              {task.tags?.map((tag) => (
-                <View key={tag} style={styles.tagChip}>
-                  <Text style={styles.tagText}>{tag}</Text>
-                </View>
-              ))}
               {!!task.deadline && (
                 <View style={styles.metaItem}>
                   <Ionicons
@@ -151,6 +146,13 @@ export default function TaskRow({
                   </Text>
                 </View>
               )}
+              {/* Labels last — they vary in count, so keeping them at the end
+                  leaves the fixed metadata above aligned across rows. */}
+              {task.tags?.map((tag) => (
+                <View key={tag} style={styles.tagChip}>
+                  <Text style={styles.tagText}>{tag}</Text>
+                </View>
+              ))}
             </View>
           ) : null}
         </View>

@@ -967,6 +967,9 @@ export default function ListScreen({
           onOpenTask={setOpenTaskId}
           onToggleSection={cycleSection}
           onToggleMore={onToggleMore}
+          // Match the project drag list's handle-gutter inset on wide layouts so
+          // Area/Logbook rows line up with project rows even without a handle.
+          inset={isWide ? HANDLE_W : 0}
           contentPadding={{ paddingBottom: insets.bottom + 100 }}
         />
         {listId !== 'logbook' && listId !== 'trash' && !areaId && (
