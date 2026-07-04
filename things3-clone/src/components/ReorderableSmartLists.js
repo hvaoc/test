@@ -1,6 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -9,22 +8,21 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import { colors, spacing } from '../theme';
 
 const ROW_H = 44; // sidebar row height (paddingVertical 9 + 26px icon)
 const SPRING = { damping: 24, stiffness: 240, mass: 0.6 };
 
-// Drag-to-reorder for the middle group of sidebar smart lists, driven from a
-// visible grip handle. Layout is a single source of truth (a positions map),
-// so committing the new order doesn't make rows snap/jump. The drag is clamped
-// to the group's own span, so a row can't cross the pinned rows or the Areas
-// below. A tap on the row still navigates (the handle owns the drag).
+// Drag-to-reorder for the middle group of sidebar smart lists. Long-press a row
+// to pick it up (a quick tap still navigates); no handle. Layout is a single
+// source of truth (a positions map), so committing the new order doesn't make
+// rows snap/jump. The drag is clamped to the group's own span, so a row can't
+// cross the pinned rows or the Areas below.
 export default function ReorderableSmartLists({ ids, renderRow, onReorder }) {
   const positions = useSharedValue(listToObject(ids));
 
-  // When the id set/order changes (a committed reorder, or a new list appears),
-  // re-seed positions so layout matches the array. For a committed reorder the
-  // values are unchanged, so nothing re-animates.
+  // Re-seed positions when the id set/order changes (a committed reorder or a
+  // new list appearing). For a committed reorder the values are unchanged, so
+  // nothing re-animates.
   useEffect(() => {
     positions.value = listToObject(ids);
   }, [ids.join(',')]);
@@ -80,6 +78,7 @@ function ReorderItem({ id, count, positions, onCommit, children }) {
   );
 
   const pan = Gesture.Pan()
+    .activateAfterLongPress(220)
     .onStart(() => {
       dragging.value = true;
       startTop.value = positions.value[id] * ROW_H;
@@ -106,26 +105,9 @@ function ReorderItem({ id, count, positions, onCommit, children }) {
 
   return (
     <Animated.View style={style}>
-      <View style={styles.rowWrap}>
-        <View style={styles.rowContent}>{children}</View>
-        <GestureDetector gesture={pan}>
-          <View style={styles.handle}>
-            <Ionicons name="reorder-three-outline" size={22} color={colors.separatorStrong} />
-          </View>
-        </GestureDetector>
-      </View>
+      <GestureDetector gesture={pan}>
+        <View>{children}</View>
+      </GestureDetector>
     </Animated.View>
   );
 }
-
-const styles = StyleSheet.create({
-  rowWrap: { flexDirection: 'row', alignItems: 'center' },
-  rowContent: { flex: 1 },
-  handle: {
-    paddingHorizontal: spacing.sm,
-    height: ROW_H,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { cursor: 'grab' } : null),
-  },
-});
