@@ -204,7 +204,7 @@ function AddTaskRow({ itemKey, headingId, onAddTask, ctx }) {
 // The three-state "show N more" / "show less" row at the tail of a section that
 // has more than the minimal 10 items. Rides the layout like the other rows.
 function MoreRow({ itemKey, sectionKey, action, hidden, color, onToggleMore, ctx }) {
-  const { heights, showHandle } = ctx;
+  const { heights, showHandle, inProject } = ctx;
   const top = useRowTop(itemKey, ctx);
   const style = useAnimatedStyle(() => ({ position: 'absolute', left: 0, right: 0, top: top.value }));
   const tint = color || colors.accent;
@@ -216,8 +216,14 @@ function MoreRow({ itemKey, sectionKey, action, hidden, color, onToggleMore, ctx
         onPress={() => onToggleMore && onToggleMore(sectionKey, action)}
       >
         {showHandle && <View style={styles.rowGutter} />}
+        {/* Mirror a task row's leading columns so the label lands in the title
+            column: an (empty) disclosure gutter in project views, then the
+            checkbox-width column holding the chevron. */}
         <View style={styles.moreInner}>
-          <Ionicons name={action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+          {inProject && <View style={styles.moreDisclosure} />}
+          <View style={styles.moreCheckCol}>
+            <Ionicons name={action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+          </View>
           <Text style={[styles.moreText, { color: tint }]}>
             {action === 'more' ? `Show ${hidden} more` : 'Show less'}
           </Text>
@@ -1039,6 +1045,7 @@ export default function ReorderableTaskList({
     dragDX: useSharedValue(0),
     dragKey: useSharedValue(null),
     showHandle,
+    inProject,
   };
   const { positions, heights, kinds } = ctx;
   const keysKey = items.map((it) => it.key).join(',');
@@ -1252,7 +1259,8 @@ const styles = StyleSheet.create({
   emptySlotInner: { flex: 1, paddingLeft: spacing.lg + 22 + spacing.md, paddingRight: spacing.lg },
   emptySlotText: { ...typography.subhead, color: colors.textTertiary, fontStyle: 'italic' },
   addSectionTextHidden: { opacity: 0 },
-  // "Show N more" / "Show less" row — aligns with task titles.
+  // "Show N more" / "Show less" row — its label lines up with task titles by
+  // reproducing a task row's leading columns.
   moreRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1263,9 +1271,11 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
-    paddingLeft: spacing.lg,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
+  moreDisclosure: { width: 20, marginRight: -spacing.sm },
+  moreCheckCol: { width: 22, alignItems: 'center' },
   moreText: { ...typography.subhead, fontWeight: '600' },
   rowBody: { flex: 1 },
   // Drop-target placeholder shown under the floating dragged row.

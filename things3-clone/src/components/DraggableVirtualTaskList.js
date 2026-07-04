@@ -317,7 +317,10 @@ function RowContent({ item, showProject, inProject, onOpenTask, onToggleExpand, 
     const tint = item.color || colors.accent;
     return (
       <Pressable style={styles.more} onPress={() => onToggleMore && onToggleMore(item.sectionKey, item.action)}>
-        <Ionicons name={item.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+        {inProject && <View style={styles.moreDisclosure} />}
+        <View style={styles.moreCheckCol}>
+          <Ionicons name={item.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+        </View>
         <Text style={[styles.moreText, { color: tint }]}>
           {item.action === 'more' ? `Show ${item.hidden} more` : 'Show less'}
         </Text>
@@ -433,10 +436,12 @@ const styles = StyleSheet.create({
   more: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
     height: ROW_H,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
+  moreDisclosure: { width: 20, marginRight: -spacing.sm },
+  moreCheckCol: { width: 22, alignItems: 'center' },
   moreText: { ...typography.subhead, fontWeight: '600' },
 });

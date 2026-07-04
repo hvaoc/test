@@ -98,7 +98,9 @@ export default function StickyTaskSections({
             style={styles.more}
             onPress={() => onToggleMore && onToggleMore(s.sectionKey, s.more.action)}
           >
-            <Ionicons name={s.more.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+            <View style={styles.moreCheckCol}>
+              <Ionicons name={s.more.action === 'more' ? 'chevron-down' : 'chevron-up'} size={15} color={tint} />
+            </View>
             <Text style={[styles.moreText, { color: tint }]}>
               {s.more.action === 'more' ? `Show ${s.more.hidden} more` : 'Show less'}
             </Text>
@@ -152,10 +154,11 @@ const styles = StyleSheet.create({
   more: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
+  moreCheckCol: { width: 22, alignItems: 'center' },
   moreText: { ...typography.subhead, fontWeight: '600' },
 });
