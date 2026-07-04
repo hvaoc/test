@@ -34,6 +34,7 @@ import CalendarView from '../components/CalendarView';
 import GanttView from '../components/GanttView';
 import DisplayMenu from '../components/DisplayMenu';
 import VirtualTaskList from '../components/VirtualTaskList';
+import DraggableVirtualTaskList from '../components/DraggableVirtualTaskList';
 import StickyTaskSections from '../components/StickyTaskSections';
 import SectionEditor from '../components/SectionEditor';
 import { useIsWide } from '../navigation/responsive';
@@ -886,19 +887,33 @@ export default function ListScreen({
   // viewport stay in the DOM, so every list scales to any number of tasks.
   let surfaceItems = null;
   let surfaceShowProject = false;
+  // The matching commit handler, so the windowed list can also drag-reorder.
+  let surfaceCommit = null;
   if (project) {
-    if (projectView === 'list' && !groupedSections) surfaceItems = projectItems;
-    else if (projectView === 'list' && groupedSections) surfaceItems = buildDateItems(groupedSections, project.color);
-    else if (projectView === 'date') surfaceItems = buildDateItems(projectDateSections, project.color);
+    if (projectView === 'list' && !groupedSections) {
+      surfaceItems = projectItems;
+      surfaceCommit = commitProjectLayout;
+    } else if (projectView === 'list' && groupedSections) {
+      surfaceItems = buildDateItems(groupedSections, project.color);
+      surfaceCommit =
+        grouping === 'date'
+          ? commitDateLayout
+          : (keys) => reorderTasks(keys.filter((k) => !k.startsWith('d:')));
+    } else if (projectView === 'date') {
+      surfaceItems = buildDateItems(projectDateSections, project.color);
+      surfaceCommit = commitDateLayout;
+    }
   } else if (listId === 'upcoming') {
     surfaceItems = buildDateItems(
       groupByDate(selectForList(state.tasks, 'upcoming'), state.settings?.showCompleted, dateFormat),
       null
     );
     surfaceShowProject = true;
+    surfaceCommit = commitDateLayout;
   } else if (listId === 'today' && listReorderable) {
     surfaceItems = todayItems;
     surfaceShowProject = true;
+    surfaceCommit = commitTodayLayout;
   } else if (!isEmpty) {
     // Generic smart list / area: flatten its sections into divider + task rows.
     const flat = [];
@@ -914,25 +929,46 @@ export default function ListScreen({
     });
     surfaceItems = flat;
     surfaceShowProject = true;
+    if (listReorderable) surfaceCommit = reorderTasks;
   }
 
-  // Above ~120 rows, virtualize. Trades rich drag-reorder (impractical at that
-  // scale) for a bounded DOM; smaller lists keep the full drag list below.
-  if (surfaceItems && surfaceItems.length > 120) {
+  // Above this many rows, virtualize. Kept generous so normal projects and a
+  // full Upcoming still use the rich (absolutely-positioned) drag list below;
+  // only genuinely huge lists fall back to the windowed VirtualTaskList, which
+  // has its own simpler drag-reorder.
+  if (surfaceItems && surfaceItems.length > 400) {
+    const virtualHeader = <View style={[styles.contentCol, centered && styles.contentColCentered]}>{titleHeader}</View>;
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {navBar}
-        <VirtualTaskList
-          items={surfaceItems}
-          header={<View style={[styles.contentCol, centered && styles.contentColCentered]}>{titleHeader}</View>}
-          inProject={!!project}
-          showProject={surfaceShowProject}
-          onOpenTask={setOpenTaskId}
-          onToggleExpand={toggleTaskExpand}
-          onToggleCollapse={toggleHeadingCollapsed}
-          onToggleDivider={toggleDate}
-          onAddTask={handleAddInSection}
-        />
+        {surfaceCommit ? (
+          // Windowed AND drag-reorderable (uniform-height rows). Used for the
+          // huge reorderable lists (e.g. a 2k-task project).
+          <DraggableVirtualTaskList
+            items={surfaceItems}
+            header={virtualHeader}
+            inProject={!!project}
+            showProject={surfaceShowProject}
+            onOpenTask={setOpenTaskId}
+            onToggleExpand={toggleTaskExpand}
+            onToggleCollapse={toggleHeadingCollapsed}
+            onToggleDivider={toggleDate}
+            onAddTask={handleAddInSection}
+            onCommitKeys={surfaceCommit}
+          />
+        ) : (
+          <VirtualTaskList
+            items={surfaceItems}
+            header={virtualHeader}
+            inProject={!!project}
+            showProject={surfaceShowProject}
+            onOpenTask={setOpenTaskId}
+            onToggleExpand={toggleTaskExpand}
+            onToggleCollapse={toggleHeadingCollapsed}
+            onToggleDivider={toggleDate}
+            onAddTask={handleAddInSection}
+          />
+        )}
         {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
           <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
         )}
