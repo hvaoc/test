@@ -14,12 +14,14 @@ PLATFORM="${1:-darwin/arm64}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # things3-clone/
 DESKTOP="$ROOT/desktop"
 
-# macOS builds need the full Xcode toolchain (CGO/WebKit).
+# macOS builds need a developer toolchain (CGO/WebKit). Use whichever is active
+# — full Xcode or just the Command Line Tools — instead of assuming Xcode.app.
 if [[ "$PLATFORM" == darwin/* ]]; then
-  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-  # Sign + notarize every macOS build by default so it opens clean on any Mac.
-  # Override per-build via env, e.g. `MACOS_SIGN_IDENTITY= NOTARY_PROFILE= npm run desktop`
-  # for a quick unsigned build.
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo /Library/Developer/CommandLineTools)}"
+  # Preferred signing identity + notary profile. These are only USED if they're
+  # actually available in the keychain (checked after the build); on a machine
+  # without them the build simply stays unsigned instead of failing. Override to
+  # '' to force an unsigned build: `MACOS_SIGN_IDENTITY= npm run desktop`.
   : "${MACOS_SIGN_IDENTITY=Developer ID Application: Function of Q Technology Inc. (78QX5ZLWEA)}"
   : "${NOTARY_PROFILE=things-notary}"
 fi
@@ -77,40 +79,56 @@ wails build -platform "$PLATFORM" -clean
 APP="$(ls -d "$DESKTOP"/build/bin/*.app | head -1)"
 echo "✓ Built: $APP"
 
-# ── Optional: codesign + notarize for distribution ─────────────────────────
-# Set MACOS_SIGN_IDENTITY to a "Developer ID Application: … (TEAMID)" identity
-# to sign with a hardened runtime; also set NOTARY_PROFILE (a stored
-# `xcrun notarytool store-credentials` profile) to notarize + staple so the app
-# opens with no Gatekeeper warning on other Macs. Plain builds stay unsigned.
-if [[ "$PLATFORM" == darwin/* && -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
-  echo "▸ Codesigning (Developer ID, hardened runtime)…"
-  codesign --force --options runtime --timestamp \
-    ${MACOS_ENTITLEMENTS:+--entitlements "$MACOS_ENTITLEMENTS"} \
-    --sign "$MACOS_SIGN_IDENTITY" "$APP"
-  codesign --verify --strict --verbose=2 "$APP"
-  echo "✓ Signed."
+# ── Codesign + notarize (only when the toolchain is fully available) ────────
+# The app is signed with a hardened runtime IF a Developer ID Application
+# identity is in the keychain, and additionally notarized + stapled IF a valid
+# notary profile exists. Anything missing → the build stays as-is (Wails already
+# ad-hoc self-signs it, so it runs locally). Nothing here can fail the build.
+if [[ "$PLATFORM" == darwin/* ]]; then
+  # Resolve a usable signing identity: the preferred one if it's present, else
+  # the first Developer ID Application identity in the keychain.
+  SIGN_ID=""
+  if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]] \
+     && security find-identity -v -p codesigning 2>/dev/null | grep -qF "$MACOS_SIGN_IDENTITY"; then
+    SIGN_ID="$MACOS_SIGN_IDENTITY"
+  else
+    SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+      | grep -o '"Developer ID Application:[^"]*"' | head -1 | tr -d '"' || true)"
+  fi
 
-  if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-    echo "▸ Notarizing (waits for Apple)…"
-    ZIP="${APP%.app}.zip"
-    # Non-fatal: a missing/invalid notary profile must not discard a good signed
-    # build — warn and continue so you still get a runnable, signed app.
-    if /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP" \
-      && xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait \
-      && xcrun stapler staple "$APP" \
-      && xcrun stapler validate "$APP"; then
-      rm -f "$ZIP"
-      echo "✓ Notarized + stapled — opens clean on any Mac."
+  if [[ -z "$SIGN_ID" ]]; then
+    echo "ℹ No Developer ID Application identity in the keychain — leaving the"
+    echo "  build ad-hoc self-signed (runs on this Mac). Install a Developer ID"
+    echo "  cert to produce a distributable signed build."
+  elif codesign --force --options runtime --timestamp \
+         ${MACOS_ENTITLEMENTS:+--entitlements "$MACOS_ENTITLEMENTS"} \
+         --sign "$SIGN_ID" "$APP" \
+       && codesign --verify --strict --verbose=2 "$APP"; then
+    echo "✓ Signed (Developer ID, hardened runtime): $SIGN_ID"
+
+    # Notarize if a notary profile is set. We attempt it rather than pre-probing
+    # (a network 'notarytool history' check is flaky); a bad/missing profile just
+    # fails the submit below and is handled non-fatally.
+    if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+      echo "▸ Notarizing with profile '$NOTARY_PROFILE' (waits for Apple)…"
+      ZIP="${APP%.app}.zip"
+      if /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP" \
+        && xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait \
+        && xcrun stapler staple "$APP" \
+        && xcrun stapler validate "$APP"; then
+        rm -f "$ZIP"
+        echo "✓ Notarized + stapled — opens clean on any Mac."
+      else
+        rm -f "$ZIP"
+        echo "⚠ Notarization failed — the app is SIGNED but not notarized."
+        echo "  Recipients can right-click → Open until it's notarized."
+      fi
     else
-      rm -f "$ZIP"
-      echo "⚠ Notarization skipped/failed — the '$NOTARY_PROFILE' keychain profile"
-      echo "  isn't available. Recreate it with:"
-      echo "    xcrun notarytool store-credentials \"$NOTARY_PROFILE\" --apple-id <id> --team-id 78QX5ZLWEA --password <app-specific-pw>"
-      echo "  The app is signed; recipients can right-click → Open until then."
+      echo "ℹ Signed but NOT notarized (no usable NOTARY_PROFILE). Create one with:"
+      echo "    xcrun notarytool store-credentials <name> --apple-id <id> --team-id <TEAMID> --password <app-specific-pw>"
+      echo "  then re-run with NOTARY_PROFILE=<name>."
     fi
   else
-    echo "⚠ Signed but NOT notarized (set NOTARY_PROFILE to notarize). Other Macs will still warn."
+    echo "⚠ Codesign failed — leaving the ad-hoc self-signed build."
   fi
-else
-  echo "ℹ Unsigned build. Set MACOS_SIGN_IDENTITY (+ NOTARY_PROFILE) to sign/notarize."
 fi
