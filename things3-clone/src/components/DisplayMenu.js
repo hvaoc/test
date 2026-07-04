@@ -160,7 +160,7 @@ const styles = StyleSheet.create({
   layoutTab: {
     flexGrow: 1, minWidth: 84, alignItems: 'center', gap: 3, paddingVertical: spacing.sm,
     borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator,
-    backgroundColor: colors.groupedBackground, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+    backgroundColor: colors.surfaceMuted, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   layoutTabActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   layoutLabel: { ...typography.caption, color: colors.textSecondary },
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   selectValue: { ...typography.subhead, color: colors.text },
-  options: { borderRadius: radius.sm, backgroundColor: colors.groupedBackground, marginBottom: spacing.xs, overflow: 'hidden' },
+  options: { borderRadius: radius.sm, backgroundColor: colors.surfaceMuted, marginBottom: spacing.xs, overflow: 'hidden' },
   option: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,

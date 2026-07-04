@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
   },
   cancel: {
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,

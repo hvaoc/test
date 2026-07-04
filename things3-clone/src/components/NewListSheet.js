@@ -196,7 +196,7 @@ function SegBtn({ label, active, onPress }) {
 const styles = StyleSheet.create({
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: radius.md,
     padding: 3,
     marginBottom: spacing.lg,

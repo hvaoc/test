@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
-  tabActive: { backgroundColor: colors.groupedBackground },
+  tabActive: { backgroundColor: colors.surfaceMuted },
   tabIcon: { fontSize: 18 },
   gridScroll: { flex: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', padding: spacing.sm, gap: 2 },

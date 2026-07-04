@@ -340,7 +340,20 @@ const fmtDur = (m) => (m % 60 === 0 ? `${m / 60}h` : m < 60 ? `${m}m` : `${Math.
 
 // The always-visible, first-class attributes for a task. Each row shows the
 // current value and opens the matching editor sheet; Start/Duration edit inline.
-function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpdate, style }) {
+// Text/selection tones for the properties panel. It always uses the content
+// tones: its surface is `panelSurface`, which equals the sidebar surface for most
+// themes and a slightly darker shade of the content pane for the "deep" class —
+// either way the content text contrasts it.
+const CONTENT_TONE = {
+  label: colors.textSecondary,
+  value: colors.text,
+  muted: colors.textTertiary,
+  icon: colors.textSecondary,
+  highlight: colors.accentSoft,
+  divider: colors.separator,
+};
+
+function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpdate, style, tone = CONTENT_TONE }) {
   // Date and Priority edit inline via a popover anchored to their row; the rest
   // still open their bottom sheets.
   const [popover, setPopover] = useState(null); // { kind, anchor }
@@ -348,14 +361,14 @@ function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpd
   const close = () => setPopover(null);
   return (
     <View style={[styles.panel, style]}>
-      <Text style={styles.panelHeader}>Details</Text>
-      <FieldRow icon="ellipse" iconColor={containerColor} label="Project" value={containerLabel} active onPress={() => onEdit('move')} />
-      <FieldRow icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={popover?.kind === 'when'} onPress={open('when')} />
-      <TimeField task={task} onUpdate={onUpdate} />
-      <FieldRow icon="alarm-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
-      <FieldRow icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={popover?.kind === 'priority'} onPress={open('priority')} />
-      <FieldRow icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
-      <FieldRow icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
+      <Text style={[styles.panelHeader, { color: tone.muted }]}>Details</Text>
+      <FieldRow tone={tone} icon="ellipse" iconColor={containerColor} label="Project" value={containerLabel} active onPress={() => onEdit('move')} />
+      <FieldRow tone={tone} icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={popover?.kind === 'when'} onPress={open('when')} />
+      <TimeField task={task} onUpdate={onUpdate} tone={tone} />
+      <FieldRow tone={tone} icon="alarm-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
+      <FieldRow tone={tone} icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={popover?.kind === 'priority'} onPress={open('priority')} />
+      <FieldRow tone={tone} icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
+      <FieldRow tone={tone} icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
 
       <AnchoredPopover visible={popover?.kind === 'priority'} anchor={popover?.anchor} onClose={close}>
         <PriorityMenu value={task.priority} onChange={(p) => { onUpdate({ priority: p }); close(); }} />
@@ -369,7 +382,7 @@ function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpd
 
 // A field row: gray label on top, icon + value below, hairline divider. Tapping
 // measures itself and passes its screen rect so a popover can anchor to it.
-function FieldRow({ icon, iconColor, label, value, active, highlighted, onPress }) {
+function FieldRow({ icon, iconColor, label, value, active, highlighted, onPress, tone = CONTENT_TONE }) {
   const ref = useRef(null);
   const handlePress = () => {
     const node = ref.current;
@@ -380,11 +393,15 @@ function FieldRow({ icon, iconColor, label, value, active, highlighted, onPress 
     }
   };
   return (
-    <Pressable ref={ref} style={[styles.fieldRow, highlighted && styles.fieldRowOpen]} onPress={handlePress}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+    <Pressable
+      ref={ref}
+      style={[styles.fieldRow, { borderBottomColor: tone.divider }, highlighted && styles.fieldRowOpen, highlighted && { backgroundColor: tone.highlight }]}
+      onPress={handlePress}
+    >
+      <Text style={[styles.fieldLabel, { color: tone.label }]}>{label}</Text>
       <View style={styles.fieldValueRow}>
-        <Ionicons name={icon} size={18} color={iconColor || colors.textSecondary} style={styles.fieldIcon} />
-        <Text style={[styles.fieldValue, !active && styles.fieldValueMuted]} numberOfLines={1}>{value}</Text>
+        <Ionicons name={icon} size={18} color={iconColor || tone.icon} style={styles.fieldIcon} />
+        <Text style={[styles.fieldValue, { color: active ? tone.value : tone.muted }]} numberOfLines={1}>{value}</Text>
       </View>
     </Pressable>
   );
@@ -463,7 +480,7 @@ function WhenMenu({ value, onChange }) {
 // Start time + duration. A task can only be time-blocked on a concrete date, so
 // the controls are inert (with a hint) until a date is set. Start uses the OS
 // time picker on web; duration is a 15-minute stepper. Empty start = all-day.
-function TimeField({ task, onUpdate }) {
+function TimeField({ task, onUpdate, tone = CONTENT_TONE }) {
   const scheduled = isDateStr(task.when);
   const start = task.startMinutes;
   const dur = task.durationMinutes || 60;
@@ -473,37 +490,39 @@ function TimeField({ task, onUpdate }) {
 
   if (!scheduled) {
     return (
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Time</Text>
+      <View style={[styles.fieldRow, { borderBottomColor: tone.divider }]}>
+        <Text style={[styles.fieldLabel, { color: tone.label }]}>Time</Text>
         <View style={styles.fieldValueRow}>
-          <Ionicons name="time-outline" size={18} color={colors.textTertiary} style={styles.fieldIcon} />
-          <Text style={[styles.fieldValue, styles.fieldValueMuted]} numberOfLines={1}>Set a date first</Text>
+          <Ionicons name="time-outline" size={18} color={tone.muted} style={styles.fieldIcon} />
+          <Text style={[styles.fieldValue, { color: tone.muted }]} numberOfLines={1}>Set a date first</Text>
         </View>
       </View>
     );
   }
   return (
     <>
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Time</Text>
+      <View style={[styles.fieldRow, { borderBottomColor: tone.divider }]}>
+        <Text style={[styles.fieldLabel, { color: tone.label }]}>Time</Text>
         <View style={styles.fieldValueRow}>
-          <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : colors.textSecondary} style={styles.fieldIcon} />
+          <Ionicons name="time-outline" size={18} color={start != null ? colors.accent : tone.icon} style={styles.fieldIcon} />
           <TimePicker minutes={start} onChange={setStart} />
           {start != null && (
             <Pressable onPress={() => setStart(null)} hitSlop={8} style={styles.clearBtn}>
-              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+              <Ionicons name="close-circle" size={16} color={tone.muted} />
             </Pressable>
           )}
         </View>
       </View>
       {start != null && (
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Duration</Text>
+        <View style={[styles.fieldRow, { borderBottomColor: tone.divider }]}>
+          <Text style={[styles.fieldLabel, { color: tone.label }]}>Duration</Text>
           <View style={styles.fieldValueRow}>
-            <Ionicons name="hourglass-outline" size={18} color={colors.textSecondary} style={styles.fieldIcon} />
+            <Ionicons name="hourglass-outline" size={18} color={tone.icon} style={styles.fieldIcon} />
             <View style={styles.stepper}>
+              {/* The ± buttons are self-contained light pills, so their glyphs use
+                  the content color regardless of the panel tone. */}
               <Pressable onPress={() => stepDur(-15)} style={styles.stepBtn}><Ionicons name="remove" size={16} color={colors.textSecondary} /></Pressable>
-              <Text style={styles.stepValue}>{fmtDur(dur)}</Text>
+              <Text style={[styles.stepValue, { color: tone.value }]}>{fmtDur(dur)}</Text>
               <Pressable onPress={() => stepDur(15)} style={styles.stepBtn}><Ionicons name="add" size={16} color={colors.textSecondary} /></Pressable>
             </View>
           </View>
@@ -633,7 +652,7 @@ const styles = StyleSheet.create({
     marginLeft: spacing.xl + spacing.md,
   },
   tagChip: {
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -649,7 +668,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: colors.separator,
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.panelSurface,
   },
   sidePanelScroll: { padding: spacing.lg },
   panel: {},

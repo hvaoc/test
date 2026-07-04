@@ -496,7 +496,7 @@ const styles = StyleSheet.create({
   },
   allDayChipWrap: { maxWidth: 180 },
   allDayChip: {
-    borderLeftWidth: 3, borderRadius: 4, backgroundColor: colors.groupedBackground,
+    borderLeftWidth: 3, borderRadius: 4, backgroundColor: colors.surfaceMuted,
     paddingHorizontal: spacing.sm, paddingVertical: 3,
   },
   allDayChipText: { ...typography.caption, color: colors.text },
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
   blockTime: { ...typography.caption, color: colors.textSecondary, fontSize: 10 },
   done: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   panel: {
-    width: PANEL_W, backgroundColor: colors.groupedBackground,
+    width: PANEL_W, backgroundColor: colors.surfaceMuted,
     borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator,
     paddingHorizontal: spacing.md, paddingTop: spacing.sm, marginRight: -spacing.lg,
   },

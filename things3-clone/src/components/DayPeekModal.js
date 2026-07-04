@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator,
   },
   allDayChip: {
-    borderLeftWidth: 3, borderRadius: 4, backgroundColor: colors.groupedBackground,
+    borderLeftWidth: 3, borderRadius: 4, backgroundColor: colors.surfaceMuted,
     paddingHorizontal: spacing.sm, paddingVertical: 3, maxWidth: '100%',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },

@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     backgroundColor: colors.background,
   },
-  pressed: { backgroundColor: colors.groupedBackground },
+  pressed: { backgroundColor: colors.surfaceMuted },
   // Disclosure gutter to the left of the checkbox; a bare View keeps checkboxes
   // aligned on rows without subtasks.
   chevron: { width: CHEVRON_W, paddingTop: 2, marginRight: -spacing.sm, alignItems: 'center' },
@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
   metaText: { ...typography.caption, color: colors.textTertiary },
   dot: { width: 8, height: 8, borderRadius: 4 },
   tagChip: {
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 1,

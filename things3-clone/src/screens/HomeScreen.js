@@ -138,7 +138,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
     >
       <View style={styles.headerRow}>
         <Text style={styles.appTitle}>Things</Text>
-        {onToggleSidebar && <SidebarToggle onPress={onToggleSidebar} />}
+        {onToggleSidebar && <SidebarToggle onPress={onToggleSidebar} color={colors.sidebarTextSecondary} />}
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -221,7 +221,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
         <Text style={styles.profileName} numberOfLines={1}>
           Havoc <Text style={styles.profilePlan}>· Max</Text>
         </Text>
-        <Ionicons name="chevron-up" size={16} color={colors.textSecondary} />
+        <Ionicons name="chevron-up" size={16} color={colors.sidebarTextSecondary} />
       </Pressable>
 
       <Modal
@@ -255,7 +255,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
                 setSettingsOpen(true);
               }}
             >
-              <Ionicons name="settings-outline" size={18} color={colors.text} />
+              <Ionicons name="settings-outline" size={18} color={colors.sidebarText} />
               <Text style={styles.menuItemText}>Settings</Text>
             </Pressable>
           </Pressable>
@@ -310,13 +310,13 @@ function AreaSection({
           <Text style={styles.areaTitle} numberOfLines={1}>{area.name}</Text>
         </Pressable>
         <Pressable hitSlop={6} style={styles.areaBtn} onPress={onAddProject}>
-          <Ionicons name="add" size={18} color={colors.textSecondary} />
+          <Ionicons name="add" size={18} color={colors.sidebarTextSecondary} />
         </Pressable>
         <Pressable hitSlop={6} style={styles.areaBtn} onPress={onToggle}>
           <Ionicons
             name="chevron-down"
             size={16}
-            color={colors.textSecondary}
+            color={colors.sidebarTextSecondary}
             style={{ transform: [{ rotate: collapsed ? '-90deg' : '0deg' }] }}
           />
         </Pressable>
@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
-  appTitle: { ...typography.largeTitle, color: colors.text },
+  appTitle: { ...typography.largeTitle, color: colors.sidebarText },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
   section: {
     marginBottom: spacing.lg,
@@ -418,10 +418,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     gap: spacing.md,
   },
-  rowPressed: { backgroundColor: colors.separator },
-  // Subtle hover (web) — lighter than the pressed/selected states.
-  rowHover: { backgroundColor: 'rgba(0,0,0,0.045)' },
-  rowSelected: { backgroundColor: colors.accentSoft },
+  rowPressed: { backgroundColor: colors.sidebarHover },
+  // Subtle hover (web) — sidebar-tuned so it reads on dark colored sidebars too.
+  rowHover: { backgroundColor: colors.sidebarHover },
+  rowSelected: { backgroundColor: colors.sidebarSelected },
   iconWrap: {
     width: 26,
     height: 26,
@@ -429,13 +429,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowTitle: { flex: 1, ...typography.body, color: colors.text },
+  rowTitle: { flex: 1, ...typography.body, color: colors.sidebarText },
   badge: {
     ...typography.subhead,
-    color: colors.textSecondary,
+    color: colors.sidebarTextSecondary,
     fontVariant: ['tabular-nums'],
   },
-  badgeMuted: { ...typography.subhead, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+  badgeMuted: { ...typography.subhead, color: colors.sidebarTextTertiary, fontVariant: ['tabular-nums'] },
   // Emoji / hash icon column, sized like the smart-list icon so rows line up.
   projEmoji: { width: 26, textAlign: 'center', fontSize: 17 },
   projHash: { width: 26, textAlign: 'center', ...typography.body, fontWeight: '700' },
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
     flex: 1,
     ...typography.subhead,
     fontWeight: '700',
-    color: colors.textSecondary,
+    color: colors.sidebarTextSecondary,
     textTransform: 'none',
   },
 
@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.separator,
+    borderTopColor: colors.sidebarSeparator,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   avatar: {
@@ -488,17 +488,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: { color: colors.white, fontWeight: '700', fontSize: 14 },
-  profileName: { flex: 1, ...typography.body, color: colors.text, fontWeight: '600' },
-  profilePlan: { color: colors.textTertiary, fontWeight: '400' },
+  profileName: { flex: 1, ...typography.body, color: colors.sidebarText, fontWeight: '600' },
+  profilePlan: { color: colors.sidebarTextTertiary, fontWeight: '400' },
 
-  // Account popover (anchored above the profile row).
+  // Account popover — anchored above the profile row, so it belongs to the
+  // sidebar and uses the sidebar surface + text (matches whatever the sidebar is).
   menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' },
   profileMenu: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.groupedBackground,
     borderRadius: radius.lg,
     paddingVertical: spacing.xs,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separatorStrong,
+    borderColor: colors.sidebarSeparator,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 20,
@@ -507,12 +508,12 @@ const styles = StyleSheet.create({
   },
   menuEmail: {
     ...typography.caption,
-    color: colors.textTertiary,
+    color: colors.sidebarTextTertiary,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
     paddingBottom: spacing.sm,
   },
-  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
+  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.sidebarSeparator },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -523,6 +524,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
-  menuItemActive: { backgroundColor: colors.accentSoft },
-  menuItemText: { ...typography.body, color: colors.text },
+  menuItemActive: { backgroundColor: colors.sidebarSelected },
+  menuItemText: { ...typography.body, color: colors.sidebarText },
 });

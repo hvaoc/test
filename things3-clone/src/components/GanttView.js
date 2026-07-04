@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
   gridSection: {
     justifyContent: 'center',
     paddingHorizontal: spacing.sm,
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.separator,
   },
@@ -500,7 +500,7 @@ const styles = StyleSheet.create({
   tlTodayCol: { backgroundColor: colors.accentSoft },
   tlDayText: { ...typography.caption, color: colors.textTertiary, fontSize: 10 },
   tlTodayText: { color: colors.accent, fontWeight: '700' },
-  tlSection: { backgroundColor: colors.groupedBackground, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  tlSection: { backgroundColor: colors.surfaceMuted, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
   tlRow: { justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
   bar: {
     position: 'absolute',

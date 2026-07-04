@@ -1288,7 +1288,7 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.md,
     marginVertical: 2,
     borderRadius: radius.sm,
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
   },
   dropLineRow: {
     position: 'absolute',

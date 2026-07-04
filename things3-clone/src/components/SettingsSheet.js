@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, typography, radius } from '../theme';
+import { colors, spacing, typography, radius, THEMES, getThemeId, setThemeId, subscribeTheme } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { useIsWide } from '../navigation/responsive';
 import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
@@ -27,6 +27,7 @@ import {
   ZOOM_MAX,
   ZOOM_DEFAULT,
 } from '../utils/zoom';
+import { hasWindowApi, getWindowMode, setWindowMode } from '../utils/windowMode';
 
 // Curated IANA timezones ('' = the device's local zone).
 const TIMEZONES = [
@@ -146,6 +147,28 @@ function ZoomControl() {
         <Text style={[styles.zoomResetText, atDefault && styles.zoomResetTextOff]}>Reset</Text>
       </Pressable>
     </View>
+  );
+}
+
+// Desktop-only: how the app window opens (maximized vs. remember last size).
+// Persisted on the Go side; only rendered in the Wails build.
+function WindowStartControl() {
+  const [mode, setMode] = useState('maximized');
+  useEffect(() => {
+    let alive = true;
+    getWindowMode().then((m) => { if (alive && m) setMode(m); });
+    return () => { alive = false; };
+  }, []);
+  const choose = (m) => { setMode(m); setWindowMode(m); };
+  return (
+    <Segment
+      options={[
+        { value: 'maximized', label: 'Maximized' },
+        { value: 'remember', label: 'Last size' },
+      ]}
+      value={mode}
+      onChange={choose}
+    />
   );
 }
 
@@ -389,9 +412,18 @@ function GeneralSection({ settings, setSetting }) {
         <Field
           label="Zoom"
           hint="Scale the whole app. Also adjustable with ⌘+ / ⌘- / ⌘0 (or the View menu on desktop)."
-          last
+          last={!hasWindowApi()}
         >
           <ZoomControl />
+        </Field>
+      )}
+      {hasWindowApi() && (
+        <Field
+          label="Window on startup"
+          hint="Open maximized, or remember the last window size and position."
+          last
+        >
+          <WindowStartControl />
         </Field>
       )}
 
@@ -475,31 +507,57 @@ function BackupsSection({ reset, onClose }) {
   );
 }
 
+// A single two-tone theme swatch: a sidebar band against the content surface
+// with an accent dot. System shows a split light/dark chip.
+function ThemeSwatch({ theme }) {
+  if (theme.system) {
+    return (
+      <View style={styles.themeSwatch}>
+        <View style={[styles.themeSwatchHalf, { backgroundColor: '#f5f6f8' }]} />
+        <View style={[styles.themeSwatchHalf, { backgroundColor: '#18181a' }]} />
+      </View>
+    );
+  }
+  const p = theme.palette;
+  return (
+    <View style={[styles.themeSwatch, { backgroundColor: p.background }]}>
+      <View style={[styles.themeSwatchSidebar, { backgroundColor: p.groupedBackground }]} />
+      <View style={[styles.themeSwatchDot, { backgroundColor: p.accent }]} />
+    </View>
+  );
+}
+
 function ThemeSection() {
-  const [appearance, setAppearance] = useState('light');
-  const [accent, setAccent] = useState(colors.accent);
-  const swatches = [colors.accent, '#E91E8C', '#7C5CFF', '#0A84FF', '#34C759', '#FF9F0A'];
+  const [themeId, setThemeState] = useState(() => getThemeId());
+  useEffect(() => subscribeTheme(setThemeState), []);
   return (
     <>
-      <Field label="Appearance" hint="Prototype renders in Light; the others are placeholders.">
-        <Segment
-          options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]}
-          value={appearance}
-          onChange={setAppearance}
-        />
-      </Field>
       <View style={styles.field}>
         <View style={styles.fieldLabelWrap}>
-          <Text style={styles.fieldLabel}>Accent color</Text>
-          <Text style={styles.fieldHint}>Used for highlights, checks, and buttons.</Text>
+          <Text style={styles.fieldLabel}>Theme</Text>
+          <Text style={styles.fieldHint}>
+            System follows your OS light/dark setting. Every theme is two-tone — a
+            tinted sidebar against the content pane.
+          </Text>
         </View>
-        <View style={styles.swatchRow}>
-          {swatches.map((c) => (
-            <Pressable key={c} onPress={() => setAccent(c)} style={[styles.swatch, { backgroundColor: c }, accent === c && styles.swatchActive]}>
-              {accent === c && <Ionicons name="checkmark" size={14} color={colors.white} />}
+      </View>
+      <View style={styles.themeGrid}>
+        {THEMES.map((t) => {
+          const active = t.id === themeId;
+          return (
+            <Pressable
+              key={t.id}
+              onPress={() => setThemeId(t.id)}
+              style={[styles.themeCard, active && styles.themeCardActive]}
+            >
+              <ThemeSwatch theme={t} />
+              <View style={styles.themeCardLabel}>
+                <Text style={styles.themeName} numberOfLines={1}>{t.name}</Text>
+                {active && <Ionicons name="checkmark-circle" size={16} color={colors.accent} />}
+              </View>
             </Pressable>
-          ))}
-        </View>
+          );
+        })}
       </View>
     </>
   );
@@ -550,6 +608,8 @@ export default function SettingsSheet({ visible, onClose }) {
   const isWide = useIsWide();
   const [active, setActive] = useState('account');
   const [query, setQuery] = useState('');
+  // Advanced/placeholder sections are hidden until the user expands the list.
+  const [showAll, setShowAll] = useState(false);
   // On narrow screens the nav and the section are separate views (master/detail).
   const [showNav, setShowNav] = useState(true);
 
@@ -558,14 +618,14 @@ export default function SettingsSheet({ visible, onClose }) {
   const SECTIONS = useMemo(() => [
     { id: 'account', label: 'Account', icon: 'person-circle-outline', render: () => <AccountSection /> },
     { id: 'general', label: 'General', icon: 'options-outline', render: () => <GeneralSection settings={settings} setSetting={setSetting} /> },
-    { id: 'desktop', label: 'Desktop', icon: 'desktop-outline', render: () => (
+    { id: 'desktop', label: 'Desktop', icon: 'desktop-outline', hidden: true, render: () => (
       <MockSection rows={[
         { label: 'Launch at login', hint: 'Open the app automatically when you sign in.', initial: true },
         { label: 'Keep in menu bar', hint: 'Show a quick-access icon in the menu bar.' },
         { label: 'Show dock badge', hint: 'Badge the app icon with your Today count.', initial: true },
       ]} />
     ) },
-    { id: 'subscription', label: 'Subscription', icon: 'card-outline', render: () => (
+    { id: 'subscription', label: 'Subscription', icon: 'card-outline', hidden: true, render: () => (
       <>
         <View style={styles.planCard}>
           <Text style={styles.planName}>Free</Text>
@@ -577,7 +637,7 @@ export default function SettingsSheet({ visible, onClose }) {
       </>
     ) },
     { id: 'theme', label: 'Theme', icon: 'color-palette-outline', render: () => <ThemeSection /> },
-    { id: 'sidebar', label: 'Sidebar', icon: 'browsers-outline', render: () => (
+    { id: 'sidebar', label: 'Sidebar', icon: 'browsers-outline', hidden: true, render: () => (
       <MockSection
         rows={[
           { label: 'Show item counts', hint: 'Display the number of to-dos next to each list.', initial: true },
@@ -586,25 +646,25 @@ export default function SettingsSheet({ visible, onClose }) {
         note="Tip: drag the smart lists in the sidebar to reorder them."
       />
     ) },
-    { id: 'quickadd', label: 'Quick Add', icon: 'add-circle-outline', render: () => (
+    { id: 'quickadd', label: 'Quick Add', icon: 'add-circle-outline', hidden: true, render: () => (
       <MockSection rows={[
         { label: 'Global shortcut', hint: 'Capture a to-do from anywhere with ⌃Space.', initial: true },
         { label: 'Paste links as titles', hint: 'Fetch the page title when you paste a URL.' },
       ]} />
     ) },
-    { id: 'productivity', label: 'Productivity', icon: 'trending-up-outline', render: () => (
+    { id: 'productivity', label: 'Productivity', icon: 'trending-up-outline', hidden: true, render: () => (
       <MockSection rows={[
         { label: 'Daily goal', hint: 'Celebrate when you clear your Today list.', initial: true },
         { label: 'Track streaks', hint: 'Count consecutive days you finish everything.' },
       ]} />
     ) },
-    { id: 'reminders', label: 'Reminders', icon: 'alarm-outline', render: () => (
+    { id: 'reminders', label: 'Reminders', icon: 'alarm-outline', hidden: true, render: () => (
       <MockSection rows={[
         { label: 'Default reminder', hint: 'Remind me at 9:00 AM on the due date.', initial: true },
         { label: 'Nudge overdue items', hint: 'A gentle daily reminder for anything overdue.' },
       ]} />
     ) },
-    { id: 'notifications', label: 'Notifications', icon: 'notifications-outline', render: () => (
+    { id: 'notifications', label: 'Notifications', icon: 'notifications-outline', hidden: true, render: () => (
       <MockSection rows={[
         { label: 'Push notifications', hint: 'Reminders and shared-list updates.', initial: true },
         { label: 'Play a sound', initial: true },
@@ -612,13 +672,14 @@ export default function SettingsSheet({ visible, onClose }) {
       ]} />
     ) },
     { id: 'backups', label: 'Backups', icon: 'cloud-upload-outline', render: () => <BackupsSection reset={reset} onClose={onClose} /> },
-    { id: 'integrations', label: 'Integrations', icon: 'extension-puzzle-outline', render: () => <IntegrationsSection /> },
+    { id: 'integrations', label: 'Integrations', icon: 'extension-puzzle-outline', hidden: true, render: () => <IntegrationsSection /> },
     { id: 'calendars', label: 'Calendars', icon: 'calendar-outline', render: () => <CalendarsSection settings={settings} setSetting={setSetting} /> },
   ], [settings, setSetting, reset, onClose]);
 
+  const hiddenCount = SECTIONS.filter((s) => s.hidden).length;
   const filtered = query
     ? SECTIONS.filter((s) => s.label.toLowerCase().includes(query.toLowerCase()))
-    : SECTIONS;
+    : SECTIONS.filter((s) => showAll || !s.hidden || s.id === active);
   const current = SECTIONS.find((s) => s.id === active) || SECTIONS[0];
 
   const openSection = (id) => {
@@ -630,11 +691,11 @@ export default function SettingsSheet({ visible, onClose }) {
     <View style={[styles.nav, isWide && styles.navWide]}>
       {isWide && <Text style={styles.navTitle}>Settings</Text>}
       <View style={styles.search}>
-        <Ionicons name="search" size={16} color={colors.textTertiary} />
+        <Ionicons name="search" size={16} color={colors.sidebarTextTertiary} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search"
-          placeholderTextColor={colors.placeholder}
+          placeholderTextColor={colors.sidebarTextTertiary}
           value={query}
           onChangeText={setQuery}
         />
@@ -644,16 +705,24 @@ export default function SettingsSheet({ visible, onClose }) {
           const on = s.id === active;
           return (
             <Pressable key={s.id} onPress={() => openSection(s.id)} style={[styles.navItem, on && isWide && styles.navItemActive]}>
-              <Ionicons name={s.icon} size={20} color={on ? colors.accent : colors.textSecondary} />
+              <Ionicons name={s.icon} size={20} color={on ? colors.accent : colors.sidebarTextSecondary} />
               <Text style={[styles.navLabel, on && isWide && styles.navLabelActive]}>{s.label}</Text>
-              {!isWide && <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} style={{ marginLeft: 'auto' }} />}
+              {!isWide && <Ionicons name="chevron-forward" size={16} color={colors.sidebarTextTertiary} style={{ marginLeft: 'auto' }} />}
             </Pressable>
           );
         })}
         {filtered.length === 0 && <Text style={styles.noResults}>No settings found</Text>}
+        {!query && hiddenCount > 0 && (
+          <Pressable style={styles.navItem} onPress={() => setShowAll((v) => !v)}>
+            <Ionicons name={showAll ? 'chevron-up' : 'ellipsis-horizontal'} size={20} color={colors.sidebarTextTertiary} />
+            <Text style={[styles.navLabel, { color: colors.sidebarTextSecondary }]}>
+              {showAll ? 'Show fewer' : `Show all settings`}
+            </Text>
+          </Pressable>
+        )}
       </ScrollView>
       <Pressable style={styles.addTeam} onPress={() => {}}>
-        <Ionicons name="add" size={18} color={colors.textSecondary} />
+        <Ionicons name="add" size={18} color={colors.sidebarTextSecondary} />
         <Text style={styles.addTeamText}>Add team</Text>
       </Pressable>
     </View>
@@ -740,7 +809,7 @@ const styles = StyleSheet.create({
   },
   panelFull: { width: '100%', height: '100%' },
 
-  // --- Left nav ---
+  // --- Left nav (uses the sidebar tone, so the dialog is two-tone like the app) ---
   nav: { flex: 1, backgroundColor: colors.groupedBackground, paddingHorizontal: spacing.md, paddingTop: spacing.lg },
   // Fixed-width sidebar column. Explicit flex trio (not `flex: 0`) so it fully
   // overrides the base `flex: 1` on web and never shrinks to its content.
@@ -750,21 +819,21 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     flexBasis: NAV_W,
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.separator,
+    borderRightColor: colors.sidebarSeparator,
   },
   mobileNav: { flex: 1, backgroundColor: colors.groupedBackground },
-  navTitle: { ...typography.title, color: colors.text, paddingHorizontal: spacing.sm, marginBottom: spacing.md },
+  navTitle: { ...typography.title, color: colors.sidebarText, paddingHorizontal: spacing.sm, marginBottom: spacing.md },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.separator,
+    backgroundColor: colors.sidebarHover,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     height: 36,
     marginBottom: spacing.md,
   },
-  searchInput: { flex: 1, ...typography.body, color: colors.text, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
+  searchInput: { flex: 1, ...typography.body, color: colors.sidebarText, padding: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
   navList: { flex: 1 },
   navItem: {
     flexDirection: 'row',
@@ -775,10 +844,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
-  navItemActive: { backgroundColor: colors.accentSoft },
-  navLabel: { ...typography.body, color: colors.text },
+  navItemActive: { backgroundColor: colors.sidebarSelected },
+  navLabel: { ...typography.body, color: colors.sidebarText },
   navLabelActive: { color: colors.accent, fontWeight: '600' },
-  noResults: { ...typography.subhead, color: colors.textTertiary, padding: spacing.md },
+  noResults: { ...typography.subhead, color: colors.sidebarTextTertiary, padding: spacing.md },
   addTeam: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -786,12 +855,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.separator,
+    borderTopColor: colors.sidebarSeparator,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
-  addTeamText: { ...typography.body, color: colors.textSecondary, fontWeight: '600' },
+  addTeamText: { ...typography.body, color: colors.sidebarTextSecondary, fontWeight: '600' },
 
-  // --- Right content ---
+  // --- Right content (content tone) ---
   content: { flex: 1, backgroundColor: colors.background },
   contentHeader: {
     flexDirection: 'row',
@@ -971,7 +1040,28 @@ const styles = StyleSheet.create({
   planName: { ...typography.title, color: colors.text, marginBottom: 4 },
 
   // --- Theme ---
-  swatchRow: { flexDirection: 'row', gap: spacing.sm },
-  swatch: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) },
-  swatchActive: { borderWidth: 2, borderColor: colors.text },
+  themeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.sm },
+  themeCard: {
+    width: 132,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separatorStrong,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
+  themeCardActive: { borderWidth: 2, borderColor: colors.accent },
+  themeSwatch: { height: 56, flexDirection: 'row', alignItems: 'center' },
+  themeSwatchSidebar: { width: '34%', height: '100%' },
+  themeSwatchHalf: { flex: 1, height: '100%' },
+  themeSwatchDot: { width: 16, height: 16, borderRadius: 8, marginLeft: spacing.md },
+  themeCardLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+    backgroundColor: colors.card,
+  },
+  themeName: { ...typography.subhead, color: colors.text, fontWeight: '600', flex: 1 },
 });

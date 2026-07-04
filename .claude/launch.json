@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd things3-clone && npx expo start --web --port 8088 --clear"],
+      "port": 8088
+    }
+  ]
+}

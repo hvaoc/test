@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Platform } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Platform, Animated } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -68,17 +68,42 @@ export default function App() {
       delete window.__appZoom;
     };
   }, []);
+
+  // Elegant fade-in on start: the app content fades up, and the pre-bundle HTML
+  // splash (injected into index.html on the desktop/web build) fades out to
+  // reveal it — so there's no flash. Kept quick (~280ms) so it never feels slow.
+  const fade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fade, {
+      toValue: 1,
+      duration: 280,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const splash = document.getElementById('app-splash');
+      if (splash) {
+        // Let the app paint one frame first, then cross-fade the splash away.
+        requestAnimationFrame(() => {
+          splash.style.opacity = '0';
+          setTimeout(() => splash.remove(), 340);
+        });
+      }
+    }
+  }, [fade]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <TasksProvider>
-          {isWails && <WailsTitleBar />}
-          <View style={{ flex: 1 }}>
-            <NavigationContainer>
-              <StatusBar style="dark" />
-              <RootNavigator />
-            </NavigationContainer>
-          </View>
+          <Animated.View style={{ flex: 1, opacity: fade }}>
+            {isWails && <WailsTitleBar />}
+            <View style={{ flex: 1 }}>
+              <NavigationContainer>
+                <StatusBar style="dark" />
+                <RootNavigator />
+              </NavigationContainer>
+            </View>
+          </Animated.View>
         </TasksProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

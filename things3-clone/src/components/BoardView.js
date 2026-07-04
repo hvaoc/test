@@ -495,7 +495,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 5,
     borderRadius: radius.sm,
-    backgroundColor: colors.groupedBackground,
+    backgroundColor: colors.surfaceMuted,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
   },
   segActive: { backgroundColor: colors.accent },

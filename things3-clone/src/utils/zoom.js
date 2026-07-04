@@ -9,9 +9,11 @@ const KEY = 'appZoom';
 export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 3;
 export const ZOOM_STEP = 0.1;
-export const ZOOM_DEFAULT = 1;
+export const ZOOM_DEFAULT = 1; // "actual size" — the reset / Cmd+0 target.
 
 const isWeb = Platform.OS === 'web' && typeof document !== 'undefined';
+// The web/desktop app starts a touch zoomed-out (90%); native has no zoom.
+const ZOOM_INITIAL = isWeb ? 0.9 : ZOOM_DEFAULT;
 const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
 
 const listeners = new Set();
@@ -22,7 +24,7 @@ export function getZoom() {
     const v = parseFloat(window.localStorage.getItem(KEY));
     if (Number.isFinite(v)) return clamp(v);
   } catch {}
-  return ZOOM_DEFAULT;
+  return ZOOM_INITIAL;
 }
 
 // Subscribe to zoom changes (e.g. so the Settings control reflects keyboard/menu
