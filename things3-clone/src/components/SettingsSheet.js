@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius, THEMES, getThemeId, setThemeId, subscribeTheme } from '../theme';
 import { useTasks } from '../store/TasksContext';
+import { authenticate, logout, serverConfig } from '../store/backend';
 import { useIsWide } from '../navigation/responsive';
 import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
 import {
@@ -507,21 +508,35 @@ function BackupsSection({ reset, onClose }) {
   );
 }
 
-// Cloud sync + offline status. The engine (Go SQLite on desktop/mobile,
-// IndexedDB on web) always persists locally; "Sync now" runs one push/pull
-// cycle against the cloud adapter and reports what moved.
+// Cloud sync + offline status. Every platform runs the same field-level CRDT
+// (Go SQLite on desktop/mobile, JS + IndexedDB on web) so it's always a full
+// offline-first replica. On web you sign in to a sync server to converge across
+// devices; "Sync now" runs one push/pull cycle and reports what moved.
 function SyncSection() {
-  const { syncNow, backendName } = useTasks();
+  const { syncNow, backendName, reconnectSync } = useTasks();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [cfg, setCfg] = useState(() => serverConfig());
   const backend = backendName ? backendName() : 'local';
-  const label = { wails: 'Embedded database (desktop)', native: 'Embedded database (mobile)', indexeddb: 'IndexedDB (browser)', localstorage: 'Local storage' }[backend] || backend;
+  const isWeb = Platform.OS === 'web';
+  const label = {
+    wails: 'Embedded SQLite CRDT (desktop)',
+    native: 'Embedded SQLite CRDT (mobile)',
+    indexeddb: 'CRDT + IndexedDB (browser)',
+    localstorage: 'CRDT + local storage',
+  }[backend] || backend;
+
+  // Sign-in form state (web).
+  const [url, setUrl] = useState('http://localhost:8090');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [authErr, setAuthErr] = useState(null);
+  const [authBusy, setAuthBusy] = useState(false);
 
   const run = async () => {
     setBusy(true);
     try {
-      const res = await syncNow();
-      setStatus(res);
+      setStatus(await syncNow());
     } catch (e) {
       setStatus({ error: String(e && e.message ? e.message : e) });
     } finally {
@@ -529,27 +544,75 @@ function SyncSection() {
     }
   };
 
-  const cloud = status && status.adapter && status.adapter !== 'local' && status.adapter !== 'none';
+  const connect = async (mode) => {
+    setAuthBusy(true);
+    setAuthErr(null);
+    try {
+      await authenticate(url, username.trim(), password, mode);
+      setCfg(serverConfig());
+      reconnectSync(); // kick off initial sync + realtime
+      setPassword('');
+    } catch (e) {
+      setAuthErr(String(e && e.message ? e.message : e));
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const disconnect = () => {
+    logout();
+    setCfg(null);
+    setStatus(null);
+    reconnectSync();
+  };
+
+  const cloud = status && status.adapter === 'server';
 
   return (
     <>
-      <Field label="Local store" hint="Your data lives on-device first — the app works fully offline.">
+      <Field label="Local store" hint="Every platform is a full CRDT replica — the app works fully offline and merges per-field on sync.">
         <Text style={styles.value}>{label}</Text>
       </Field>
-      <Field label="Cloud sync" hint="Changes sync through the embedded engine. Web builds are local-only." last>
-        <Text style={styles.value}>{backend === 'wails' || backend === 'native' ? 'Mock adapter' : 'Local only'}</Text>
-      </Field>
-      <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
-        <Btn label={busy ? 'Syncing…' : 'Sync now'} icon="sync" variant="outline" onPress={busy ? undefined : run} />
-      </View>
-      {status && (
-        <Text style={[styles.fieldHint, { marginTop: spacing.md }]}>
-          {status.error
-            ? `Sync failed: ${status.error}`
-            : cloud
-            ? `Synced via “${status.adapter}” — pushed ${status.pushed || 0}, applied ${status.applied || 0}${status.skipped ? `, kept ${status.skipped} local` : ''}.`
-            : 'Saved locally. Connect a cloud backend to sync across devices.'}
-        </Text>
+
+      {cfg ? (
+        <>
+          <Field label="Signed in" hint="Your devices converge automatically through this account." last>
+            <Text style={styles.value}>{cfg.username || 'account'}</Text>
+          </Field>
+          <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>
+            <Btn label={busy ? 'Syncing…' : 'Sync now'} icon="sync" variant="outline" onPress={busy ? undefined : run} />
+            <Btn label="Sign out" variant="outline" onPress={disconnect} />
+          </View>
+          {status && (
+            <Text style={[styles.fieldHint, { marginTop: spacing.md }]}>
+              {status.error
+                ? `Sync failed: ${status.error}`
+                : cloud
+                ? `Synced — pushed ${status.pushed || 0}, applied ${status.applied || 0}${status.skipped ? `, kept ${status.skipped} local` : ''}.`
+                : 'Saved locally.'}
+            </Text>
+          )}
+        </>
+      ) : isWeb ? (
+        <>
+          <View style={styles.hr} />
+          <GroupTitle>Connect to sync server</GroupTitle>
+          <Text style={styles.fieldHint}>
+            Sign in to converge this browser with your other devices in real time. Without an account, this browser still works fully offline.
+          </Text>
+          <TextInput style={styles.syncInput} value={url} onChangeText={setUrl} placeholder="Server URL" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
+          <TextInput style={styles.syncInput} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
+          <TextInput style={styles.syncInput} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={colors.placeholder} secureTextEntry />
+          <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>
+            <Btn label={authBusy ? '…' : 'Sign in'} variant="primary" onPress={authBusy ? undefined : () => connect('login')} />
+            <Btn label="Create account" variant="outline" onPress={authBusy ? undefined : () => connect('register')} />
+          </View>
+          {authErr && <Text style={[styles.fieldHint, { marginTop: spacing.sm, color: colors.overdue }]}>{authErr}</Text>}
+        </>
+      ) : (
+        <Field label="Cloud sync" hint="Set THINGS_SYNC_URL to sync desktop/mobile against a server; otherwise a local mock adapter is used." last>
+          <Text style={styles.value}>Embedded</Text>
+        </Field>
       )}
     </>
   );
@@ -940,6 +1003,17 @@ const styles = StyleSheet.create({
   fieldControl: { flexShrink: 0 },
   groupTitle: { ...typography.subhead, color: colors.textSecondary, fontWeight: '700', textTransform: 'none' },
   value: { ...typography.body, color: colors.text, marginTop: 4 },
+  syncInput: {
+    ...typography.body,
+    color: colors.text,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: Platform.OS === 'ios' ? spacing.sm : spacing.xs,
+    marginTop: spacing.sm,
+    minHeight: 38,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+  },
   bigValue: { ...typography.title, color: colors.text, marginTop: 2 },
   hr: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginVertical: spacing.lg },
 

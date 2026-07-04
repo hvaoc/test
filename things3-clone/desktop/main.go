@@ -147,10 +147,16 @@ func (a *App) SetWindowMode(mode string) {
 // so it appears already in the right size/state — no resize flash.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Open the embedded database and attach the (mock) cloud adapter. Failure is
+	// Open the embedded database and attach a cloud adapter. If THINGS_SYNC_URL
+	// (+ THINGS_SYNC_TOKEN) is set, sync against the real server; otherwise fall
+	// back to the file-backed mock so the app is always demoable. Failure is
 	// non-fatal: the frontend keeps working from its in-memory seed.
 	if store, err := core.Open(dataDir()); err == nil {
-		store.SetAdapter(core.NewMockAdapter(dataDir()))
+		if url := os.Getenv("THINGS_SYNC_URL"); url != "" {
+			store.SetAdapter(core.NewHTTPAdapter(url, os.Getenv("THINGS_SYNC_TOKEN")))
+		} else {
+			store.SetAdapter(core.NewMockAdapter(dataDir()))
+		}
 		a.store = store
 	}
 	p := loadPrefs()

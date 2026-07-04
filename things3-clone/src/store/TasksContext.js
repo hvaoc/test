@@ -5,13 +5,21 @@ import React, {
   useReducer,
   useRef,
   useMemo,
+  useState,
   useCallback,
 } from 'react';
 import { uid } from '../utils/id';
 import { STATUS } from './constants';
 import { buildSampleData } from './sampleData';
 import { setTimeZone } from '../utils/date';
-import { loadSnapshot, saveSnapshot, sync as backendSync, backendName } from './backend';
+import {
+  loadSnapshot,
+  saveSnapshot,
+  sync as backendSync,
+  backendName,
+  serverConfig,
+  openRealtime,
+} from './backend';
 
 const TasksContext = createContext(null);
 
@@ -429,6 +437,8 @@ function reducer(state, action) {
 export function TasksProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const saveTimer = useRef(null);
+  // Bumped after sign-in / sign-out so the realtime effect re-subscribes.
+  const [syncGen, setSyncGen] = useState(0);
 
   // Keep the date utils' active timezone in sync before descendants render, so
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
@@ -543,10 +553,29 @@ export function TasksProvider({ children }) {
         }
         return res;
       },
+      // Called by the Settings sign-in/out so the realtime subscription and an
+      // immediate sync kick in (or tear down) without a reload.
+      reconnectSync: () => setSyncGen((g) => g + 1),
       backendName,
     }),
     []
   );
+
+  // Realtime sync: when a server is configured (web sign-in), do an initial
+  // sync and open a WebSocket that triggers a sync whenever another device
+  // changes this user's data. Re-runs on sign-in/out (syncGen).
+  useEffect(() => {
+    if (!state.loaded || !serverConfig()) return undefined;
+    let cancelled = false;
+    actions.syncNow().catch(() => {});
+    const close = openRealtime(() => {
+      if (!cancelled) actions.syncNow().catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      close();
+    };
+  }, [state.loaded, syncGen, actions]);
 
   const value = useMemo(() => ({ state, ...actions }), [state, actions]);
 

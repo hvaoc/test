@@ -189,25 +189,110 @@ async function persistCrdt() {
 
 // Server config for web sync (set by the Settings sign-in). Until configured,
 // web is offline-only but still a full CRDT replica — it just has no peer.
-let _server = null; // { url, token }
+const SERVER_KEY = 'sync:server:v1';
+let _server = null; // { url, token, userId, username }
+
+function persistServer() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (_server) localStorage.setItem(SERVER_KEY, JSON.stringify(_server));
+    else localStorage.removeItem(SERVER_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+function loadServerConfig() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const raw = localStorage.getItem(SERVER_KEY);
+    if (raw) _server = JSON.parse(raw);
+  } catch {
+    /* ignore */
+  }
+}
+loadServerConfig(); // restore a prior session at module load
+
 export function configureServer(cfg) {
   _server = cfg && cfg.url && cfg.token ? cfg : null;
+  persistServer();
 }
 export function serverConfig() {
   return _server;
 }
 
+// Register or log in against the sync server, storing the returned token so all
+// future sync() calls authenticate. `mode` is 'login' | 'register'.
+export async function authenticate(url, username, password, mode = 'login') {
+  const base = url.replace(/\/$/, '');
+  const r = await fetch(base + '/v1/' + (mode === 'register' ? 'register' : 'login'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || (mode + ' failed: ' + r.status));
+  configureServer({ url: base, token: body.token, userId: body.userId, username });
+  return body;
+}
+
+export function logout() {
+  configureServer(null);
+}
+
+// Open a realtime WebSocket that fires onNudge() whenever this user's data
+// changes on another device, so the caller can pull immediately. Returns a
+// close function. Auto-reconnects with a short backoff.
+export function openRealtime(onNudge) {
+  if (typeof WebSocket === 'undefined' || !_server) return () => {};
+  let ws = null;
+  let closed = false;
+  let timer = null;
+  const connect = () => {
+    if (closed || !_server) return;
+    const wsUrl = _server.url.replace(/^http/, 'ws') + '/v1/stream?token=' + encodeURIComponent(_server.token);
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch {
+      return;
+    }
+    ws.onmessage = () => onNudge && onNudge();
+    ws.onclose = () => {
+      if (!closed) timer = setTimeout(connect, 2000);
+    };
+    ws.onerror = () => {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  };
+  connect();
+  return () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    if (ws) try { ws.close(); } catch { /* ignore */ }
+  };
+}
+
+const PUSH_CHUNK = 4000; // cap request size (first sync can be tens of thousands of ops)
+
 async function serverSync(crdt) {
+  const base = _server.url.replace(/\/$/, '');
   const pending = crdt.takePending();
-  // Push local ops.
-  if (pending.length) {
-    const r = await fetch(_server.url.replace(/\/$/, '') + '/v1/push', {
+  // Push local ops in chunks so the first (full-history) sync doesn't send one
+  // multi-megabyte request. On failure, requeue the not-yet-sent remainder.
+  for (let i = 0; i < pending.length; i += PUSH_CHUNK) {
+    const chunk = pending.slice(i, i + PUSH_CHUNK);
+    const r = await fetch(base + '/v1/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token },
-      body: JSON.stringify({ ops: pending }),
+      body: JSON.stringify({ ops: chunk }),
+    }).catch((e) => {
+      throw e;
     });
     if (!r.ok) {
-      crdt.pending.unshift(...pending); // requeue on failure
+      crdt.pending.unshift(...pending.slice(i)); // requeue remainder
       throw new Error('push failed: ' + r.status);
     }
   }
