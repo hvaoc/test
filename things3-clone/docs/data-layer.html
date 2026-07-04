@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How the Data Layer Works — Offline‑First, Explained Simply</title>
+<style>
+  :root {
+    --ink: #1e1b2e;
+    --muted: #5b6478;
+    --line: #e6e8f0;
+    --bg: #fbfbfe;
+    --card: #ffffff;
+    --accent: #6366f1;
+    --accent-soft: #eef2ff;
+    --green: #16a34a;
+    --green-soft: #ecfdf5;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --code: #f3f4f8;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 40px 22px 80px; }
+  header.hero {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    border-radius: 20px;
+    padding: 36px 30px;
+    margin-bottom: 34px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.2; }
+  header.hero p { margin: 0; opacity: .92; font-size: 17px; max-width: 60ch; }
+  .pill { display:inline-block; background: rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35);
+          padding: 3px 11px; border-radius: 999px; font-size: 13px; margin: 14px 6px 0 0; }
+  h2 { font-size: 23px; margin: 46px 0 6px; letter-spacing: -.01em; }
+  h2 .num { color: var(--accent); font-weight: 800; margin-right: 8px; }
+  h3 { font-size: 18px; margin: 26px 0 4px; }
+  p { color: #2a2b3c; }
+  .lead { color: var(--muted); font-size: 17px; }
+  a { color: var(--accent); }
+  code { background: var(--code); padding: 1px 6px; border-radius: 5px; font-size: .9em;
+         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+          padding: 8px 14px 14px; margin: 18px 0; box-shadow: 0 1px 2px rgba(20,20,50,.04); }
+  .card > .cap { font-size: 13px; color: var(--muted); font-weight: 600; padding: 8px 6px 0; }
+  .diagram { overflow-x: auto; }
+  .mermaid { text-align: center; min-height: 40px; }
+  .callout { border-radius: 14px; padding: 14px 18px; margin: 18px 0; border: 1px solid; }
+  .callout.key { background: var(--accent-soft); border-color: #c7d2fe; }
+  .callout.good { background: var(--green-soft); border-color: #bbf7d0; }
+  .callout.note { background: var(--amber-soft); border-color: #fde68a; }
+  .callout b { display:block; margin-bottom: 2px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  @media (max-width: 680px){ .grid2 { grid-template-columns: 1fr; } }
+  .mini { border:1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--card); }
+  .mini h4 { margin: 0 0 6px; font-size: 16px; }
+  .mini .tag { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing:.04em; }
+  .mini.web .tag { color: var(--accent); }
+  .mini.native .tag { color: var(--green); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+  thead th { background: #f6f7fb; border-bottom: 2px solid var(--line); font-size: 13px;
+             text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  tbody tr:hover { background: #fafaff; }
+  .term { font-weight: 700; white-space: nowrap; }
+  .term .full { display:block; font-weight: 400; font-size: 12px; color: var(--muted); white-space: normal; }
+  .toc { columns: 2; column-gap: 26px; padding: 0; margin: 6px 0 0; list-style: none; font-size: 15px; }
+  .toc li { margin: 4px 0; }
+  @media (max-width: 680px){ .toc { columns: 1; } }
+  footer { margin-top: 50px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  .em { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>How the app stores &amp; syncs your data</h1>
+    <p>A plain‑English tour of the “data layer”: where your to‑dos live, how the app keeps working with no internet, and how your phone, laptop and browser all stay in agreement — automatically.</p>
+    <div>
+      <span class="pill">Offline‑first</span>
+      <span class="pill">Same engine everywhere</span>
+      <span class="pill">Auto‑merge (no conflicts)</span>
+    </div>
+  </header>
+
+  <p class="lead">New to these ideas? Perfect — this page assumes zero background. Read top to bottom and by the end you’ll understand the whole thing, including the scary acronyms (WASM, CRDT, OPFS, COOP/COEP). There’s a <a href="#glossary">glossary</a> at the bottom for quick reference.</p>
+
+  <ul class="toc">
+    <li><a href="#idea">1. The big idea</a></li>
+    <li><a href="#blocks">2. The four building blocks</a></li>
+    <li><a href="#write">3. Saving a change (offline)</a></li>
+    <li><a href="#runtimes">4. One engine, two homes</a></li>
+    <li><a href="#sync">5. Getting back online</a></li>
+    <li><a href="#merge">6. Two devices, one conflict</a></li>
+    <li><a href="#glossary">7. Glossary of tech</a></li>
+  </ul>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="idea"><span class="num">1</span>The big idea: <em>local first, sync later</em></h2>
+  <p>Most apps talk to a server for every little thing. If the internet hiccups, they spin or break. This app flips that around:</p>
+  <div class="callout key">
+    <b>Golden rule</b>
+    Every change is saved to a database <em>on your own device first</em>. That’s instant and works with no internet. Syncing with the server happens quietly in the background <em>whenever</em> a connection is available.
+  </div>
+  <p>Because each device has a full copy of the data, the app is always fast and always available. The only remaining question is: <em>“when two devices change the same thing, who wins?”</em> — and the app answers that automatically using a technique called a <span class="em">CRDT</span> (more on that soon).</p>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="blocks"><span class="num">2</span>The four building blocks</h2>
+  <div class="grid2">
+    <div class="mini">
+      <h4>🗃️ Local database (SQLite)</h4>
+      <p>A tiny, reliable database that lives right on the device. Your to‑dos are stored here. Reading &amp; writing never needs the network.</p>
+    </div>
+    <div class="mini">
+      <h4>⚙️ The CRDT engine</h4>
+      <p>The “brain.” It turns your edits into tiny records of <em>what changed</em>, and knows how to merge changes from other devices without conflicts.</p>
+    </div>
+    <div class="mini">
+      <h4>📜 The change log (“oplog”)</h4>
+      <p>A queue of your recent changes waiting to be sent up. Think of it as an <em>outbox</em> of small notes like “set task 12’s title to ‘Buy milk’.”</p>
+    </div>
+    <div class="mini">
+      <h4>☁️ The sync server (a relay)</h4>
+      <p>A simple mailbox in the cloud. It <em>stores and forwards</em> each user’s change‑notes to their other devices. It never decides who wins — the engine does.</p>
+    </div>
+  </div>
+  <div class="callout note">
+    <b>Why a “relay” and not a smart server?</b>
+    Keeping the server dumb (just store &amp; forward) makes it simple and hard to get wrong. All the cleverness (merging) lives in the identical engine on every device, so every device reaches the exact same result on its own.
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="write"><span class="num">3</span>Saving a change — even with no internet</h2>
+  <p>Here’s what happens the moment you add or edit a to‑do. Notice the network is <em>not</em> involved at all:</p>
+  <div class="card">
+    <div class="cap">Sequence · writing a change locally</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor U as You
+  participant UI as App screen
+  participant ENG as CRDT engine (on device)
+  participant DB as Local database (SQLite)
+  U->>UI: Add or edit a to‑do
+  UI->>ENG: "here's the new state"
+  Note over ENG: works out exactly<br/>what changed (the "delta")
+  ENG->>DB: save only the changed rows
+  ENG->>DB: add the change to the outbox (oplog)
+  ENG-->>UI: done ✅
+  Note over UI,DB: Instant. No internet needed.
+      </pre>
+    </div>
+  </div>
+  <div class="callout good">
+    <b>Offline‑first in action</b>
+    Steps 1–5 never touch the network. You can be on a plane; the app just works. The change now sits safely in the local database <em>and</em> in the outbox, ready to sync later.
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="runtimes"><span class="num">4</span>One engine, two homes</h2>
+  <p>The clever part: the engine is written <strong>once, in Go</strong>. But it needs to run in two very different places — a native app and a web browser. So it lives in two forms:</p>
+
+  <div class="grid2">
+    <div class="mini native">
+      <span class="tag">Desktop &amp; Mobile</span>
+      <h4>Served by a Go binary</h4>
+      <p>The Go engine runs <em>natively</em> and owns a real SQLite file on disk directly. The screen (a WebView on desktop, React Native on mobile) simply calls into it. No WASM required.</p>
+    </div>
+    <div class="mini web">
+      <span class="tag">Web browser</span>
+      <h4>Go → WASM, in a Worker</h4>
+      <p>Browsers can’t run a Go binary, so the same Go engine is compiled to <em>WASM</em> and runs inside a background <em>Web Worker</em>. It stores data in <em>SQLite‑WASM</em> using private browser files (<em>OPFS</em>).</p>
+    </div>
+  </div>
+
+  <h3>Desktop &amp; Mobile — the Go binary</h3>
+  <div class="card">
+    <div class="cap">Sequence · native app</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant UI as App screen (WebView / React Native)
+  participant GO as Go binary (engine + SQLite)
+  participant DB as SQLite file on disk
+  UI->>GO: SaveSnapshot(state)  — a direct call
+  GO->>DB: write changed rows
+  GO-->>UI: ok
+  Note over UI,DB: Same Go code as the web version,<br/>just running natively.
+      </pre>
+    </div>
+  </div>
+
+  <h3>Web — WASM + Worker + SQLite‑in‑the‑browser</h3>
+  <p>On the web there are two “threads”: the <strong>main thread</strong> that draws the screen, and a <strong>Web Worker</strong> that does the heavy lifting in the background so the screen never freezes.</p>
+  <div class="card">
+    <div class="cap">Sequence · web app</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant MT as Main thread (draws the UI)
+  participant W as Web Worker (background)
+  participant GO as Go engine → WASM
+  participant SQL as SQLite → WASM
+  participant OPFS as OPFS (private browser files)
+  MT->>W: "save this change" (postMessage)
+  W->>GO: apply it, tell me what changed
+  GO-->>W: the changed rows
+  W->>SQL: INSERT / UPDATE those rows
+  SQL->>OPFS: read/write the database file
+  W-->>MT: ok
+  Note over MT,OPFS: Big work stays in the worker →<br/>the UI stays smooth &amp; responsive.
+      </pre>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>&nbsp;</th><th>Desktop &amp; Mobile</th><th>Web browser</th></tr></thead>
+    <tbody>
+      <tr><td class="term">Engine</td><td>Go binary (native)</td><td>Same Go, compiled to <strong>WASM</strong></td></tr>
+      <tr><td class="term">Runs on</td><td>The device’s CPU directly</td><td>Inside a <strong>Web Worker</strong></td></tr>
+      <tr><td class="term">Database</td><td>SQLite file on disk</td><td>SQLite‑WASM stored in <strong>OPFS</strong></td></tr>
+      <tr><td class="term">Packaged by</td><td>Wails (desktop) / gomobile (mobile)</td><td>Plain static files (served by any web server)</td></tr>
+      <tr><td class="term">Talks to server</td><td colspan="2" style="text-align:center">✔ identical sync, identical change‑format (“ops”)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout key">
+    <b>Why this matters</b>
+    Because it’s literally the <em>same engine</em> everywhere, a change made on your phone, your Mac app, and a browser tab are all understood and merged the same way. One brain, three bodies.
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="sync"><span class="num">5</span>Getting back online: the sync cycle</h2>
+  <p>When a connection is available, each device runs a simple two‑step exchange with the relay server: <strong>push</strong> my outbox up, then <strong>pull</strong> everyone else’s changes down.</p>
+  <div class="card">
+    <div class="cap">Sequence · one sync cycle</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Your device
+  participant S as Sync server (relay)
+  Note over C: connection available → sync
+  C->>S: PUSH my outbox (list of change‑notes)
+  S-->>C: got them ✅ (outbox can be cleared)
+  C->>S: PULL changes since my last sync
+  S-->>C: here are other devices' change‑notes
+  C->>C: merge them in — automatically (CRDT rules)
+  Note over C,S: The server only stores &amp; forwards notes.<br/>It never decides who "wins".
+      </pre>
+    </div>
+  </div>
+  <p>To make this real‑time, the server also keeps a <em>live line open</em> (a WebSocket): the instant another device pushes a change, your device gets a nudge and pulls immediately — so edits appear on all your screens within moments.</p>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="merge"><span class="num">6</span>Two devices, one conflict — solved automatically</h2>
+  <p>This is the scenario that breaks naïve apps. Two devices edit the <em>same</em> to‑do while both are offline. What happens when they sync?</p>
+  <div class="card">
+    <div class="cap">Sequence · concurrent edits merge cleanly</div>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant P as 📱 Phone
+  participant S as ☁️ Server
+  participant L as 💻 Laptop
+  Note over P,L: Same task. Both offline.
+  P->>P: change the TITLE
+  L->>L: change the DUE DATE
+  Note over P,L: later… both come online
+  P->>S: push (title change)
+  L->>S: push (due‑date change)
+  S-->>L: pull → receives phone's title change
+  S-->>P: pull → receives laptop's due‑date change
+  Note over P,L: Different fields → BOTH kept. ✅<br/>Same field twice → the newer timestamp wins,<br/>and every device picks the SAME winner.
+      </pre>
+    </div>
+  </div>
+  <div class="callout good">
+    <b>The trick behind “automatic”</b>
+    The engine tracks changes <em>per field</em> (title, due date, priority…) instead of per whole to‑do. Each change carries a special timestamp called an <span class="em">HLC</span> that works even when device clocks disagree. So merging is just: for each field, keep the change with the latest HLC — a rule every device applies identically, arriving at the same answer with no server, no locking, and no “sync conflict” pop‑ups.
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <h2 id="glossary"><span class="num">7</span>Glossary — the tech, in plain terms</h2>
+  <p class="lead">Each row: what it is, and — more importantly — <em>what problem it solves</em>.</p>
+  <table>
+    <thead><tr><th>Term</th><th>In one sentence</th><th>Why we use it / the problem it solves</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="term">CRDT<span class="full">Conflict‑free Replicated Data Type</span></td>
+        <td>A way of storing data so that many copies can be edited independently and later merged automatically, always landing on the same result.</td>
+        <td>Two devices editing offline would normally clash. A CRDT guarantees they merge with <em>no conflicts and no central referee</em> — the heart of offline‑first.</td>
+      </tr>
+      <tr>
+        <td class="term">HLC<span class="full">Hybrid Logical Clock</span></td>
+        <td>A smart timestamp = real time + a small counter + the device’s ID.</td>
+        <td>Device clocks disagree (“clock skew”). A plain timestamp would let a device with a fast clock always win. HLC gives a fair, consistent order <em>and</em> a tie‑breaker, so every device picks the same winner.</td>
+      </tr>
+      <tr>
+        <td class="term">Op &amp; oplog<span class="full">operation &amp; operation log</span></td>
+        <td>An “op” is one tiny recorded change (“set task 12’s title to X at time T”). The oplog is the outbox of ops waiting to sync.</td>
+        <td>Sending whole documents is wasteful and overwrites other people’s edits. Shipping small, precise ops lets devices merge exactly what changed.</td>
+      </tr>
+      <tr>
+        <td class="term">SQLite</td>
+        <td>A tiny, rock‑solid database that lives in a single file — no separate database server needed.</td>
+        <td>We need durable local storage with real queries and safe transactions. SQLite is the world’s most‑used embedded database; it’s the same on every platform here.</td>
+      </tr>
+      <tr>
+        <td class="term">WASM<span class="full">WebAssembly</span></td>
+        <td>A way to run code written in languages like Go or C <em>inside a web browser</em>, at near‑native speed.</td>
+        <td>Our engine is written in Go, but browsers only run JavaScript. WASM lets the <em>exact same Go engine</em> run in the browser — so we don’t have to rewrite and maintain a second copy in JS.</td>
+      </tr>
+      <tr>
+        <td class="term">Web Worker</td>
+        <td>A background thread in the browser, separate from the one that draws the screen.</td>
+        <td>Heavy work (crunching tens of thousands of changes) on the main thread would <em>freeze the UI</em>. A worker runs it in the background so the app stays smooth.</td>
+      </tr>
+      <tr>
+        <td class="term">OPFS<span class="full">Origin Private File System</span></td>
+        <td>A private, fast, sandboxed file area the browser gives to each website.</td>
+        <td>SQLite needs real files to store its database, but browsers don’t hand out normal disk access. OPFS provides fast, private files that SQLite‑WASM can read and write.</td>
+      </tr>
+      <tr>
+        <td class="term">SAHPool VFS<span class="full">Sync Access Handle Pool</span></td>
+        <td>The specific method SQLite‑WASM uses to talk to OPFS: a pool of synchronous file handles.</td>
+        <td>It lets SQLite read/write OPFS <em>synchronously</em> inside a worker <strong>without</strong> needing shared memory or the special COOP/COEP headers below — which keeps deployment simple.</td>
+      </tr>
+      <tr>
+        <td class="term">COOP<span class="full">Cross‑Origin‑Opener‑Policy</span></td>
+        <td>An HTTP header that isolates your page from other browser tabs/windows.</td>
+        <td>It’s one of the two switches that unlock “cross‑origin isolation” — a secure mode required for powerful features like shared memory (below).</td>
+      </tr>
+      <tr>
+        <td class="term">COEP<span class="full">Cross‑Origin‑Embedder‑Policy</span></td>
+        <td>The partner HTTP header that controls what resources your page is allowed to load.</td>
+        <td>COOP + COEP together turn on cross‑origin isolation. <strong>We deliberately avoid needing them</strong> by choosing the SAHPool method above — fewer server headers to configure, and it works out of the box.</td>
+      </tr>
+      <tr>
+        <td class="term">SharedArrayBuffer</td>
+        <td>A block of memory that two threads can read/write at the same time.</td>
+        <td>The <em>older/faster</em> way to use OPFS relied on this, and it’s locked behind COOP+COEP for security. Since we sidestep it, we mention it only so the COOP/COEP names make sense.</td>
+      </tr>
+      <tr>
+        <td class="term">Relay server</td>
+        <td>A simple cloud service that stores each user’s ops and forwards them to their other devices.</td>
+        <td>Devices need a common meeting point to swap changes. Keeping it “dumb” (store &amp; forward only) makes it simple and reliable; the merging is done by each device’s engine.</td>
+      </tr>
+      <tr>
+        <td class="term">Wails &amp; gomobile</td>
+        <td>Tools that package the Go engine into a real desktop app (Wails) and mobile libraries (gomobile).</td>
+        <td>They let the <em>same Go code</em> ship as a native Mac/Windows app and inside iOS/Android apps — no WASM needed there, since Go runs natively.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout key">
+    <b>The whole story in one breath</b>
+    Your edits are saved instantly to a local <strong>SQLite</strong> database and logged as small <strong>ops</strong>. The same Go <strong>CRDT</strong> engine runs everywhere — natively on desktop/mobile, and as <strong>WASM</strong> in a <strong>Web Worker</strong> (with <strong>OPFS</strong> storage) on the web. When online, devices <strong>push/pull</strong> ops through a dumb relay <strong>server</strong> and merge them automatically using <strong>HLC</strong> timestamps — so everything works offline and every device always agrees.
+  </div>
+
+  <footer>
+    <p>Reference doc for the Things‑style to‑do app’s data layer. Diagrams are written in <a href="https://mermaid.js.org/">Mermaid</a> and render automatically when this file is opened in a browser.</p>
+  </footer>
+
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      primaryColor: '#eef2ff',
+      primaryBorderColor: '#818cf8',
+      primaryTextColor: '#1e1b2e',
+      lineColor: '#a5b4fc',
+      actorBkg: '#6366f1',
+      actorBorder: '#4f46e5',
+      actorTextColor: '#ffffff',
+      noteBkgColor: '#fffbeb',
+      noteBorderColor: '#fcd34d',
+      noteTextColor: '#4a3a0a',
+      sequenceNumberColor: '#ffffff'
+    }
+  });
+</script>
+</body>
+</html>
