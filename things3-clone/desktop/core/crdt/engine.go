@@ -88,6 +88,39 @@ type Engine struct {
 	pending  []Op
 	cursor   string
 	now      func() int64
+	// Rows written by the current Apply* call (canonical values, HLC-stamped),
+	// so a persistence layer can upsert exactly what changed instead of
+	// rewriting everything. Reset at the start of each Apply*.
+	changes changeSet
+}
+
+// changeSet is the set of register rows an Apply* touched — the durable delta.
+type changeSet struct {
+	Fields   []fieldRowJSON `json:"fields"`
+	Sets     []setRowJSON   `json:"sets"`
+	Presence []presRowJSON  `json:"presence"`
+}
+
+type fieldRowJSON struct {
+	K string `json:"k"`
+	I string `json:"i"`
+	F string `json:"f"`
+	V string `json:"v"` // canonical value
+	H HLC    `json:"h"`
+}
+type setRowJSON struct {
+	K string `json:"k"`
+	I string `json:"i"`
+	F string `json:"f"`
+	E string `json:"e"`
+	P bool   `json:"p"`
+	H HLC    `json:"h"`
+}
+type presRowJSON struct {
+	K string `json:"k"`
+	I string `json:"i"`
+	P bool   `json:"p"`
+	H HLC    `json:"h"`
 }
 
 func New(node string) *Engine {
@@ -158,6 +191,7 @@ func (e *Engine) applyOp(op Op, local bool) bool {
 		if !ok || h.After(cur.HLC) {
 			e.presence[k] = presReg{Present: op.Present, HLC: h}
 			applied = true
+			e.changes.Presence = append(e.changes.Presence, presRowJSON{K: op.Kind, I: op.ID, P: op.Present, H: h})
 		}
 	case "field":
 		if e.fields[k] == nil {
@@ -165,8 +199,10 @@ func (e *Engine) applyOp(op Op, local bool) bool {
 		}
 		cur, ok := e.fields[k][op.Field]
 		if !ok || h.After(cur.HLC) {
-			e.fields[k][op.Field] = fieldReg{Value: canon(op.Value), HLC: h}
+			cv := canon(op.Value)
+			e.fields[k][op.Field] = fieldReg{Value: cv, HLC: h}
 			applied = true
+			e.changes.Fields = append(e.changes.Fields, fieldRowJSON{K: op.Kind, I: op.ID, F: op.Field, V: cv, H: h})
 		}
 	case "set":
 		if e.sets[k] == nil {
@@ -179,6 +215,7 @@ func (e *Engine) applyOp(op Op, local bool) bool {
 		if !ok || h.After(cur.HLC) {
 			e.sets[k][op.Field][op.Elem] = setReg{Present: op.Present, HLC: h}
 			applied = true
+			e.changes.Sets = append(e.changes.Sets, setRowJSON{K: op.Kind, I: op.ID, F: op.Field, E: op.Elem, P: op.Present, H: h})
 		}
 	}
 	if local && applied {
@@ -310,27 +347,33 @@ func (e *Engine) diffSet(kind, id, field string, raw json.RawMessage) []Op {
 // ---- public JSON API (the wasm/worker boundary) ----
 
 // ApplyLocalSnapshot diffs a frontend state snapshot into ops, stamps them, and
-// applies + queues them for push. Returns the number of ops produced.
-func (e *Engine) ApplyLocalSnapshot(stateJSON string) (int, error) {
+// applies + queues them for push. Returns JSON { rows, ops, count } where `rows`
+// is the durable register delta to upsert and `ops` are the wire ops to append
+// to the pending oplog.
+func (e *Engine) ApplyLocalSnapshot(stateJSON string) (string, error) {
 	var snap snapshot
 	if err := json.Unmarshal([]byte(stateJSON), &snap); err != nil {
-		return 0, err
+		return "", err
 	}
+	e.changes = changeSet{}
 	ops := e.diff(&snap)
 	for i := range ops {
 		h := e.localStamp()
 		ops[i].Wall, ops[i].Ctr, ops[i].Node = h.Wall, h.Ctr, h.Node
 		e.applyOp(ops[i], true)
 	}
-	return len(ops), nil
+	b, err := json.Marshal(map[string]interface{}{"rows": e.changes, "ops": ops, "count": len(ops)})
+	return string(b), err
 }
 
-// ApplyRemote merges pulled ops (LWW). Returns applied, skipped.
-func (e *Engine) ApplyRemote(opsJSON string) (int, int, error) {
+// ApplyRemote merges pulled ops (LWW). Returns JSON { rows, applied, skipped }
+// where `rows` is the register delta that won and should be upserted.
+func (e *Engine) ApplyRemote(opsJSON string) (string, error) {
 	var ops []Op
 	if err := json.Unmarshal([]byte(opsJSON), &ops); err != nil {
-		return 0, 0, err
+		return "", err
 	}
+	e.changes = changeSet{}
 	applied, skipped := 0, 0
 	for _, op := range ops {
 		e.witness(op.hlc())
@@ -344,7 +387,15 @@ func (e *Engine) ApplyRemote(opsJSON string) (int, int, error) {
 			skipped++
 		}
 	}
-	return applied, skipped, nil
+	b, err := json.Marshal(map[string]interface{}{"rows": e.changes, "applied": applied, "skipped": skipped})
+	return string(b), err
+}
+
+// Meta returns JSON { node, last, cursor } — the non-register state a persistence
+// layer must also store so a reload restores the clock, identity, and cursor.
+func (e *Engine) Meta() (string, error) {
+	b, err := json.Marshal(map[string]interface{}{"node": e.node, "last": e.last, "cursor": e.cursor})
+	return string(b), err
 }
 
 // TakePending returns the queued ops JSON and clears the queue.

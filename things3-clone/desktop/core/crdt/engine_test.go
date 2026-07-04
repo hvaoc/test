@@ -39,7 +39,7 @@ func task(t *testing.T, m map[string]interface{}, id string) map[string]interfac
 func relay(t *testing.T, from, to *Engine) {
 	t.Helper()
 	ops, _ := from.TakePending()
-	if _, _, err := to.ApplyRemote(ops); err != nil {
+	if _, err := to.ApplyRemote(ops); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -111,6 +111,43 @@ func TestSameFieldLWW(t *testing.T) {
 	relay(t, b, a)
 	if task(t, materialize(t, a), "t1")["title"] != "edit-B" || task(t, materialize(t, b), "t1")["title"] != "edit-B" {
 		t.Fatal("same-field LWW not deterministic")
+	}
+}
+
+// The Apply* methods must report the exact register rows they changed, so the
+// SQLite persistence layer can upsert only the delta.
+func TestChangeRowsDelta(t *testing.T) {
+	e := New("A")
+	e.now = seq(1000)
+	js, err := e.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"Hi","tags":["Q"]}],"tags":["Q"],"settings":{"showCompleted":true}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res struct {
+		Rows struct {
+			Fields   []map[string]interface{} `json:"fields"`
+			Sets     []map[string]interface{} `json:"sets"`
+			Presence []map[string]interface{} `json:"presence"`
+		} `json:"rows"`
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(js), &res); err != nil {
+		t.Fatal(err)
+	}
+	// task t1: presence + title field + tag set-elem; tag entity presence;
+	// setting presence + showCompleted field.
+	if len(res.Rows.Presence) < 3 || len(res.Rows.Fields) < 2 || len(res.Rows.Sets) != 1 {
+		t.Fatalf("unexpected delta: presence=%d fields=%d sets=%d",
+			len(res.Rows.Presence), len(res.Rows.Fields), len(res.Rows.Sets))
+	}
+	// A no-op re-apply of the same snapshot yields an empty delta.
+	js2, _ := e.ApplyLocalSnapshot(`{"tasks":[{"id":"t1","title":"Hi","tags":["Q"]}],"tags":["Q"],"settings":{"showCompleted":true}}`)
+	var res2 struct {
+		Count int `json:"count"`
+	}
+	_ = json.Unmarshal([]byte(js2), &res2)
+	if res2.Count != 0 {
+		t.Fatalf("re-applying identical snapshot should be a no-op, got %d ops", res2.Count)
 	}
 }
 

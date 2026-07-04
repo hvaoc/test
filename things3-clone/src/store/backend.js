@@ -6,15 +6,16 @@
 //   • iOS / Android  → the same Go engine via a gomobile native module
 //                       (NativeModules.Playdata)
 //   • Web / anything → the Go CRDT engine compiled to WASM, run in a Web Worker
-//                       (store/crdtClient.js + public/crdt.worker.js), persisted
-//                       to IndexedDB. Falls back to the pure-JS CRDT (store/
-//                       crdt.js) if WASM/Workers are unavailable.
+//                       (store/crdtClient.js + public/crdt.worker.js) that
+//                       persists to real SQLite (sqlite.org's WASM build on the
+//                       OPFS SAHPool VFS). Falls back to the pure-JS CRDT +
+//                       IndexedDB (store/crdt.js) if WASM/Workers are missing.
 //
 // All platforms run the SAME field-level CRDT — Go on desktop/mobile, that same
-// Go engine compiled to WASM in the browser — and speak the same op wire format,
-// so every platform is a first-class replica that converges through the sync
-// server. They share one async interface: loadSnapshot(), saveSnapshot(state),
-// sync().
+// Go engine compiled to WASM in the browser — over SQLite storage, and speak the
+// same op wire format, so every platform is a first-class replica that converges
+// through the sync server. They share one async interface: loadSnapshot(),
+// saveSnapshot(state), sync().
 
 import { Platform } from 'react-native';
 import { Crdt } from './crdt';

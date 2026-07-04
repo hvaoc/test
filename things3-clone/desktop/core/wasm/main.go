@@ -54,28 +54,42 @@ func register() {
 		return ok(eng.Node())
 	}))
 
+	// Returns JSON { rows, ops, count } — see crdt.Engine.ApplyLocalSnapshot.
 	g.Set("__crdtApplyLocalSnapshot", fn(func(args []js.Value) any {
 		e, bad := need()
 		if bad != nil {
 			return bad
 		}
-		n, err := e.ApplyLocalSnapshot(args[0].String())
+		s, err := e.ApplyLocalSnapshot(args[0].String())
 		if err != nil {
 			return fail(err)
 		}
-		return map[string]any{"ok": true, "count": n}
+		return ok(s)
 	}))
 
+	// Returns JSON { rows, applied, skipped } — see crdt.Engine.ApplyRemote.
 	g.Set("__crdtApplyRemote", fn(func(args []js.Value) any {
 		e, bad := need()
 		if bad != nil {
 			return bad
 		}
-		applied, skipped, err := e.ApplyRemote(args[0].String())
+		s, err := e.ApplyRemote(args[0].String())
 		if err != nil {
 			return fail(err)
 		}
-		return map[string]any{"ok": true, "applied": applied, "skipped": skipped}
+		return ok(s)
+	}))
+
+	g.Set("__crdtMeta", fn(func(args []js.Value) any {
+		e, bad := need()
+		if bad != nil {
+			return bad
+		}
+		s, err := e.Meta()
+		if err != nil {
+			return fail(err)
+		}
+		return ok(s)
 	}))
 
 	g.Set("__crdtMaterialize", fn(func(args []js.Value) any {

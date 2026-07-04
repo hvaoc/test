@@ -1,13 +1,22 @@
 # Data layer — offline-first, multi-user, multi-platform
 
-Every platform is a **first-class CRDT replica**: it holds all data locally,
-works fully offline, and converges with every other device through a sync
-server. The field-level CRDT is written **once in Go** and runs everywhere — the
-SQLite-backed `core` on desktop/mobile, and the SQLite-free `core/crdt`
-**compiled to WASM** and run in a Web Worker in the browser. All three speak the
-same op format / Hybrid Logical Clock / canonical JSON, so a browser tab, a Mac
-app, and a phone all merge each other's edits correctly. (`src/store/crdt.js` is
-a pure-JS fallback used only if WASM/Workers are unavailable.)
+Every platform is a **first-class CRDT replica**: it holds all data locally in
+**SQLite**, works fully offline, and converges with every other device through a
+sync server. The field-level CRDT logic is written **once in Go** and runs
+everywhere — the SQLite-backed `core` on desktop/mobile, and the SQLite-free
+`core/crdt` **compiled to WASM** and run in a Web Worker in the browser. All
+speak the same op format / Hybrid Logical Clock / canonical JSON, so a browser
+tab, a Mac app, and a phone all merge each other's edits correctly.
+
+Storage per platform:
+- **Desktop/mobile**: Go `core` on `modernc.org/sqlite`.
+- **Browser**: the Go CRDT WASM engine, persisting to **real SQLite** —
+  sqlite.org's `sqlite3.wasm` on the **OPFS SAHPool VFS** — with the same
+  register schema (`fields` / `setelems` / `presence` / `oplog` / `meta`) as
+  desktop. Note: `modernc.org/sqlite` (the *Go* driver) can't compile to
+  js/wasm, so the browser uses the official SQLite WASM build for storage while
+  the Go engine (also WASM) does the merges. `src/store/crdt.js` remains a
+  pure-JS + IndexedDB fallback used only if WASM/Workers/OPFS are unavailable.
 
 ```
 desktop/core/          Go engine — SQLite store, field-level CRDT, sync
@@ -16,15 +25,19 @@ desktop/core/          Go engine — SQLite store, field-level CRDT, sync
   sync.go              push/pull, deterministic CRDT merge, file-backed mock cloud
   httpadapter.go       SyncAdapter over HTTP → the real sync server
   store_test.go        round-trip + concurrent-field / tag-merge / LWW / canon tests
-desktop/core/crdt/     SQLite-free pure-Go CRDT engine (compiles to js/wasm)
+desktop/core/crdt/     SQLite-free pure-Go CRDT engine (compiles to js/wasm);
+                       reports the register-row delta each mutation changed
 desktop/core/wasm/     syscall/js entry point → crdt.wasm (built by build-wasm.sh)
 
 public/                served at the web root by Expo
-  crdt.wasm            the Go engine compiled to WASM
+  crdt.wasm            the Go CRDT engine compiled to WASM
   wasm_exec.js         Go's WASM JS loader
-  crdt.worker.js       Web Worker: runs the WASM engine + owns IndexedDB
+  sqlite3.js/.wasm     vendored sqlite.org WASM build (UMD; for the classic worker)
+  sqlite3-opfs-async-proxy.js  (ships with sqlite; unused by the SAHPool VFS)
+  crdt.worker.js       Web Worker: runs BOTH WASM modules — Go for merges,
+                       SQLite (OPFS SAHPool) for durable per-register storage
 src/store/crdtClient.js  main-thread RPC client to the worker
-src/store/crdt.js        pure-JS fallback engine (only if WASM unavailable)
+src/store/crdt.js        pure-JS + IndexedDB fallback (only if WASM unavailable)
 
 desktop/server/        multi-user sync server — token auth, per-user op log,
                        push/pull, realtime WebSocket. A thin, dumb relay: all
@@ -34,8 +47,7 @@ desktop/main.go        Wails desktop: binds LoadSnapshot/SaveSnapshot/Sync to JS
 desktop/mobile/        gomobile entry point: flat Open/LoadSnapshot/SaveSnapshot/Sync
   reactnative/         RN native modules that bridge the bound library to JS
 
-src/store/crdt.js      JS mirror of the Go CRDT (the web replica)
-src/store/backend.js   platform routing + web IndexedDB persistence + server sync
+src/store/backend.js   platform routing + web adapter + server sync
 ```
 
 ## Running the sync server
@@ -81,12 +93,12 @@ platform including the browser (the JS CRDT mirrors the Go one byte-for-byte;
 
 ## Platform routing (`src/store/backend.js`)
 
-| Platform        | Local store (CRDT replica)                       | Cloud sync            |
-|-----------------|--------------------------------------------------|-----------------------|
-| Wails desktop   | Go engine via `window.go.main.App`               | HTTP server / mock    |
-| iOS / Android   | Go engine via `NativeModules.Playdata`           | HTTP server / mock    |
-| Web             | Go engine as **WASM** in a Worker + IndexedDB    | HTTP server (sign-in) |
-| Web (fallback)  | pure-JS `crdt.js` + IndexedDB                     | HTTP server (sign-in) |
+| Platform        | Local store (CRDT replica)                          | Cloud sync            |
+|-----------------|-----------------------------------------------------|-----------------------|
+| Wails desktop   | Go engine via `window.go.main.App` (SQLite)         | HTTP server / mock    |
+| iOS / Android   | Go engine via `NativeModules.Playdata` (SQLite)     | HTTP server / mock    |
+| Web             | Go CRDT WASM + **SQLite WASM (OPFS)** in a Worker    | HTTP server (sign-in) |
+| Web (fallback)  | pure-JS `crdt.js` + IndexedDB                        | HTTP server (sign-in) |
 
 Rebuild the browser engine after changing `core/crdt`:
 
