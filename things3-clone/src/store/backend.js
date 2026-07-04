@@ -56,9 +56,18 @@ function goAdapter() {
   const native = app ? null : nativeModule();
   const impl = app || native;
   if (!impl) return null;
+  // On mobile the Go store must be opened (with the app's files dir, chosen
+  // natively) before use. Wails opens it in the Go startup hook, so no-op there.
+  let opened = null;
+  const ensureOpen = () => {
+    if (!native || typeof impl.open !== 'function') return Promise.resolve();
+    if (!opened) opened = impl.open().catch(() => {});
+    return opened;
+  };
   return {
     name: app ? 'wails' : 'native',
     async loadSnapshot() {
+      await ensureOpen();
       const json = await impl.LoadSnapshot?.() ?? await impl.loadSnapshot?.();
       if (!json) return null;
       try {
@@ -68,10 +77,12 @@ function goAdapter() {
       }
     },
     async saveSnapshot(state) {
+      await ensureOpen();
       const json = JSON.stringify(serializableState(state));
       await (impl.SaveSnapshot?.(json) ?? impl.saveSnapshot?.(json));
     },
     async sync() {
+      await ensureOpen();
       const raw = await (impl.Sync?.() ?? impl.sync?.());
       try {
         return JSON.parse(raw);

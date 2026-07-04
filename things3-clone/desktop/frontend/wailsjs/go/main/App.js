@@ -6,6 +6,18 @@ export function GetWindowMode() {
   return window['go']['main']['App']['GetWindowMode']();
 }
 
+export function LoadSnapshot() {
+  return window['go']['main']['App']['LoadSnapshot']();
+}
+
+export function SaveSnapshot(arg1) {
+  return window['go']['main']['App']['SaveSnapshot'](arg1);
+}
+
 export function SetWindowMode(arg1) {
   return window['go']['main']['App']['SetWindowMode'](arg1);
+}
+
+export function Sync() {
+  return window['go']['main']['App']['Sync']();
 }

@@ -3,4 +3,10 @@
 
 export function GetWindowMode():Promise<string>;
 
+export function LoadSnapshot():Promise<string>;
+
+export function SaveSnapshot(arg1:string):Promise<void>;
+
 export function SetWindowMode(arg1:string):Promise<void>;
+
+export function Sync():Promise<string>;

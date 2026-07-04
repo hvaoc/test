@@ -498,11 +498,59 @@ function BackupsSection({ reset, onClose }) {
       <View style={styles.hr} />
       <GroupTitle>Sample data</GroupTitle>
       <Text style={styles.fieldHint}>
-        This build always starts from the demo data; reloading resets it. Use this to reset without reloading.
+        Your data is saved on-device and restored on next launch. Reset to wipe it and start over from the demo data.
       </Text>
       <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
         <Btn label="Reset to sample data" icon="refresh" variant="outline" onPress={() => { reset(); onClose(); }} />
       </View>
+    </>
+  );
+}
+
+// Cloud sync + offline status. The engine (Go SQLite on desktop/mobile,
+// IndexedDB on web) always persists locally; "Sync now" runs one push/pull
+// cycle against the cloud adapter and reports what moved.
+function SyncSection() {
+  const { syncNow, backendName } = useTasks();
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const backend = backendName ? backendName() : 'local';
+  const label = { wails: 'Embedded database (desktop)', native: 'Embedded database (mobile)', indexeddb: 'IndexedDB (browser)', localstorage: 'Local storage' }[backend] || backend;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const res = await syncNow();
+      setStatus(res);
+    } catch (e) {
+      setStatus({ error: String(e && e.message ? e.message : e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cloud = status && status.adapter && status.adapter !== 'local' && status.adapter !== 'none';
+
+  return (
+    <>
+      <Field label="Local store" hint="Your data lives on-device first — the app works fully offline.">
+        <Text style={styles.value}>{label}</Text>
+      </Field>
+      <Field label="Cloud sync" hint="Changes sync through the embedded engine. Web builds are local-only." last>
+        <Text style={styles.value}>{backend === 'wails' || backend === 'native' ? 'Mock adapter' : 'Local only'}</Text>
+      </Field>
+      <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
+        <Btn label={busy ? 'Syncing…' : 'Sync now'} icon="sync" variant="outline" onPress={busy ? undefined : run} />
+      </View>
+      {status && (
+        <Text style={[styles.fieldHint, { marginTop: spacing.md }]}>
+          {status.error
+            ? `Sync failed: ${status.error}`
+            : cloud
+            ? `Synced via “${status.adapter}” — pushed ${status.pushed || 0}, applied ${status.applied || 0}${status.skipped ? `, kept ${status.skipped} local` : ''}.`
+            : 'Saved locally. Connect a cloud backend to sync across devices.'}
+        </Text>
+      )}
     </>
   );
 }
@@ -671,6 +719,7 @@ export default function SettingsSheet({ visible, onClose }) {
         { label: 'Weekly review', hint: 'A Sunday summary of the week ahead.' },
       ]} />
     ) },
+    { id: 'sync', label: 'Sync', icon: 'sync-outline', render: () => <SyncSection /> },
     { id: 'backups', label: 'Backups', icon: 'cloud-upload-outline', render: () => <BackupsSection reset={reset} onClose={onClose} /> },
     { id: 'integrations', label: 'Integrations', icon: 'extension-puzzle-outline', hidden: true, render: () => <IntegrationsSection /> },
     { id: 'calendars', label: 'Calendars', icon: 'calendar-outline', render: () => <CalendarsSection settings={settings} setSetting={setSetting} /> },

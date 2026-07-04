@@ -11,7 +11,7 @@ import { uid } from '../utils/id';
 import { STATUS } from './constants';
 import { buildSampleData } from './sampleData';
 import { setTimeZone } from '../utils/date';
-import { loadSnapshot, saveSnapshot } from './backend';
+import { loadSnapshot, saveSnapshot, sync as backendSync, backendName } from './backend';
 
 const TasksContext = createContext(null);
 
@@ -525,6 +525,25 @@ export function TasksProvider({ children }) {
 
       setSetting: (key, value) => dispatch({ type: 'SET_SETTING', key, value }),
       reset: () => dispatch({ type: 'RESET' }),
+
+      // Run one cloud-sync cycle. On the Go-backed platforms the merged snapshot
+      // comes back in the result — rehydrate from it so pulled remote changes
+      // appear immediately. Returns the raw SyncResult for the UI.
+      syncNow: async () => {
+        const res = await backendSync();
+        if (res && res.snapshot) {
+          try {
+            const payload = JSON.parse(res.snapshot);
+            if (payload && Array.isArray(payload.tasks)) {
+              dispatch({ type: 'HYDRATE', payload });
+            }
+          } catch {
+            /* ignore malformed snapshot */
+          }
+        }
+        return res;
+      },
+      backendName,
     }),
     []
   );
