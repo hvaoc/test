@@ -388,7 +388,14 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   content: { paddingBottom: 120 },
   // Every non-title row occupies exactly ROW_H so the drag target is exact.
-  cell: { height: ROW_H, ...(Platform.OS === 'web' ? { userSelect: 'none' } : null) },
+  // Opaque so a pinned (sticky) heading cell fully covers the rows scrolling
+  // under it — the heading content is centred in the 56px cell, so without this
+  // the transparent band above/below it would let a row peek through.
+  cell: {
+    height: ROW_H,
+    backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { userSelect: 'none' } : null),
+  },
   rowFixed: { height: ROW_H, justifyContent: 'center', overflow: 'hidden' },
   heading: {
     flexDirection: 'row',
