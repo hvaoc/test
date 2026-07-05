@@ -278,14 +278,29 @@ export function logout() {
   configureServer(null);
 }
 
-// Open a realtime WebSocket that fires onNudge() whenever this user's data
-// changes on another device, so the caller can pull immediately. Returns a
-// close function. Auto-reconnects with a short backoff.
-export function openRealtime(onNudge) {
-  if (typeof WebSocket === 'undefined' || !_server) return () => {};
+// This user's presence identity for the awareness channel: display name + a
+// stable colour derived from their id. null when not signed in (solo/offline).
+export function presenceIdentity() {
+  if (!_server) return null;
+  const name = _server.username || 'You';
+  const key = String(_server.userId || name);
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return { userId: key, user: name, color: `hsl(${h % 360} 65% 45%)` };
+}
+
+// Open the realtime WebSocket. It carries two things: data-change nudges
+// (onNudge → pull) and awareness/presence (onPresence). Returns { close,
+// sendPresence } — sendPresence(state) broadcasts this user's live presence
+// (which task they're on, cursor position, name, colour) to teammates.
+// Auto-reconnects with a short backoff and re-announces the last presence.
+export function openRealtime({ onNudge, onPresence } = {}) {
+  if (typeof WebSocket === 'undefined' || !_server) return { close: () => {}, sendPresence: () => {} };
   let ws = null;
   let closed = false;
   let timer = null;
+  let lastPresence = null;
+
   const connect = () => {
     if (closed || !_server) return;
     const wsUrl = _server.url.replace(/^http/, 'ws') + '/v1/stream?token=' + encodeURIComponent(_server.token);
@@ -294,23 +309,41 @@ export function openRealtime(onNudge) {
     } catch {
       return;
     }
-    ws.onmessage = () => onNudge && onNudge();
+    ws.onopen = () => {
+      if (lastPresence) rawSend(lastPresence); // re-announce after a reconnect
+    };
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === 'changed') onNudge && onNudge();
+      else if (msg.type === 'presence') onPresence && onPresence({ from: msg.from, state: msg.state });
+      else if (msg.type === 'presence-leave') onPresence && onPresence({ from: msg.from, leave: true });
+    };
     ws.onclose = () => {
       if (!closed) timer = setTimeout(connect, 2000);
     };
     ws.onerror = () => {
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
+      try { ws.close(); } catch { /* ignore */ }
     };
   };
+
+  const rawSend = (state) => {
+    try {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'presence', state }));
+    } catch { /* ignore */ }
+  };
+
   connect();
-  return () => {
-    closed = true;
-    if (timer) clearTimeout(timer);
-    if (ws) try { ws.close(); } catch { /* ignore */ }
+  return {
+    close: () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      if (ws) try { ws.close(); } catch { /* ignore */ }
+    },
+    sendPresence: (state) => {
+      lastPresence = state;
+      rawSend(state);
+    },
   };
 }
 

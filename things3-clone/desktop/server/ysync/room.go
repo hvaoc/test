@@ -2,6 +2,7 @@ package ysync
 
 import (
 	"bytes"
+	"encoding/json"
 	"sync"
 
 	"github.com/reearth/ygo/crdt"
@@ -12,11 +13,18 @@ import (
 type Room struct {
 	tenant string
 
-	mu      sync.Mutex
-	doc     *crdt.Doc
-	ver     int64
-	subs    map[int64]chan int64 // subscriber id -> coalescing nudge channel
-	nextSub int64
+	mu       sync.Mutex
+	doc      *crdt.Doc
+	ver      int64
+	conns    map[int64]*conn            // live realtime connections
+	presence map[int64]json.RawMessage  // last awareness state per connection
+	nextConn int64
+}
+
+// conn is one realtime (WebSocket) connection's outbound message queue.
+type conn struct {
+	id  int64
+	out chan []byte // pre-encoded JSON frames; non-blocking sends (drop if full)
 }
 
 func newRoom(tenant string, seed []byte) (*Room, error) {
@@ -26,7 +34,12 @@ func newRoom(tenant string, seed []byte) (*Room, error) {
 			return nil, err
 		}
 	}
-	return &Room{tenant: tenant, doc: d, subs: map[int64]chan int64{}}, nil
+	return &Room{
+		tenant:   tenant,
+		doc:      d,
+		conns:    map[int64]*conn{},
+		presence: map[int64]json.RawMessage{},
+	}, nil
 }
 
 // Apply merges a client update. Returns the new version and whether anything was
@@ -81,35 +94,78 @@ func (r *Room) StateVector() []byte {
 	return crdt.EncodeStateVectorV1(r.doc)
 }
 
-func (r *Room) subscribe() (int64, <-chan int64) {
+// join registers a new realtime connection and returns it plus the current
+// awareness states of everyone already present (so the newcomer sees them).
+func (r *Room) join() (*conn, [][]byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id := r.nextSub
-	r.nextSub++
-	ch := make(chan int64, 1)
-	r.subs[id] = ch
-	return id, ch
+	id := r.nextConn
+	r.nextConn++
+	c := &conn{id: id, out: make(chan []byte, 16)}
+	r.conns[id] = c
+	var existing [][]byte
+	for pid, st := range r.presence {
+		existing = append(existing, presenceFrame(pid, st))
+	}
+	return c, existing
 }
 
-func (r *Room) unsubscribe(id int64) {
+// leave removes a connection and tells everyone their presence is gone.
+func (r *Room) leave(id int64) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if ch, ok := r.subs[id]; ok {
-		close(ch)
-		delete(r.subs, id)
+	c, ok := r.conns[id]
+	if ok {
+		delete(r.conns, id)
+		close(c.out)
+	}
+	_, hadPresence := r.presence[id]
+	delete(r.presence, id)
+	frame := leaveFrame(id)
+	r.sendOthersLocked(id, frame)
+	r.mu.Unlock()
+	_ = hadPresence
+}
+
+// send delivers a frame to a connection, dropping it if the queue is full (a slow
+// client must never block the room).
+func send(c *conn, frame []byte) {
+	select {
+	case c.out <- frame:
+	default:
 	}
 }
 
-// notify wakes every subscriber with the current version. Sends are non-blocking
-// and coalesce (buffer of 1), so a slow client just gets the latest version on
-// its next read rather than a backlog.
+func (r *Room) sendOthersLocked(exceptID int64, frame []byte) {
+	for id, c := range r.conns {
+		if id != exceptID {
+			send(c, frame)
+		}
+	}
+}
+
+// notify wakes every connection with the current data version so it pulls.
 func (r *Room) notify() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, ch := range r.subs {
-		select {
-		case ch <- r.ver:
-		default:
-		}
+	frame, _ := json.Marshal(map[string]any{"type": "changed", "version": r.ver})
+	for _, c := range r.conns {
+		send(c, frame)
 	}
+}
+
+// setPresence records a connection's awareness state and broadcasts it to peers.
+func (r *Room) setPresence(id int64, state json.RawMessage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.presence[id] = state
+	r.sendOthersLocked(id, presenceFrame(id, state))
+}
+
+func presenceFrame(id int64, state json.RawMessage) []byte {
+	b, _ := json.Marshal(map[string]any{"type": "presence", "from": id, "state": state})
+	return b
+}
+func leaveFrame(id int64) []byte {
+	b, _ := json.Marshal(map[string]any{"type": "presence-leave", "from": id})
+	return b
 }

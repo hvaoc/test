@@ -107,48 +107,70 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true }, // browser origin differs from API; Phase 1
 }
 
-// handleStream upgrades to a WebSocket and pushes a nudge whenever the tenant's
-// document changes, so connected teammates pull promptly (realtime). The token
-// arrives via ?token= because browsers can't set WS headers.
+// handleStream upgrades to a WebSocket for realtime: it nudges connected
+// teammates when the document changes (so they pull) AND relays awareness
+// (presence + cursors) between them. The token arrives via ?token= because
+// browsers can't set WS headers.
+//
+// Client -> server frames: {"type":"presence","state":{...}} — broadcast to peers.
+// Server -> client frames:
+//   {"type":"changed","version":n}           data changed; pull
+//   {"type":"presence","from":id,"state":{}}  a peer's awareness state
+//   {"type":"presence-leave","from":id}       a peer disconnected
+// `from` is an opaque per-connection id; the client identity lives inside `state`.
 func (h *Hub) handleStream(w http.ResponseWriter, r *http.Request) {
 	p, err := h.auth.Resolve(bearer(r))
 	if err != nil {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
-	scope := h.Scope(p, r)
-	room, err := h.room(scope)
+	room, err := h.room(h.Scope(p, r))
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer ws.Close()
 
-	id, ch := room.subscribe()
-	defer room.unsubscribe(id)
+	c, existing := room.join()
+	defer room.leave(c.id)
 
-	// Reader goroutine: detect client close.
+	// Send whoever is already present to the newcomer.
+	for _, frame := range existing {
+		_ = ws.WriteMessage(websocket.TextMessage, frame)
+	}
+
+	// Reader goroutine: relay this client's awareness to peers; detect close. Only
+	// editors/owners may broadcast presence into a room (viewers still receive).
 	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				close(closed)
+			_, msg, err := ws.ReadMessage()
+			if err != nil {
 				return
+			}
+			var in struct {
+				Type  string          `json:"type"`
+				State json.RawMessage `json:"state"`
+			}
+			if json.Unmarshal(msg, &in) == nil && in.Type == "presence" && p.CanWrite() {
+				room.setPresence(c.id, in.State)
 			}
 		}
 	}()
 
+	// Writer: drain this connection's queue to the socket.
 	for {
 		select {
-		case ver, ok := <-ch:
+		case frame, ok := <-c.out:
 			if !ok {
 				return
 			}
-			if err := conn.WriteJSON(map[string]any{"type": "changed", "version": ver}); err != nil {
+			if err := ws.WriteMessage(websocket.TextMessage, frame); err != nil {
 				return
 			}
 		case <-closed:

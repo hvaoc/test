@@ -23,6 +23,7 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS, PRIORITY_MAP, PRIORITIES } from '../store/constants';
 import { relativeLabel } from '../utils/date';
 import { useTasks, newTask } from '../store/TasksContext';
+import { presenceIdentity } from '../store/backend';
 import { selectSubtasks } from '../store/selectors';
 import WailsTitleBar, { useIsWails } from './WailsTitleBar';
 import { useIsWide } from '../navigation/responsive';
@@ -41,8 +42,22 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
   const insets = useSafeAreaInsets();
   const isWails = useIsWails();
   const isWide = useIsWide();
-  const { state, addTask, updateTask, toggleTask, setStatus, deleteTask, addCheck, toggleCheck, updateCheck, deleteCheck } = useTasks();
+  const { state, peers, addTask, updateTask, toggleTask, setStatus, deleteTask, addCheck, toggleCheck, updateCheck, deleteCheck, setPresence } = useTasks();
   const task = state.tasks.find((t) => t.id === taskId);
+
+  // Live presence: announce that we're on this task, broadcast our note cursor,
+  // and clear it when we leave. `me` is null when signed out (solo/offline).
+  const me = React.useMemo(() => presenceIdentity(), []);
+  React.useEffect(() => {
+    if (!me || !taskId) return undefined;
+    setPresence({ ...me, taskId, cursor: null });
+    return () => setPresence({ ...me, taskId: null, cursor: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, taskId]);
+  // Teammates currently on this same task (excluding ourselves).
+  const taskPeers = Object.values(peers || {}).filter(
+    (p) => p && p.taskId === taskId && (!me || p.userId !== me.userId)
+  );
 
   const [sheet, setSheet] = useState(null); // 'when' | 'deadline' | 'move' | 'tags'
   const [newCheck, setNewCheck] = useState('');
@@ -99,6 +114,25 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
               {containerLabel}
             </Text>
           </Pressable>
+          {taskPeers.length > 0 && (
+            <View style={styles.presenceStrip}>
+              {taskPeers.slice(0, 4).map((p, i) => (
+                <View
+                  key={(p.userId || 'peer') + i}
+                  style={[styles.presenceDot, { backgroundColor: p.color || colors.accent }]}
+                >
+                  <Text style={styles.presenceInitial}>
+                    {(p.user || '?').trim().charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              ))}
+              <Text style={styles.presenceLabel} numberOfLines={1}>
+                {taskPeers.length === 1
+                  ? `${taskPeers[0].user || 'Someone'} is here`
+                  : `${taskPeers.length} people here`}
+              </Text>
+            </View>
+          )}
           <View style={styles.topActions}>
             <Pressable
               hitSlop={10}
@@ -157,8 +191,27 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
               placeholder="Notes"
               placeholderTextColor={colors.placeholder}
               onChangeText={(text) => updateTask(task.id, { notes: text })}
+              onSelectionChange={
+                me
+                  ? (e) =>
+                      setPresence({ ...me, taskId, cursor: e?.nativeEvent?.selection?.start ?? null })
+                  : undefined
+              }
               multiline
             />
+            {/* Teammates whose cursor is in this note right now. */}
+            {taskPeers.filter((p) => p.cursor != null).length > 0 && (
+              <View style={styles.editingRow}>
+                {taskPeers
+                  .filter((p) => p.cursor != null)
+                  .map((p, i) => (
+                    <View key={(p.userId || 'c') + i} style={styles.editingChip}>
+                      <View style={[styles.editingDot, { backgroundColor: p.color || colors.accent }]} />
+                      <Text style={styles.editingText}>{p.user || 'Someone'} editing…</Text>
+                    </View>
+                  ))}
+              </View>
+            )}
 
             {/* Fields stack below notes on narrow; on wide they live in the right
                 side panel (rendered outside the ScrollView, below). */}
@@ -610,6 +663,19 @@ const styles = StyleSheet.create({
   topBtn: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   backText: { ...typography.body, color: colors.accent, flexShrink: 1 },
   topActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingRight: spacing.sm },
+
+  // Live presence (awareness) — who else is on this task / in this note.
+  presenceStrip: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginRight: spacing.md },
+  presenceDot: {
+    width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginLeft: -6,
+    borderWidth: 1.5, borderColor: colors.background,
+  },
+  presenceInitial: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  presenceLabel: { ...typography.caption, color: colors.textSecondary, marginLeft: spacing.xs, maxWidth: 140 },
+  editingRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs, marginBottom: spacing.sm },
+  editingChip: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  editingDot: { width: 8, height: 8, borderRadius: 4 },
+  editingText: { ...typography.caption, color: colors.textSecondary, fontStyle: 'italic' },
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   title: {

@@ -495,6 +495,9 @@ export function TasksProvider({ children }) {
   const syncingRef = useRef(false);
   const resyncQueuedRef = useRef(false);
   const pushTimer = useRef(null);
+  // Realtime presence: peers keyed by their connection id -> awareness state.
+  const [peers, setPeers] = useState({});
+  const presenceRef = useRef(() => {});
 
   // Keep the date utils' active timezone in sync before descendants render, so
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
@@ -594,6 +597,10 @@ export function TasksProvider({ children }) {
       setSetting: (key, value) => dispatch({ type: 'SET_SETTING', key, value }),
       reset: () => dispatch({ type: 'RESET' }),
 
+      // Broadcast this user's live presence (which task they're on, cursor, name,
+      // colour) to teammates over the realtime channel. No-op when offline/solo.
+      setPresence: (st) => presenceRef.current(st),
+
       // Run one cloud-sync cycle. Coalesced: if a sync is already running, the
       // request is deferred and a single follow-up runs after — never two at
       // once (which would double-push the pending backlog). On the Go-backed
@@ -651,15 +658,31 @@ export function TasksProvider({ children }) {
   // sync and open a WebSocket that triggers a sync whenever another device
   // changes this user's data. Re-runs on sign-in/out (syncGen).
   useEffect(() => {
-    if (!state.loaded || !serverConfig()) return undefined;
+    if (!state.loaded || !serverConfig()) {
+      setPeers({});
+      return undefined;
+    }
     let cancelled = false;
     actions.syncNow().catch(() => {});
-    const close = openRealtime(() => {
-      if (!cancelled) actions.syncNow().catch(() => {});
+    const rt = openRealtime({
+      onNudge: () => {
+        if (!cancelled) actions.syncNow().catch(() => {});
+      },
+      onPresence: ({ from, state: st, leave }) => {
+        setPeers((prev) => {
+          const next = { ...prev };
+          if (leave) delete next[from];
+          else next[from] = st;
+          return next;
+        });
+      },
     });
+    presenceRef.current = rt.sendPresence;
     return () => {
       cancelled = true;
-      close();
+      presenceRef.current = () => {};
+      rt.close();
+      setPeers({});
     };
   }, [state.loaded, syncGen, actions]);
 
@@ -679,7 +702,7 @@ export function TasksProvider({ children }) {
     };
   }, [state, syncGen, actions]);
 
-  const value = useMemo(() => ({ state, ...actions }), [state, actions]);
+  const value = useMemo(() => ({ state, peers, ...actions }), [state, peers, actions]);
 
   return <TasksContext.Provider value={value}>{children}</TasksContext.Provider>;
 }
