@@ -294,8 +294,10 @@ export function presenceIdentity() {
 // sendPresence } — sendPresence(state) broadcasts this user's live presence
 // (which task they're on, cursor position, name, colour) to teammates.
 // Auto-reconnects with a short backoff and re-announces the last presence.
-export function openRealtime({ onNudge, onPresence } = {}) {
-  if (typeof WebSocket === 'undefined' || !_server) return { close: () => {}, sendPresence: () => {} };
+export function openRealtime({ onNudge, onPresence, onActivity } = {}) {
+  if (typeof WebSocket === 'undefined' || !_server) {
+    return { close: () => {}, sendPresence: () => {}, sendActivity: () => {} };
+  }
   let ws = null;
   let closed = false;
   let timer = null;
@@ -318,6 +320,7 @@ export function openRealtime({ onNudge, onPresence } = {}) {
       if (msg.type === 'changed') onNudge && onNudge();
       else if (msg.type === 'presence') onPresence && onPresence({ from: msg.from, state: msg.state });
       else if (msg.type === 'presence-leave') onPresence && onPresence({ from: msg.from, leave: true });
+      else if (msg.type === 'activity') onActivity && onActivity({ from: msg.from, state: msg.state });
     };
     ws.onclose = () => {
       if (!closed) timer = setTimeout(connect, 2000);
@@ -343,6 +346,12 @@ export function openRealtime({ onNudge, onPresence } = {}) {
     sendPresence: (state) => {
       lastPresence = state;
       rawSend(state);
+    },
+    // Fire-and-forget ephemeral event (e.g. "added a task"); never stored.
+    sendActivity: (state) => {
+      try {
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'activity', state }));
+      } catch { /* ignore */ }
     },
   };
 }

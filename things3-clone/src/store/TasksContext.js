@@ -20,6 +20,7 @@ import {
   backendName,
   serverConfig,
   openRealtime,
+  presenceIdentity,
   resetLocal,
 } from './backend';
 
@@ -498,6 +499,28 @@ export function TasksProvider({ children }) {
   // Realtime presence: peers keyed by their connection id -> awareness state.
   const [peers, setPeers] = useState({});
   const presenceRef = useRef(() => {});
+  const activityRef = useRef(() => {});
+  // Ephemeral "just added" marks: taskId -> { user, color, ts }. Never persisted;
+  // each entry auto-expires so the UI badge fades and disappears on its own.
+  const [recentAdds, setRecentAdds] = useState({});
+  const addTimers = useRef(new Map());
+  const markAdded = useCallback((taskId, who) => {
+    if (!taskId) return;
+    setRecentAdds((prev) => ({ ...prev, [taskId]: { ...(who || {}), ts: Date.now() } }));
+    const timers = addTimers.current;
+    if (timers.has(taskId)) clearTimeout(timers.get(taskId));
+    timers.set(
+      taskId,
+      setTimeout(() => {
+        setRecentAdds((prev) => {
+          const next = { ...prev };
+          delete next[taskId];
+          return next;
+        });
+        timers.delete(taskId);
+      }, 4200)
+    );
+  }, []);
 
   // Keep the date utils' active timezone in sync before descendants render, so
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
@@ -547,7 +570,16 @@ export function TasksProvider({ children }) {
   // Stable action creators.
   const actions = useMemo(
     () => ({
-      addTask: (payload) => dispatch({ type: 'ADD_TASK', payload }),
+      addTask: (payload) => {
+        dispatch({ type: 'ADD_TASK', payload });
+        // Ephemeral "just added" flash (not persisted) + tell teammates.
+        const id = payload && payload.id;
+        if (id) {
+          const me = presenceIdentity() || { user: 'You' };
+          markAdded(id, { user: me.user, color: me.color });
+          activityRef.current({ kind: 'added', taskId: id, user: me.user, color: me.color });
+        }
+      },
       updateTask: (id, patch) => dispatch({ type: 'UPDATE_TASK', id, patch }),
       toggleTask: (id) => dispatch({ type: 'TOGGLE_TASK', id }),
       reorderTasks: (ids) => dispatch({ type: 'REORDER_TASKS', ids }),
@@ -676,11 +708,19 @@ export function TasksProvider({ children }) {
           return next;
         });
       },
+      onActivity: ({ state: st }) => {
+        // A teammate added a task: flash an ephemeral "added by X" mark.
+        if (st && st.kind === 'added' && st.taskId) {
+          markAdded(st.taskId, { user: st.user, color: st.color });
+        }
+      },
     });
     presenceRef.current = rt.sendPresence;
+    activityRef.current = rt.sendActivity;
     return () => {
       cancelled = true;
       presenceRef.current = () => {};
+      activityRef.current = () => {};
       rt.close();
       setPeers({});
     };
@@ -702,7 +742,10 @@ export function TasksProvider({ children }) {
     };
   }, [state, syncGen, actions]);
 
-  const value = useMemo(() => ({ state, peers, ...actions }), [state, peers, actions]);
+  const value = useMemo(
+    () => ({ state, peers, recentAdds, ...actions }),
+    [state, peers, recentAdds, actions]
+  );
 
   return <TasksContext.Provider value={value}>{children}</TasksContext.Provider>;
 }

@@ -161,6 +161,15 @@ func (r *Room) setPresence(id int64, state json.RawMessage) {
 	r.sendOthersLocked(id, presenceFrame(id, state))
 }
 
+// broadcastActivity relays a one-shot ephemeral event (e.g. "added a task") to
+// peers WITHOUT storing it — transient, never persisted, gone once delivered.
+func (r *Room) broadcastActivity(id int64, state json.RawMessage) {
+	frame, _ := json.Marshal(map[string]any{"type": "activity", "from": id, "state": state})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sendOthersLocked(id, frame)
+}
+
 func presenceFrame(id int64, state json.RawMessage) []byte {
 	b, _ := json.Marshal(map[string]any{"type": "presence", "from": id, "state": state})
 	return b

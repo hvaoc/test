@@ -7,6 +7,7 @@ import { STATUS, PRIORITY_MAP } from '../store/constants';
 import { relativeLabel, isPast, isToday } from '../utils/date';
 import { useTasks } from '../store/TasksContext';
 import { selectSubtasks } from '../store/selectors';
+import EphemeralBadge from './EphemeralBadge';
 
 const CHEVRON_W = 20;
 const INDENT = 26;
@@ -28,8 +29,10 @@ export default function TaskRow({
   expanded = false,
   onToggleExpand,
 }) {
-  const { state, toggleTask } = useTasks();
+  const { state, toggleTask, recentAdds } = useTasks();
   const done = task.status !== STATUS.OPEN;
+  // Ephemeral, non-persisted "just added" mark for this task (fades on its own).
+  const added = recentAdds && recentAdds[task.id];
 
   const project = task.projectId
     ? state.projects.find((p) => p.id === task.projectId)
@@ -157,6 +160,16 @@ export default function TaskRow({
           ) : null}
         </View>
 
+        {added && (
+          <View style={styles.addedSlot}>
+            <EphemeralBadge
+              key={added.ts}
+              label={`added by ${added.user || 'someone'}`}
+              color={added.color}
+            />
+          </View>
+        )}
+
         {task.when === 'evening' && (
           <Ionicons name="moon" size={14} color={colors.textTertiary} />
         )}
@@ -181,6 +194,7 @@ const styles = StyleSheet.create({
   // Nested subtasks step in one indent per level (compounds through recursion).
   children: { marginLeft: INDENT },
   body: { flex: 1, paddingTop: 1 },
+  addedSlot: { alignSelf: 'center', paddingLeft: spacing.sm },
   title: { ...typography.body, color: colors.text },
   titleDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   meta: {

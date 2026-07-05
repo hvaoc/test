@@ -157,8 +157,13 @@ func (h *Hub) handleStream(w http.ResponseWriter, r *http.Request) {
 				Type  string          `json:"type"`
 				State json.RawMessage `json:"state"`
 			}
-			if json.Unmarshal(msg, &in) == nil && in.Type == "presence" && p.CanWrite() {
-				room.setPresence(c.id, in.State)
+			if json.Unmarshal(msg, &in) == nil && p.CanWrite() {
+				switch in.Type {
+				case "presence":
+					room.setPresence(c.id, in.State)
+				case "activity":
+					room.broadcastActivity(c.id, in.State) // one-shot, not stored
+				}
 			}
 		}
 	}()
