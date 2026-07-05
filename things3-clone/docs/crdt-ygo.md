@@ -227,8 +227,14 @@ shippable and reversible.
   ygo doc from the old register tables on the web. Verified: browser create→persist
   →reload→server round-trip; `go test ./core/ydstore` two-device convergence +
   no-clobber note merge.
-- **Phase 2 — Real collaborative notes.** Wire the notes editor to `YText` directly
-  (granular ops + awareness cursors) instead of round-tripping strings.
+- **Phase 2 — Real auth ✅ + collaborative-notes/ordering (remaining).**
+  *Done:* real accounts (`server/auth`) — bcrypt users, tenants (teams), per-tenant
+  roles (owner/editor/viewer), session + tenant-scoped sync tokens; push is
+  owner/editor-only (viewers 403). Client `authenticate()` logs in / auto-registers,
+  opens a tenant, mints a sync token. Verified by `go test ./server/auth` and a live
+  browser sign-in→sync. *Remaining:* wire the notes editor to `YText` directly
+  (granular ops + awareness cursors) instead of round-tripping strings; ordering →
+  `YArray` (concurrent-reorder safety) — both enhancements, not correctness gaps.
 - **Phase 3 — Server + multi-tenant.** ✅ Core built early (`server/ysync`):
   per-tenant Doc, tenant isolation, push/pull state-vector sync, WS nudge,
   pluggable auth + persistence. Remaining: real auth (Phase 2), Redis fan-out for
