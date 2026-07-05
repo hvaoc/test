@@ -79,7 +79,9 @@ frontend changes** — running an old `.app` will not show new UI.
 In the app: **profile (bottom-left "…") → Settings → Sync**, then:
 - **Server URL:** `http://localhost:8090`
 - **Username / Password:** anything you like — the account is **created on first
-  sign-in** (no separate registration).
+  sign-in** (no separate registration). **The password must be at least 6
+  characters.** Signing in again with the same username uses a *wrong* password
+  reports "Wrong password for that account".
 
 The client logs you in, opens your workspace (tenant), and mints a tenant-scoped
 sync token. Data then syncs automatically (auto-push + realtime pull over a

@@ -32,6 +32,8 @@ import (
 var (
 	ErrExists       = errors.New("username already taken")
 	ErrCredentials  = errors.New("invalid username or password")
+	ErrNoUsername   = errors.New("username is required")
+	ErrWeakPassword = errors.New("password must be at least 6 characters")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrForbidden    = errors.New("forbidden")
 	ErrNotFound     = errors.New("not found")
@@ -141,8 +143,11 @@ func id(prefix string) string {
 // token and the user id.
 func (s *Store) Register(username, password string) (sessionToken, userID string, err error) {
 	username = strings.TrimSpace(username)
-	if username == "" || len(password) < 6 {
-		return "", "", ErrCredentials
+	if username == "" {
+		return "", "", ErrNoUsername
+	}
+	if len(password) < 6 {
+		return "", "", ErrWeakPassword
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

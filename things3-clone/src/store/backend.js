@@ -257,7 +257,17 @@ export async function authenticate(url, username, password, mode = 'login') {
   };
 
   let res = await jpost('/v1/login', { username, password });
-  if (!res.ok && res.status === 401) res = await jpost('/v1/register', { username, password });
+  if (!res.ok && res.status === 401) {
+    // Login failed — either a new account (create it) or a wrong password.
+    const reg = await jpost('/v1/register', { username, password });
+    if (!reg.ok) {
+      // 409 = the username exists, so login failing means the password was wrong
+      // (not a "taken" problem). Anything else (e.g. weak password) → show as-is.
+      if (reg.status === 409) throw new Error('Wrong password for that account.');
+      throw new Error(reg.body.error || 'could not create account: ' + reg.status);
+    }
+    res = reg;
+  }
   if (!res.ok) throw new Error(res.body.error || 'sign-in failed: ' + res.status);
 
   const { token: session, userId, tenants = [] } = res.body;
