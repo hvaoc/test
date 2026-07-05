@@ -237,18 +237,41 @@ export function serverConfig() {
   return _server;
 }
 
-// Connect to the sync server. Phase 1 (ygo/ysync): auth is a STUB — the bearer
-// token is simply "tenant:user" (see desktop/server/ysync). A username without a
-// ':' joins the shared "default" tenant, so teammates who sign in with just their
-// name collaborate; use "tenant:user" to pick a specific team. Thorough auth
-// (real identities, passwords, membership) lands in the next phase behind this
-// same function — the sync core won't change. `password`/`mode` are accepted for
-// forward-compatibility but unused today.
+// Connect to the sync server (Phase 2: real accounts). Signs in — creating the
+// account on first use for a single-button UX — then opens the user's active
+// tenant and mints a tenant-scoped SYNC token. That sync token is what every
+// push/pull uses, so the tenant is baked in and the rest of the client
+// (including the desktop/mobile bridge) needs no new fields. Teams: additional
+// members are added server-side (POST /v1/members); switching the active tenant
+// is future UI. `mode` is accepted for forward-compatibility.
 export async function authenticate(url, username, password, mode = 'login') {
   const base = url.replace(/\/$/, '');
-  const token = username.includes(':') ? username : `default:${username}`;
-  configureServer({ url: base, token, username });
-  return { token };
+  const jpost = async (path, body, token) => {
+    const r = await fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(body || {}),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body: j };
+  };
+
+  let res = await jpost('/v1/login', { username, password });
+  if (!res.ok && res.status === 401) res = await jpost('/v1/register', { username, password });
+  if (!res.ok) throw new Error(res.body.error || 'sign-in failed: ' + res.status);
+
+  const { token: session, userId, tenants = [] } = res.body;
+  if (!tenants.length) throw new Error('no tenant for this account');
+  const tenant = tenants[0]; // active tenant defaults to the personal one
+
+  const tok = await jpost('/v1/synctoken', { tenantId: tenant.id }, session);
+  if (!tok.ok) throw new Error(tok.body.error || 'could not open tenant');
+
+  configureServer({
+    url: base, token: tok.body.token, session, userId, username,
+    tenantId: tenant.id, tenantName: tenant.name, role: tok.body.role,
+  });
+  return { userId, tenantId: tenant.id, role: tok.body.role };
 }
 
 export function logout() {

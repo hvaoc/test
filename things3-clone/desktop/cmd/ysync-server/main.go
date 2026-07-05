@@ -1,42 +1,57 @@
-// Command ysync-server runs the multi-tenant Yjs (ygo) sync server.
+// Command ysync-server runs the multi-tenant Yjs (ygo) sync server with real
+// accounts.
 //
 //	go run ./cmd/ysync-server -addr :8090 -data ./ysync-data
 //
-// Phase 1: auth is the DevAuth stub — a bearer token is "<tenant>:<user>"
-// (e.g. "acme:alice"). All users sharing a tenant collaborate on one document;
-// tenants are isolated. Thorough auth arrives in the next phase behind the same
-// Authenticator seam.
+// Phase 2: register/login create real users (bcrypt) and tenants (teams) with
+// per-tenant roles (owner/editor/viewer). Clients log in, pick a tenant, mint a
+// tenant-scoped SYNC token, and use that token for /v1/push and /v1/pull. Viewers
+// are read-only. See server/auth and docs/crdt-ygo.md.
 package main
 
 import (
 	"flag"
 	"log"
 	"net/http"
+	"path/filepath"
 
+	"things3-clone-desktop/server/auth"
 	"things3-clone-desktop/server/ysync"
 )
 
 func main() {
 	addr := flag.String("addr", ":8090", "listen address")
-	data := flag.String("data", "", "directory for per-tenant persistence (empty = in-memory)")
+	data := flag.String("data", "", "directory for persistence (empty = in-memory, lost on restart)")
 	flag.Parse()
 
 	var store ysync.Persistence
+	authPath := ""
 	if *data == "" {
 		store = ysync.NewMemPersistence()
-		log.Printf("ysync: in-memory persistence (data lost on restart)")
+		log.Printf("ysync: in-memory persistence (accounts + data lost on restart)")
 	} else {
 		fp, err := ysync.NewFilePersistence(*data)
 		if err != nil {
 			log.Fatalf("ysync: persistence: %v", err)
 		}
 		store = fp
+		authPath = filepath.Join(*data, "auth.json")
 		log.Printf("ysync: file persistence at %s", *data)
 	}
 
-	hub := ysync.NewHub(ysync.DevAuth{}, store)
-	log.Printf("ysync: listening on %s (auth: DevAuth STUB — token is \"tenant:user\")", *addr)
-	if err := http.ListenAndServe(*addr, hub.Handler()); err != nil {
+	accounts, err := auth.Open(authPath)
+	if err != nil {
+		log.Fatalf("ysync: auth store: %v", err)
+	}
+
+	// One mux: auth routes + sync routes. The sync layer authorizes every push/pull
+	// against the accounts store (a tenant-scoped sync token -> user+tenant+role).
+	mux := http.NewServeMux()
+	accounts.Mount(mux)
+	ysync.NewHub(accounts, store).Mount(mux)
+
+	log.Printf("ysync: listening on %s (real accounts: /v1/register, /v1/login)", *addr)
+	if err := http.ListenAndServe(*addr, ysync.CORS(mux)); err != nil {
 		log.Fatal(err)
 	}
 }

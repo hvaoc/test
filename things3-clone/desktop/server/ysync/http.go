@@ -8,23 +8,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Handler builds the HTTP router for the sync API.
+// Mount registers the sync routes on mux (so it can share a mux with the auth
+// routes). Updates and state vectors are opaque Yjs bytes, base64 in JSON.
 //
 //	GET  /v1/health              -> {status}
-//	POST /v1/push   (auth)       {update:b64}     -> {version}
-//	POST /v1/pull   (auth)       {sv:b64}         -> {update:b64, version}
+//	POST /v1/push   (auth)       {update:b64}     -> {version}   (owner/editor only)
+//	POST /v1/pull   (auth)       {sv:b64}         -> {update:b64, sv, version}
 //	GET  /v1/stream (auth ?token) websocket, nudges {type:"changed", version}
-//
-// Updates and state vectors are opaque Yjs bytes, base64-encoded in JSON.
-func (h *Hub) Handler() http.Handler {
-	mux := http.NewServeMux()
+func (h *Hub) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/v1/push", h.authed(h.handlePush))
 	mux.HandleFunc("/v1/pull", h.authed(h.handlePull))
 	mux.HandleFunc("/v1/stream", h.handleStream)
-	return cors(mux)
+}
+
+// Handler builds a standalone HTTP router for the sync API (tests / sync-only
+// deployments). Production mounts auth + sync on one mux; see cmd/ysync-server.
+func (h *Hub) Handler() http.Handler {
+	mux := http.NewServeMux()
+	h.Mount(mux)
+	return CORS(mux)
 }
 
 // authed resolves the bearer token to a principal + scope and invokes fn. The
@@ -48,7 +53,11 @@ type pushResp struct {
 	Version int64 `json:"version"`
 }
 
-func (h *Hub) handlePush(scope string, _ Principal, w http.ResponseWriter, r *http.Request) {
+func (h *Hub) handlePush(scope string, p Principal, w http.ResponseWriter, r *http.Request) {
+	if !p.CanWrite() {
+		writeErr(w, 403, "read-only: your role in this tenant cannot make changes")
+		return
+	}
 	var req pushReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -150,7 +159,9 @@ func (h *Hub) handleStream(w http.ResponseWriter, r *http.Request) {
 
 // --- helpers ---
 
-func cors(next http.Handler) http.Handler {
+// CORS wraps a handler with permissive CORS so the browser (a different origin
+// than the API) can call it. Phase-1/2 permissive; lock the origin down for prod.
+func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

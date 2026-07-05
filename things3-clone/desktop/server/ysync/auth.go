@@ -22,16 +22,27 @@ import (
 // ErrUnauthorized is returned when a token can't be resolved to a principal.
 var ErrUnauthorized = errors.New("unauthorized")
 
-// Principal is the authenticated caller: which tenant (team) they belong to and
-// who they are within it. UserID is carried through for realtime attribution and
-// future per-user authorization; the sync scope is the TenantID.
+// Roles within a tenant. Viewers get read-only sync (pull, no push).
+const (
+	RoleOwner  = "owner"
+	RoleEditor = "editor"
+	RoleViewer = "viewer"
+)
+
+// Principal is the authenticated caller: their user id, the tenant (team) they
+// are acting in, and their role there. The sync scope is the TenantID; the Role
+// gates writes.
 type Principal struct {
-	TenantID string
 	UserID   string
+	TenantID string
+	Role     string
 }
 
-// Authenticator resolves a bearer token to a Principal. Phase 2 replaces the stub
-// with real identity + membership + roles without touching the sync core.
+// CanWrite reports whether this principal may push (owners and editors).
+func (p Principal) CanWrite() bool { return p.Role == RoleOwner || p.Role == RoleEditor }
+
+// Authenticator resolves a bearer token to a Principal. The real implementation
+// (server/auth) resolves tenant-scoped sync tokens; DevAuth below is a stub.
 type Authenticator interface {
 	Resolve(token string) (Principal, error)
 }
@@ -55,7 +66,7 @@ func (DevAuth) Resolve(token string) (Principal, error) {
 	if tenant == "" {
 		return Principal{}, ErrUnauthorized
 	}
-	return Principal{TenantID: tenant, UserID: user}, nil
+	return Principal{UserID: user, TenantID: tenant, Role: RoleEditor}, nil
 }
 
 // bearer extracts a token from the Authorization header, or the ?token= query
