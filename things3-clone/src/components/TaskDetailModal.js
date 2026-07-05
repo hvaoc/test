@@ -222,7 +222,7 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
             </View>
 
             {/* Checklist */}
-            {task.checklist.length > 0 && (
+            {(task.checklist?.length ?? 0) > 0 && (
               <View style={styles.checklist}>
                 {task.checklist.map((c) => (
                   <View key={c.id} style={styles.checkRow}>
@@ -261,9 +261,9 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
             </View>
 
             {/* Tags */}
-            {task.tags.length > 0 && (
+            {(task.tags?.length ?? 0) > 0 && (
               <View style={styles.tagsRow}>
-                {task.tags.map((tag) => (
+                {(task.tags || []).map((tag) => (
                   <View key={tag} style={styles.tagChip}>
                     <Text style={styles.tagText}>{tag}</Text>
                   </View>

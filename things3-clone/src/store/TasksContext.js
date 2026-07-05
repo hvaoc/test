@@ -97,12 +97,22 @@ function newTask(partial = {}) {
   };
 }
 
+// The CRDT only stores fields that were actually set, so a task with an empty
+// checklist / no tags materializes back *without* those keys. Components (e.g.
+// the detail modal) read `task.checklist.length` / `task.tags.length` directly,
+// which throws on undefined. Guarantee the array fields on every hydrated task.
+function normalizeTask(t) {
+  if (t.checklist && t.tags) return t;
+  return { ...t, checklist: t.checklist || [], tags: t.tags || [] };
+}
+
 function reducer(state, action) {
   switch (action.type) {
     case 'HYDRATE':
       return {
         ...state,
         ...action.payload,
+        tasks: (action.payload.tasks || []).map(normalizeTask),
         // Merge so a setting added after the user's data was saved still defaults.
         settings: { ...defaultSettings, ...(action.payload.settings || {}) },
         loaded: true,
