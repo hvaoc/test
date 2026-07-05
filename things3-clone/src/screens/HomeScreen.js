@@ -19,6 +19,7 @@ import { counts, selectProjectTasks, isOpen } from '../store/selectors';
 import { selectionKey } from '../navigation/responsive';
 import NewListSheet from '../components/NewListSheet';
 import SettingsSheet from '../components/SettingsSheet';
+import WorkspaceSheet from '../components/WorkspaceSheet';
 import QueryBuilderSheet from '../components/QueryBuilderSheet';
 import { emptyQuery } from '../store/query';
 import ProgressPie from '../components/ProgressPie';
@@ -42,6 +43,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
   // into that area.
   const [sheetAreaId, setSheetAreaId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   // Account popover pinned to the profile row at the sidebar bottom. We measure
   // the row so the menu pops UP anchored to its top-left corner.
   const [profileOpen, setProfileOpen] = useState(false);
@@ -323,6 +325,19 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
               ]}
               onPress={() => {
                 setProfileOpen(false);
+                setWorkspacesOpen(true);
+              }}
+            >
+              <Ionicons name="people-outline" size={18} color={colors.sidebarText} />
+              <Text style={styles.menuItemText}>Workspaces & team</Text>
+            </Pressable>
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.menuItem,
+                (hovered || pressed) && styles.menuItemActive,
+              ]}
+              onPress={() => {
+                setProfileOpen(false);
                 setSettingsOpen(true);
               }}
             >
@@ -340,6 +355,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
         initialAreaId={sheetAreaId}
       />
       <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <WorkspaceSheet visible={workspacesOpen} onClose={() => setWorkspacesOpen(false)} />
 
       <QueryBuilderSheet
         visible={newViewOpen}

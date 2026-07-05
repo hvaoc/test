@@ -22,6 +22,7 @@ import {
   openRealtime,
   presenceIdentity,
   resetLocal,
+  switchWorkspace,
 } from './backend';
 
 const TasksContext = createContext(null);
@@ -672,6 +673,23 @@ export function TasksProvider({ children }) {
       // Called by the Settings sign-in/out so the realtime subscription and an
       // immediate sync kick in (or tear down) without a reload.
       reconnectSync: () => setSyncGen((g) => g + 1),
+
+      // Reload app state from the current active workspace's local replica, then
+      // resync. Used after sign-in and sign-out (the replica may have changed).
+      refreshWorkspace: async () => {
+        const snap = await loadSnapshot();
+        dispatch({ type: 'HYDRATE', payload: snap || EMPTY_DATA });
+        setSyncGen((g) => g + 1);
+      },
+
+      // Make an already-joined workspace active: switch sync token + local replica,
+      // then reload from it. This is how a user moves between their workspaces.
+      activateWorkspace: async (tenant) => {
+        await switchWorkspace(tenant);
+        const snap = await loadSnapshot();
+        dispatch({ type: 'HYDRATE', payload: snap || EMPTY_DATA });
+        setSyncGen((g) => g + 1);
+      },
 
       // Wipe ALL local data on this device and start fresh (also signs out, so
       // it doesn't immediately re-pull the account's data). Empties the UI at

@@ -6,6 +6,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 
 import { TasksProvider } from './src/store/TasksContext';
+import JoinInvite from './src/components/JoinInvite';
 import RootNavigator from './src/navigation/RootNavigator';
 import WailsTitleBar, { useIsWails } from './src/components/WailsTitleBar';
 import { stepZoom, applyStoredZoom } from './src/utils/zoom';
@@ -102,6 +103,7 @@ export default function App() {
                 <StatusBar style="dark" />
                 <RootNavigator />
               </NavigationContainer>
+              <JoinInvite />
             </View>
           </Animated.View>
         </TasksProvider>

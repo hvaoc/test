@@ -244,7 +244,7 @@ export function serverConfig() {
 // (including the desktop/mobile bridge) needs no new fields. Teams: additional
 // members are added server-side (POST /v1/members); switching the active tenant
 // is future UI. `mode` is accepted for forward-compatibility.
-export async function authenticate(url, username, password, workspace = '') {
+export async function authenticate(url, username, password, workspace = '', email = '') {
   const base = url.replace(/\/$/, '');
   const jpost = async (path, body, token) => {
     const r = await fetch(base + path, {
@@ -259,7 +259,7 @@ export async function authenticate(url, username, password, workspace = '') {
   let res = await jpost('/v1/login', { username, password });
   if (!res.ok && res.status === 401) {
     // Login failed — either a new account (create it) or a wrong password.
-    const reg = await jpost('/v1/register', { username, password });
+    const reg = await jpost('/v1/register', { username, email, password });
     if (!reg.ok) {
       // 409 = the username exists, so login failing means the password was wrong
       // (not a "taken" problem). Anything else (e.g. weak password) → show as-is.
@@ -290,11 +290,45 @@ export async function authenticate(url, username, password, workspace = '') {
     url: base, token: tok.body.token, session, userId, username,
     tenantId: tenant.id, tenantName: tenant.name, role: tok.body.role,
   });
-  return { userId, tenantId: tenant.id, role: tok.body.role };
+  await activateLocalReplica(tenant.id);
+  return { userId, tenantId: tenant.id, role: tok.body.role, tenantName: tenant.name };
+}
+
+// Point the local store at a workspace's own replica so switching workspaces
+// never mixes their data. Web only (the worker keeps one DB per workspace);
+// desktop/mobile use a single native store today.
+export async function activateLocalReplica(tenantId) {
+  try {
+    if (backend().name === 'wasm') {
+      await crdtClient.init();
+      await crdtClient.useWorkspace(tenantId || 'local');
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+// Make an already-joined workspace the active one: mint a fresh sync token for it
+// (using the session token) and switch the local replica. The caller then reloads
+// app state from the switched replica.
+export async function switchWorkspace(tenant) {
+  if (!_server || !_server.session) throw new Error('not signed in');
+  const base = _server.url.replace(/\/$/, '');
+  const r = await fetch(base + '/v1/synctoken', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.session },
+    body: JSON.stringify({ tenantId: tenant.id }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'could not open workspace');
+  configureServer({ ..._server, token: j.token, tenantId: tenant.id, tenantName: tenant.name, role: j.role });
+  await activateLocalReplica(tenant.id);
+  return { role: j.role };
 }
 
 export function logout() {
   configureServer(null);
+  activateLocalReplica('local');
 }
 
 // This user's presence identity for the awareness channel: display name + a

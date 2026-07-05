@@ -534,7 +534,7 @@ function BackupsSection({ reset, resetLocalData, onClose }) {
 // offline-first replica. On web you sign in to a sync server to converge across
 // devices; "Sync now" runs one push/pull cycle and reports what moved.
 function SyncSection() {
-  const { syncNow, backendName, reconnectSync } = useTasks();
+  const { syncNow, backendName, reconnectSync, refreshWorkspace } = useTasks();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [cfg, setCfg] = useState(() => serverConfig());
@@ -551,6 +551,7 @@ function SyncSection() {
   // Sign-in form state (web).
   const [url, setUrl] = useState('http://localhost:8090');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [workspace, setWorkspace] = useState('');
   const [authErr, setAuthErr] = useState(null);
@@ -571,9 +572,9 @@ function SyncSection() {
     setAuthBusy(true);
     setAuthErr(null);
     try {
-      await authenticate(url, username.trim(), password, workspace.trim());
+      await authenticate(url, username.trim(), password, workspace.trim(), email.trim());
       setCfg(serverConfig());
-      reconnectSync(); // kick off initial sync + realtime
+      await refreshWorkspace(); // load the active workspace's replica + sync
       setPassword('');
     } catch (e) {
       setAuthErr(String(e && e.message ? e.message : e));
@@ -628,6 +629,7 @@ function SyncSection() {
           </Text>
           <TextInput style={styles.syncInput} value={url} onChangeText={setUrl} placeholder="Server URL" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <TextInput style={styles.syncInput} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
+          <TextInput style={styles.syncInput} value={email} onChangeText={setEmail} placeholder="Email (optional)" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
           <TextInput style={styles.syncInput} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={colors.placeholder} secureTextEntry />
           <TextInput style={styles.syncInput} value={workspace} onChangeText={setWorkspace} placeholder="Workspace (optional — shared team code)" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>

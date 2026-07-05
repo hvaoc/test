@@ -65,4 +65,6 @@ export const crdtClient = {
   applyUpdate: (updateB64) => call('applyUpdate', [updateB64]),
   hasData: () => call('hasData'),
   reset: () => call('reset'),
+  // Switch the active workspace's local replica (each workspace has its own DB).
+  useWorkspace: (ws) => call('useWorkspace', [ws]),
 };

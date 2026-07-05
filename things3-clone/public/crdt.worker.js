@@ -20,9 +20,18 @@ importScripts('/wasm_exec.js', '/sqlite3.js');
 const US = '\x1f';
 const ek = (kind, id) => kind + US + id;
 
-let db = null; // sqlite oo1 DB (OPFS-backed)
+let db = null; // sqlite oo1 DB (OPFS-backed) for the active workspace
+let pool = null; // OPFS SAHPool VFS (holds one db file per workspace)
+let currentWs = 'local'; // active workspace id ('local' = signed-out/personal)
 let ready = false;
 const queue = [];
+
+// Each workspace gets its own SQLite file so switching workspaces never merges
+// their data. 'local' keeps the original path for backward compatibility.
+function dbPath(ws) {
+  ws = String(ws || 'local');
+  return ws === 'local' ? '/things.db' : '/things-' + ws.replace(/[^a-zA-Z0-9_-]/g, '') + '.db';
+}
 
 function unwrap(r) {
   if (!r || r.ok !== true) throw new Error((r && r.error) || 'wasm call failed');
@@ -125,8 +134,8 @@ function loadEngine() {
 
 async function init() {
   const sqlite3 = await self.sqlite3InitModule();
-  const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
-  db = new pool.OpfsSAHPoolDb('/things.db');
+  pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
+  db = new pool.OpfsSAHPoolDb(dbPath(currentWs));
   createSchema();
 
   const goReady = new Promise((resolve) => { self.__onCrdtReady = resolve; });
@@ -179,6 +188,20 @@ function handle(msg) {
       case 'hasData':
         result = unwrap(self.__ydocHasData()).result;
         break;
+      case 'useWorkspace': {
+        // Switch the active workspace's local replica: close the current DB, open
+        // that workspace's own DB, and reload the engine from it. No cross-mixing.
+        const ws = String(args[0] || 'local');
+        if (ws !== currentWs) {
+          try { db.close(); } catch (_) { /* ignore */ }
+          db = new pool.OpfsSAHPoolDb(dbPath(ws));
+          createSchema();
+          loadEngine();
+          currentWs = ws;
+        }
+        result = { workspace: currentWs };
+        break;
+      }
       case 'reset':
         // Wipe the ygo snapshot and start a brand-new empty replica. (Clearing
         // OPFS from DevTools doesn't touch this SQLite DB; this does.)
