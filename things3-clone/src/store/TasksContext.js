@@ -561,7 +561,7 @@ export function TasksProvider({ children }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveSnapshot(state).catch(() => {});
-    }, 500);
+    }, 250);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
@@ -731,12 +731,16 @@ export function TasksProvider({ children }) {
   // the device until a manual "Sync now" or an inbound nudge. This depends on
   // `state`, so it fires after every edit — and since syncNow only rehydrates
   // when it actually pulls something (applied > 0), it can't loop.
+  //
+  // Must fire AFTER the save above (which applies the edit to the engine), so its
+  // delay stays > the 250ms save delay; the ~200ms gap is ample for the snapshot
+  // to land. Kept low so teammates see changes in ~½s, not ~1s.
   useEffect(() => {
     if (!state.loaded || !serverConfig()) return undefined;
     if (pushTimer.current) clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(() => {
       actions.syncNow().catch(() => {});
-    }, 900);
+    }, 450);
     return () => {
       if (pushTimer.current) clearTimeout(pushTimer.current);
     };
