@@ -7,3 +7,6 @@ web-build/
 
 # Desktop web export (generated)
 dist-web/
+
+# local sync-server data (created by cmd/server -data)
+desktop/sync-data.json
