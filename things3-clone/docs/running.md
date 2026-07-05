@@ -20,17 +20,33 @@ things3-clone/            # the Expo / React Native app (web + native shells)
 ## 1. Sync server (run this first)
 
 The server is multi-tenant with **real accounts** (bcrypt users, tenants/teams,
-roles). Run it from the `desktop/` module:
+roles) and **invitations** (email / link / QR). Run it from the `desktop/` module:
 
 ```bash
 cd things3-clone/desktop
-go run ./cmd/ysync-server -addr :8090 -data ./ysync-data
+go run ./cmd/ysync-server -addr :8090 -data ./ysync-data \
+  -smtp localhost:1025 -app-url http://localhost:8081
 ```
 
 - `-addr :8090` — listen address (clients point at `http://localhost:8090`).
-- `-data ./ysync-data` — directory for persistence. **Accounts + all data live
-  here** and survive restarts. Omit `-data` for an in-memory server (everything
-  is lost on restart — handy for a clean slate).
+- `-data ./ysync-data` — persistence dir. **Accounts + all data live here** and
+  survive restarts. Omit for an in-memory server (clean slate each run).
+- `-smtp localhost:1025` — where to send invite emails (MailPit in dev; §1a). Use
+  `-smtp ""` to disable email (invites still work via link/QR).
+- `-app-url` — base URL used in invite links/QR. **Set it to the URL your web app
+  is served from** (e.g. `http://localhost:8081`) so invite links open the app.
+
+### 1a. Invite email in dev — MailPit
+Invitations can be emailed. In development, [MailPit](https://mailpit.axllent.org/)
+captures them in a local inbox (nothing leaves your machine):
+
+```bash
+brew install mailpit     # once
+mailpit                  # SMTP on :1025, web inbox at http://localhost:8025
+```
+
+Open **http://localhost:8025** to read invitation emails. The server's
+`-smtp localhost:1025` points at it.
 
 Health check (in another terminal):
 ```bash
@@ -117,6 +133,21 @@ flashes an ephemeral **"added by …"** on its row.
 
 The first person to use a workspace code owns it; anyone else who enters the same
 code joins as an editor. Leave Workspace blank to use your private workspace.
+
+### B2) Invite people (email / link / QR) and manage the team
+Open **profile menu (bottom-left) → "Workspaces & team"**:
+- **Switch / create workspaces**, and (as owner) **rename / delete / leave**.
+- **Members:** see everyone with their role; owners can change roles or remove.
+- **Invite people:** pick a role, then either type an **email** to send an
+  invitation (read it in MailPit at http://localhost:8025) or **Create link** —
+  you get a shareable **URL**, a **copy button**, and a **QR code** (with the app
+  logo). Anyone who opens the link or scans the QR joins with that role. Active
+  invites are listed with **Revoke**.
+- **Joining:** opening an invite link (`…/?invite=CODE`) shows a banner and joins
+  the workspace once you're signed in.
+
+> Switching workspaces keeps each workspace's data in its own local replica, so
+> they never mix. (Web; desktop/mobile use one active workspace per install today.)
 
 ### C) Or simulate a teammate (no second account needed)
 Connect a fake teammate to your workspace over the realtime channel:
