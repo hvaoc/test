@@ -9,6 +9,7 @@ import React, {
   useCallback,
 } from 'react';
 import { uid } from '../utils/id';
+import { relabel, orderedItems } from './ordering';
 import { STATUS } from './constants';
 import { buildSampleData } from './sampleData';
 import { setTimeZone } from '../utils/date';
@@ -170,13 +171,16 @@ function reducer(state, action) {
       };
 
     case 'REORDER_TASKS': {
-      // action.ids is the new visual order of a single context's tasks.
-      // Write each task's `order` to its index so the sort reflects the drag.
-      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
+      // action.ids is the new visual order of a single context's tasks. Rewrite
+      // `order` for only the tasks that actually moved (fractional keys), so
+      // concurrent reorders don't clobber each other. See store/ordering.js.
+      const byId = new Map(state.tasks.map((t) => [t.id, t]));
+      const changes = relabel(orderedItems(action.ids, byId));
+      if (changes.size === 0) return state;
       return {
         ...state,
         tasks: state.tasks.map((t) =>
-          orderOf.has(t.id) ? { ...t, order: orderOf.get(t.id) } : t
+          changes.has(t.id) ? { ...t, order: changes.get(t.id) } : t
         ),
       };
     }
@@ -187,22 +191,27 @@ function reducer(state, action) {
       const { tasks: taskLayout, headings: headingOrder } = action.payload;
       const headingOf = new Map(taskLayout.map((x) => [x.id, x.headingId]));
       const parentOf = new Map(taskLayout.map((x) => [x.id, x.parentId ?? null]));
-      const taskOrderOf = new Map(taskLayout.map((x, i) => [x.id, i]));
-      const headingOrderOf = new Map((headingOrder || []).map((id, i) => [id, i]));
+      const inLayout = new Set(taskLayout.map((x) => x.id));
+      // Fractional relabel of only the tasks/headings that moved (heading/parent
+      // changes still always apply). See store/ordering.js.
+      const taskById = new Map(state.tasks.map((t) => [t.id, t]));
+      const taskChanges = relabel(orderedItems(taskLayout.map((x) => x.id), taskById));
+      const headingById = new Map(state.headings.map((h) => [h.id, h]));
+      const headingChanges = relabel(orderedItems(headingOrder || [], headingById));
       return {
         ...state,
         tasks: state.tasks.map((t) =>
-          taskOrderOf.has(t.id)
+          inLayout.has(t.id)
             ? {
                 ...t,
                 headingId: headingOf.get(t.id),
                 parentId: parentOf.get(t.id),
-                order: taskOrderOf.get(t.id),
+                order: taskChanges.has(t.id) ? taskChanges.get(t.id) : t.order,
               }
             : t
         ),
         headings: state.headings.map((h) =>
-          headingOrderOf.has(h.id) ? { ...h, order: headingOrderOf.get(h.id) } : h
+          headingChanges.has(h.id) ? { ...h, order: headingChanges.get(h.id) } : h
         ),
       };
     }
@@ -314,13 +323,15 @@ function reducer(state, action) {
 
     case 'REORDER_PROJECTS': {
       // action.ids is the new order of one area's (or the loose group's)
-      // projects. Write each project's `order` to its index. Orders are only
-      // ever compared within a single area, so per-area 0..n indices are fine.
-      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
+      // projects. Relabel only the projects that moved (fractional keys) so
+      // concurrent reorders don't clobber. See store/ordering.js.
+      const byId = new Map(state.projects.map((p) => [p.id, p]));
+      const changes = relabel(orderedItems(action.ids, byId));
+      if (changes.size === 0) return state;
       return {
         ...state,
         projects: state.projects.map((p) =>
-          orderOf.has(p.id) ? { ...p, order: orderOf.get(p.id) } : p
+          changes.has(p.id) ? { ...p, order: changes.get(p.id) } : p
         ),
       };
     }
@@ -451,13 +462,13 @@ function reducer(state, action) {
       };
 
     case 'REORDER_CUSTOM_VIEWS': {
-      const orderOf = new Map(action.ids.map((id, i) => [id, i]));
-      return {
-        ...state,
-        customViews: (state.customViews || [])
-          .slice()
-          .sort((a, b) => (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0)),
-      };
+      const byId = new Map((state.customViews || []).map((v) => [v.id, v]));
+      const changes = relabel(orderedItems(action.ids, byId));
+      const next = (state.customViews || []).map((v) =>
+        changes.has(v.id) ? { ...v, order: changes.get(v.id) } : v
+      );
+      next.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      return { ...state, customViews: next };
     }
 
     case 'RESET':
