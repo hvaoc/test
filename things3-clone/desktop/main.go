@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"things3-clone-desktop/core"
+	"things3-clone-desktop/core/ydstore"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -75,7 +75,7 @@ func savePrefs(p windowPrefs) {
 // persist and sync through the same Go engine the mobile apps use.
 type App struct {
 	ctx   context.Context
-	store *core.Store
+	store *ydstore.Store
 }
 
 // dataDir is the per-user writable directory for the database + mock cloud file.
@@ -161,14 +161,15 @@ func (a *App) SetSyncServer(url, token string) {
 		return
 	}
 	saveSyncPrefs(syncPrefs{URL: url, Token: token})
-	a.store.SetAdapter(core.NewHTTPAdapter(url, token))
+	a.store.SetServer(url, token)
 }
 
-// ClearSyncServer signs out: drop the connection and revert to the local mock.
+// ClearSyncServer signs out: drop the connection. The ygo replica keeps working
+// fully offline with no server attached.
 func (a *App) ClearSyncServer() {
 	saveSyncPrefs(syncPrefs{})
 	if a.store != nil {
-		a.store.SetAdapter(core.NewMockAdapter(dataDir()))
+		a.store.ClearServer()
 	}
 }
 
@@ -196,19 +197,18 @@ func (a *App) SetWindowMode(mode string) {
 // so it appears already in the right size/state — no resize flash.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Open the embedded database and attach a cloud adapter. Precedence:
+	// Open the offline-first ygo replica and connect it to a sync server if one is
+	// configured. Precedence:
 	//   1. THINGS_SYNC_URL env (power users / CI)
 	//   2. a persisted sign-in (Settings → Sync in the app)
-	//   3. the file-backed mock, so the app is always demoable offline.
+	//   3. none — the replica works fully offline until a server is set.
 	// Failure is non-fatal: the frontend keeps working from its in-memory seed.
-	if store, err := core.Open(dataDir()); err == nil {
+	if store, err := ydstore.Open(dataDir()); err == nil {
 		a.store = store
 		if url := os.Getenv("THINGS_SYNC_URL"); url != "" {
-			store.SetAdapter(core.NewHTTPAdapter(url, os.Getenv("THINGS_SYNC_TOKEN")))
+			store.SetServer(url, os.Getenv("THINGS_SYNC_TOKEN"))
 		} else if sp := loadSyncPrefs(); sp.URL != "" && sp.Token != "" {
-			store.SetAdapter(core.NewHTTPAdapter(sp.URL, sp.Token))
-		} else {
-			store.SetAdapter(core.NewMockAdapter(dataDir()))
+			store.SetServer(sp.URL, sp.Token)
 		}
 	}
 	p := loadPrefs()

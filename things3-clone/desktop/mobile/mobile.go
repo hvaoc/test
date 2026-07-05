@@ -19,27 +19,54 @@ import (
 	"errors"
 	"sync"
 
-	"things3-clone-desktop/core"
+	"things3-clone-desktop/core/ydstore"
 )
 
 var (
 	mu    sync.Mutex
-	store *core.Store
+	store *ydstore.Store
 )
 
-// Open initialises the database under dir (the app's writable files directory,
-// supplied by the native side) and attaches the mock cloud adapter. Call once
-// at app launch. Safe to call again (re-opens).
+// Open initialises the ygo replica under dir (the app's writable files directory,
+// supplied by the native side). Call once at app launch. Safe to call again
+// (re-opens). Attach a sync server later via SetServer once the user signs in.
 func Open(dir string) error {
 	mu.Lock()
 	defer mu.Unlock()
-	s, err := core.Open(dir)
+	s, err := ydstore.Open(dir)
 	if err != nil {
 		return err
 	}
-	s.SetAdapter(core.NewMockAdapter(dir))
 	store = s
 	return nil
+}
+
+// SetServer / ClearServer connect this device to a sync server (same account as
+// web/desktop). The native side calls these after the JS layer authenticates.
+func SetServer(url, token string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if store != nil {
+		store.SetServer(url, token)
+	}
+}
+
+func ClearServer() {
+	mu.Lock()
+	defer mu.Unlock()
+	if store != nil {
+		store.ClearServer()
+	}
+}
+
+// Reset wipes all local data (backs "Delete all data").
+func Reset() error {
+	mu.Lock()
+	defer mu.Unlock()
+	if store == nil {
+		return errNotOpen
+	}
+	return store.Reset()
 }
 
 // LoadSnapshot returns the persisted state JSON, or "" when the DB is empty (so
