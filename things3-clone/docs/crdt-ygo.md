@@ -232,9 +232,16 @@ shippable and reversible.
   roles (owner/editor/viewer), session + tenant-scoped sync tokens; push is
   owner/editor-only (viewers 403). Client `authenticate()` logs in / auto-registers,
   opens a tenant, mints a sync token. Verified by `go test ./server/auth` and a live
-  browser sign-in→sync. *Remaining:* wire the notes editor to `YText` directly
-  (granular ops + awareness cursors) instead of round-tripping strings; ordering →
-  `YArray` (concurrent-reorder safety) — both enhancements, not correctness gaps.
+  browser sign-in→sync.
+  *Also done:* **concurrent-safe ordering** via fractional keys (`store/ordering.js`
+  — reorder relabels only moved items; the right primitive for a snapshot bridge,
+  vs a literal `YArray` which needs granular move events we don't see at that
+  layer); and **live presence/awareness** over the sync WebSocket (`server/ysync`
+  relay + `TaskDetailModal` shows who's on a task and their note cursor: "X is
+  here" / "X editing…"). Both verified (unit tests + live browser).
+  *Remaining:* pixel-accurate remote carets *inside* the note (needs a custom
+  editor surface — RN TextInput can't overlay carets; the cursor offset is already
+  broadcast); Redis fan-out for multi-instance scale.
 - **Phase 3 — Server + multi-tenant.** ✅ Core built early (`server/ysync`):
   per-tenant Doc, tenant isolation, push/pull state-vector sync, WS nudge,
   pluggable auth + persistence. Remaining: real auth (Phase 2), Redis fan-out for
