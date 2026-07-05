@@ -6,6 +6,10 @@ export function ClearSyncServer() {
   return window['go']['main']['App']['ClearSyncServer']();
 }
 
+export function ResetStore() {
+  return window['go']['main']['App']['ResetStore']();
+}
+
 export function GetWindowMode() {
   return window['go']['main']['App']['GetWindowMode']();
 }

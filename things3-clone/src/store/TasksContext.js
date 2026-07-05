@@ -19,6 +19,7 @@ import {
   backendName,
   serverConfig,
   openRealtime,
+  resetLocal,
 } from './backend';
 
 const TasksContext = createContext(null);
@@ -37,6 +38,18 @@ const defaultSettings = {
   // User-arranged order of the reorderable smart lists (Inbox/Logbook/Trash are
   // pinned and never included). Missing/new ids are appended automatically.
   smartListOrder: ['today', 'upcoming', 'overdue', 'anytime', 'someday'],
+};
+
+// An explicit empty payload for HYDRATE. (A bare {} won't clear existing state,
+// since HYDRATE spreads the payload OVER the current state.)
+const EMPTY_DATA = {
+  areas: [],
+  projects: [],
+  headings: [],
+  tasks: [],
+  tags: [],
+  customViews: [],
+  settings: {},
 };
 
 const initialState = {
@@ -485,7 +498,7 @@ export function TasksProvider({ children }) {
         // Start fresh/empty — no automatic sample data. The user loads the demo
         // explicitly from Settings → Sample data. (Auto-seeding every device
         // duplicated the sample set when two devices synced to one account.)
-        dispatch({ type: 'HYDRATE', payload: {} });
+        dispatch({ type: 'HYDRATE', payload: EMPTY_DATA });
       }
     })();
     return () => {
@@ -594,6 +607,15 @@ export function TasksProvider({ children }) {
       // Called by the Settings sign-in/out so the realtime subscription and an
       // immediate sync kick in (or tear down) without a reload.
       reconnectSync: () => setSyncGen((g) => g + 1),
+
+      // Wipe ALL local data on this device and start fresh (also signs out, so
+      // it doesn't immediately re-pull the account's data). Empties the UI at
+      // once; the durable store is cleared by resetLocal().
+      resetLocalData: async () => {
+        await resetLocal();
+        setSyncGen((g) => g + 1); // tear down realtime — we're signed out now
+        dispatch({ type: 'HYDRATE', payload: EMPTY_DATA });
+      },
       backendName,
     }),
     []

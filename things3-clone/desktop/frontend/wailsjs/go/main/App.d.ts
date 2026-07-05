@@ -3,6 +3,8 @@
 
 export function ClearSyncServer():Promise<void>;
 
+export function ResetStore():Promise<void>;
+
 export function GetWindowMode():Promise<string>;
 
 export function LoadSnapshot():Promise<string>;

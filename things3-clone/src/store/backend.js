@@ -430,6 +430,32 @@ export function backend() {
   return _backend;
 }
 
+// Wipe ALL local data on this device and sign out, so the app truly starts
+// fresh. Handles every platform: Go engine (desktop/mobile), WASM worker + OPFS
+// SQLite (web), and the pure-JS + IndexedDB fallback. This is what a user needs
+// instead of DevTools "Clear site data", which doesn't touch OPFS.
+export async function resetLocal() {
+  logout(); // disconnect from the server so we don't immediately re-pull its data
+  const app = wailsApp();
+  const native = app ? null : nativeModule();
+  try {
+    if (app && typeof app.ResetStore === 'function') {
+      await app.ResetStore();
+    } else if (native && typeof native.reset === 'function') {
+      await native.reset();
+    } else if (crdtWorkerAvailable()) {
+      await crdtClient.init();
+      await crdtClient.reset();
+    } else {
+      // pure-JS fallback: drop the IndexedDB blob and reset the in-memory replica
+      _crdt = new Crdt();
+      await persistCrdt();
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 export const loadSnapshot = () => backend().loadSnapshot();
 export const saveSnapshot = (state) => backend().saveSnapshot(state);
 export const sync = () => backend().sync();

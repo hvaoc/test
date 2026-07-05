@@ -585,6 +585,19 @@ func (s *Store) materializeOne(v *view, kind, id string) map[string]interface{} 
 	return obj
 }
 
+// Reset wipes every register + oplog and starts a fresh empty replica (new
+// device id + clock). Backs the app's "Delete all data" action.
+func (s *Store) Reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(`DELETE FROM fields; DELETE FROM setelems; DELETE FROM presence; DELETE FROM oplog; DELETE FROM meta;`); err != nil {
+		return err
+	}
+	s.device = s.ensureDeviceID() // meta was cleared → generates a fresh id
+	s.clk = newClock(s.device, func() int64 { return s.now() }, HLC{})
+	return nil
+}
+
 // HasData reports whether any entity is live (used to decide snapshot vs seed).
 func (s *Store) HasData() (bool, error) {
 	s.mu.Lock()

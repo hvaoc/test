@@ -489,7 +489,8 @@ function CalendarsSection({ settings, setSetting }) {
   );
 }
 
-function BackupsSection({ reset, onClose }) {
+function BackupsSection({ reset, resetLocalData, onClose }) {
+  const [confirmWipe, setConfirmWipe] = useState(false);
   return (
     <>
       <MockToggle initial label="Automatic backups" hint="Back up your data to the cloud every day." />
@@ -504,6 +505,25 @@ function BackupsSection({ reset, onClose }) {
       </Text>
       <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
         <Btn label="Load sample data" icon="sparkles" variant="outline" onPress={() => { reset(); onClose(); }} />
+      </View>
+
+      <View style={styles.hr} />
+      <GroupTitle>Reset</GroupTitle>
+      <Text style={styles.fieldHint}>
+        Delete all to-dos, projects and settings on this device and start
+        completely fresh (also signs you out). Can’t be undone.
+      </Text>
+      <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
+        <Btn
+          label={confirmWipe ? 'Tap again to delete everything' : 'Delete all data'}
+          icon="trash-outline"
+          variant="outline"
+          onPress={() => {
+            if (!confirmWipe) { setConfirmWipe(true); return; }
+            resetLocalData();
+            onClose();
+          }}
+        />
       </View>
     </>
   );
@@ -716,7 +736,7 @@ function MockSection({ rows, note }) {
 // ---- The two-panel settings modal ----------------------------------------
 
 export default function SettingsSheet({ visible, onClose }) {
-  const { state, setSetting, reset } = useTasks();
+  const { state, setSetting, reset, resetLocalData } = useTasks();
   const insets = useSafeAreaInsets();
   const isWide = useIsWide();
   const [active, setActive] = useState('account');
@@ -785,7 +805,7 @@ export default function SettingsSheet({ visible, onClose }) {
       ]} />
     ) },
     { id: 'sync', label: 'Sync', icon: 'sync-outline', render: () => <SyncSection /> },
-    { id: 'backups', label: 'Backups', icon: 'cloud-upload-outline', render: () => <BackupsSection reset={reset} onClose={onClose} /> },
+    { id: 'backups', label: 'Backups', icon: 'cloud-upload-outline', render: () => <BackupsSection reset={reset} resetLocalData={resetLocalData} onClose={onClose} /> },
     { id: 'integrations', label: 'Integrations', icon: 'extension-puzzle-outline', hidden: true, render: () => <IntegrationsSection /> },
     { id: 'calendars', label: 'Calendars', icon: 'calendar-outline', render: () => <CalendarsSection settings={settings} setSetting={setSetting} /> },
   ], [settings, setSetting, reset, onClose]);

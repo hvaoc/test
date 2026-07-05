@@ -63,4 +63,5 @@ export const crdtClient = {
   getCursor: () => call('getCursor'),
   setCursor: (c) => call('setCursor', [c]),
   hasData: () => call('hasData'),
+  reset: () => call('reset'),
 };

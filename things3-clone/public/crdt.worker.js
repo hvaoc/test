@@ -181,6 +181,21 @@ function handle(msg) {
         result = true;
         break;
       }
+      case 'reset':
+        // Wipe every register + oplog, then start a brand-new empty replica.
+        // This is what "Delete all data" needs — clearing OPFS from DevTools
+        // doesn't touch the SQLite database, this does.
+        txn(() => {
+          exec('DELETE FROM fields');
+          exec('DELETE FROM setelems');
+          exec('DELETE FROM presence');
+          exec('DELETE FROM oplog');
+          exec('DELETE FROM meta');
+        });
+        unwrap(self.__crdtNew('')); // fresh engine (new device id + clock)
+        persistMeta();
+        result = true;
+        break;
       case 'materialize':
         result = unwrap(self.__crdtMaterialize()).result;
         break;

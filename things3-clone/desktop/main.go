@@ -172,6 +172,13 @@ func (a *App) ClearSyncServer() {
 	}
 }
 
+// ResetStore wipes all local data (backs the app's "Delete all data" action).
+func (a *App) ResetStore() {
+	if a.store != nil {
+		_ = a.store.Reset()
+	}
+}
+
 // GetWindowMode / SetWindowMode are callable from JS as
 // window.go.main.App.GetWindowMode() / .SetWindowMode("maximized"|"remember").
 func (a *App) GetWindowMode() string { return loadPrefs().Mode }
