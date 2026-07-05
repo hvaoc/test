@@ -1,4 +1,3 @@
-import { uid } from '../utils/id';
 import { todayKey, addDays } from '../utils/date';
 import { WHEN, STATUS } from './constants';
 
@@ -10,12 +9,19 @@ export function buildSampleData() {
   const t = todayKey();
   const now = Date.now();
   const day = 86400000;
+  // DETERMINISTIC seed ids: every device produces the SAME ids (e.g.
+  // "seed-area-1"), so when two devices that both seeded the sample data sign
+  // into one account, their sample entities MERGE by id (one Work, one Personal)
+  // instead of duplicating. Real, user-created entities still use random uid()s,
+  // which never collide with the "seed-" prefix.
+  const counters = {};
+  const sid = (p) => `seed-${p}-${(counters[p] = (counters[p] || 0) + 1)}`;
 
-  const areaWork = { id: uid('area'), name: 'Work', color: '#2b6fff' };
-  const areaPersonal = { id: uid('area'), name: 'Personal', color: '#1f9d55' };
+  const areaWork = { id: sid('area'), name: 'Work', color: '#2b6fff' };
+  const areaPersonal = { id: sid('area'), name: 'Personal', color: '#1f9d55' };
 
   const projLaunch = {
-    id: uid('proj'),
+    id: sid('proj'),
     name: 'Launch Website',
     emoji: '🚀',
     notes: 'Ship the new marketing site before the conference.',
@@ -28,7 +34,7 @@ export function buildSampleData() {
     completedAt: null,
   };
   const projTrip = {
-    id: uid('proj'),
+    id: sid('proj'),
     name: 'Weekend Trip',
     emoji: '🏔️',
     notes: 'Long weekend in the mountains.',
@@ -41,19 +47,19 @@ export function buildSampleData() {
     completedAt: null,
   };
 
-  const hDesign = { id: uid('head'), projectId: projLaunch.id, title: 'Design', order: 0 };
-  const hDev = { id: uid('head'), projectId: projLaunch.id, title: 'Development', order: 1 };
-  const hQA = { id: uid('head'), projectId: projLaunch.id, title: 'QA', order: 2 };
-  const hMkt = { id: uid('head'), projectId: projLaunch.id, title: 'Marketing', order: 3 };
-  const hPlan = { id: uid('head'), projectId: projTrip.id, title: 'Planning', order: 0 };
-  const hPack = { id: uid('head'), projectId: projTrip.id, title: 'Packing', order: 1 };
+  const hDesign = { id: sid('head'), projectId: projLaunch.id, title: 'Design', order: 0 };
+  const hDev = { id: sid('head'), projectId: projLaunch.id, title: 'Development', order: 1 };
+  const hQA = { id: sid('head'), projectId: projLaunch.id, title: 'QA', order: 2 };
+  const hMkt = { id: sid('head'), projectId: projLaunch.id, title: 'Marketing', order: 3 };
+  const hPlan = { id: sid('head'), projectId: projTrip.id, title: 'Planning', order: 0 };
+  const hPack = { id: sid('head'), projectId: projTrip.id, title: 'Packing', order: 1 };
 
   const tasks = [];
   let ord = 0;
   // Creates a task, pushes it, and returns its id (so subtasks can reference it).
   const mk = (over) => {
     const task = {
-      id: uid('task'),
+      id: sid('task'),
       title: '',
       notes: '',
       checklist: [],
@@ -77,7 +83,7 @@ export function buildSampleData() {
     tasks.push(task);
     return task.id;
   };
-  const chk = (title, done = false) => ({ id: uid('chk'), title, done });
+  const chk = (title, done = false) => ({ id: sid('chk'), title, done });
   const done = (agoDays) => ({ status: STATUS.COMPLETED, completedAt: now - agoDays * day });
 
   // ---- Launch Website ---------------------------------------------------
@@ -159,16 +165,16 @@ export function buildSampleData() {
 
   // ---- DevConf 2026: one busy day, multiple rooms, parallel tracks -------
   const projConf = {
-    id: uid('proj'), name: 'DevConf 2026', emoji: '🎤',
+    id: sid('proj'), name: 'DevConf 2026', emoji: '🎤',
     notes: 'One-day developer conference — multiple rooms, parallel tracks.',
     areaId: areaWork.id, color: '#e84393', when: null, deadline: t,
     status: STATUS.OPEN, createdAt: now, completedAt: null,
   };
-  const cKey = { id: uid('head'), projectId: projConf.id, title: 'Keynotes & Main Stage', order: 0 };
-  const cFE = { id: uid('head'), projectId: projConf.id, title: 'Frontend Track', order: 1 };
-  const cBE = { id: uid('head'), projectId: projConf.id, title: 'Backend Track', order: 2 };
-  const cWS = { id: uid('head'), projectId: projConf.id, title: 'Workshops', order: 3 };
-  const cCom = { id: uid('head'), projectId: projConf.id, title: 'Community', order: 4 };
+  const cKey = { id: sid('head'), projectId: projConf.id, title: 'Keynotes & Main Stage', order: 0 };
+  const cFE = { id: sid('head'), projectId: projConf.id, title: 'Frontend Track', order: 1 };
+  const cBE = { id: sid('head'), projectId: projConf.id, title: 'Backend Track', order: 2 };
+  const cWS = { id: sid('head'), projectId: projConf.id, title: 'Workshops', order: 3 };
+  const cCom = { id: sid('head'), projectId: projConf.id, title: 'Community', order: 4 };
   const sess = (h, title, start, dur, room) =>
     mk({ projectId: projConf.id, areaId: areaWork.id, headingId: h.id, title, when: t, startMinutes: start, durationMinutes: dur, tags: [room] });
   // Main stage (single track)
@@ -201,17 +207,17 @@ export function buildSampleData() {
   // phases cascade and overlap, a few early tasks are done (progress fill), and
   // "Go live" is a single-day milestone.
   const projSite = {
-    id: uid('proj'), name: 'Website Redesign', emoji: '🎨',
+    id: sid('proj'), name: 'Website Redesign', emoji: '🎨',
     notes: 'Full redesign & rebuild — a phased plan across the quarter.',
     areaId: areaWork.id, color: '#6c5ce7', when: null, deadline: addDays(t, 86),
     status: STATUS.OPEN, createdAt: now, completedAt: null,
   };
-  const sDisc = { id: uid('head'), projectId: projSite.id, title: 'Discovery', order: 0 };
-  const sDes = { id: uid('head'), projectId: projSite.id, title: 'Design', order: 1 };
-  const sDev = { id: uid('head'), projectId: projSite.id, title: 'Development', order: 2 };
-  const sCont = { id: uid('head'), projectId: projSite.id, title: 'Content', order: 3 };
-  const sTest = { id: uid('head'), projectId: projSite.id, title: 'QA & Testing', order: 4 };
-  const sLaunch = { id: uid('head'), projectId: projSite.id, title: 'Launch', order: 5 };
+  const sDisc = { id: sid('head'), projectId: projSite.id, title: 'Discovery', order: 0 };
+  const sDes = { id: sid('head'), projectId: projSite.id, title: 'Design', order: 1 };
+  const sDev = { id: sid('head'), projectId: projSite.id, title: 'Development', order: 2 };
+  const sCont = { id: sid('head'), projectId: projSite.id, title: 'Content', order: 3 };
+  const sTest = { id: sid('head'), projectId: projSite.id, title: 'QA & Testing', order: 4 };
+  const sLaunch = { id: sid('head'), projectId: projSite.id, title: 'Launch', order: 5 };
   // bar(section, title, startOffset, endOffset, extra) — offsets are days from today.
   const bar = (h, title, s, e, extra = {}) =>
     mk({ projectId: projSite.id, areaId: areaWork.id, headingId: h.id, title, when: addDays(t, s), deadline: addDays(t, e), ...extra });
@@ -275,12 +281,12 @@ export function buildSampleData() {
   let g = 0;
   PROJECT_DEFS.forEach((def, pi) => {
     const proj = {
-      id: uid('proj'), name: def.name, notes: '', areaId: areaFor(pi).id, color: def.color,
+      id: sid('proj'), name: def.name, notes: '', areaId: areaFor(pi).id, color: def.color,
       when: null, deadline: addDays(t, 20 + pi * 15), status: STATUS.OPEN, createdAt: now, completedAt: null,
     };
     genProjects.push(proj);
     def.sections.forEach((sTitle, si) => {
-      const h = { id: uid('head'), projectId: proj.id, title: sTitle, order: si };
+      const h = { id: sid('head'), projectId: proj.id, title: sTitle, order: si };
       genHeadings.push(h);
       const count = 7 + ((g + si) % 6); // 7-12 per section
       for (let k = 0; k < count; k++) {
@@ -317,14 +323,14 @@ export function buildSampleData() {
   // every view has volume, but kept off "today" mostly so smart lists don't
   // flood. Useful for profiling list/board/calendar/gantt rendering.
   const projStress = {
-    id: uid('proj'), name: 'Stress Test · 2k', emoji: '🧪',
+    id: sid('proj'), name: 'Stress Test · 2k', emoji: '🧪',
     notes: '2000 tasks to stress-test rendering across all views.',
     areaId: areaWork.id, color: '#636e72', when: null, deadline: null,
     status: STATUS.OPEN, createdAt: now, completedAt: null,
   };
   const stressHeadings = [];
   for (let si = 0; si < 20; si++) {
-    const h = { id: uid('head'), projectId: projStress.id, title: `Batch ${si + 1}`, order: si };
+    const h = { id: sid('head'), projectId: projStress.id, title: `Batch ${si + 1}`, order: si };
     stressHeadings.push(h);
     for (let k = 0; k < 100; k++) {
       const n = si * 100 + k;
