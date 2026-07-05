@@ -174,8 +174,21 @@ The `meta` table keeps `clientID` and the server sync checkpoint.
 
 ## 6. Server: from op-relay to Yjs sync
 
-The current server is a per-user append-only **op** log; it becomes a per-scope
-**Yjs update** relay. Two viable routes, both pure Go:
+> **Implemented:** `desktop/server/ysync/` + `desktop/cmd/ysync-server`. It is a
+> multi-tenant Yjs relay — **one authoritative `crdt.Doc` per tenant** (a tenant
+> is a collaborating team), tenants fully isolated. Endpoints: `POST /v1/push`
+> `{update}`, `POST /v1/pull` `{sv}` → `{update, version}` (state-vector diff),
+> `GET /v1/stream` (WebSocket change-nudge), `GET /v1/health`. Auth and
+> persistence are seams: `Authenticator` (Phase-1 `DevAuth` stub — token
+> `"tenant:user"`) and `Persistence` (`MemPersistence` / `FilePersistence`,
+> atomic per-tenant snapshot). The server is **domain-agnostic** — it merges
+> opaque updates, so it shares the CRDT but needs none of the schema. Tested:
+> same-tenant team merge (no clobber), cross-tenant isolation, restart
+> persistence, auth-required. Sharding one Doc per tenant → per project later is a
+> one-line `ScopeFunc` change.
+
+The current (old) server is a per-user append-only **op** log; the new one is a
+per-scope **Yjs update** relay. Two viable routes, both pure Go:
 
 - **Reuse `ygo/provider/websocket`** — a room server with `AuthFunc`/`Authorize`
   hooks (we already do token auth), persistence adapters, and read-only conns for
@@ -210,8 +223,10 @@ shippable and reversible.
   App layer unchanged. One-time migration: materialize the old CRDT → seed a `Doc`.
 - **Phase 2 — Real collaborative notes.** Wire the notes editor to `YText` directly
   (granular ops + awareness cursors) instead of round-tripping strings.
-- **Phase 3 — Server + multi-tenant.** Per-scope Doc server, token→scope authz,
-  Redis fan-out, snapshot/GC/eviction. Ordering → `YArray`.
+- **Phase 3 — Server + multi-tenant.** ✅ Core built early (`server/ysync`):
+  per-tenant Doc, tenant isolation, push/pull state-vector sync, WS nudge,
+  pluggable auth + persistence. Remaining: real auth (Phase 2), Redis fan-out for
+  multi-instance scale, snapshot/GC/eviction, and ordering → `YArray`.
 
 ## 8. What we explicitly keep vs. replace
 

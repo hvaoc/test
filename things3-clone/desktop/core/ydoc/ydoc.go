@@ -344,7 +344,7 @@ func applyTextDiff(txn *crdt.Transaction, yt *crdt.YText, oldS, newS string) {
 	for s < len(o)-p && s < len(n)-p && o[len(o)-1-s] == n[len(n)-1-s] {
 		s++
 	}
-	if s > 0 && isHighSurrogate(o[len(o)-1-s]) {
+	if idx := len(o) - 1 - s; s > 0 && idx >= 0 && isHighSurrogate(o[idx]) {
 		s--
 	}
 

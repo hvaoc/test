@@ -138,6 +138,31 @@ func TestNotesMerge_NoClobber(t *testing.T) {
 	t.Logf("merged note: %q", notesA)
 }
 
+// Regression: prepending to a note (old text is entirely a suffix of the new)
+// once indexed o[-1] in the suffix scan. Also covers pure-append and clear.
+func TestNotesDiff_EdgeShapes(t *testing.T) {
+	cases := []struct{ from, to string }{
+		{"draft", "URGENT draft"}, // prepend (old is a suffix of new)
+		{"draft", "draft today"},  // append (old is a prefix of new)
+		{"hello", ""},             // clear
+		{"", "hello"},             // fill
+		{"abc", "axc"},            // middle replace
+		{"same", "same"},          // no-op
+	}
+	for _, c := range cases {
+		e := New()
+		if err := e.ApplyLocalSnapshot(snap(task("t1", "T", c.from))); err != nil {
+			t.Fatalf("%q->%q seed: %v", c.from, c.to, err)
+		}
+		if err := e.ApplyLocalSnapshot(snap(task("t1", "T", c.to))); err != nil {
+			t.Fatalf("%q->%q edit: %v", c.from, c.to, err)
+		}
+		if got, _ := materializeTasks(t, e)["t1"]["notes"].(string); got != c.to {
+			t.Errorf("%q->%q: materialized %q", c.from, c.to, got)
+		}
+	}
+}
+
 func TestTags_ConcurrentAddConverge(t *testing.T) {
 	base := New()
 	if err := base.ApplyLocalSnapshot(snap(task("t1", "T", "", "home"))); err != nil {
