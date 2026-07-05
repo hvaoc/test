@@ -86,6 +86,7 @@ type data struct {
 	Workspaces  map[string]string    `json:"workspaces"`  // shared workspace code -> tenantId
 	Invites     map[string]*invite   `json:"invites"`     // invite code -> invite
 	Verify      map[string]string    `json:"verify"`      // email-verification code -> userId
+	Resets      map[string]string    `json:"resets"`      // password-reset code -> userId
 }
 
 // Store is the identity database.
@@ -113,6 +114,7 @@ func Open(path string) (*Store, error) {
 		Tenants: map[string]*tenant{}, Sessions: map[string]string{},
 		SyncTokens: map[string]syncGrant{}, Workspaces: map[string]string{},
 		Invites: map[string]*invite{}, Verify: map[string]string{},
+		Resets: map[string]string{},
 	}
 	if path == "" {
 		return s, nil
@@ -136,7 +138,24 @@ func Open(path string) (*Store, error) {
 	if s.d.Verify == nil {
 		s.d.Verify = map[string]string{}
 	}
+	if s.d.Resets == nil {
+		s.d.Resets = map[string]string{}
+	}
 	return s, nil
+}
+
+// findUserIDLocked resolves a login identifier (username OR email) to a user id.
+func (s *Store) findUserIDLocked(identifier string) (string, bool) {
+	key := strings.ToLower(strings.TrimSpace(identifier))
+	if uid, ok := s.d.UsersByName[key]; ok {
+		return uid, true
+	}
+	for _, u := range s.d.Users { // fall back to email match
+		if u.Email != "" && strings.ToLower(u.Email) == key {
+			return u.ID, true
+		}
+	}
+	return "", false
 }
 
 // SetMail configures the mailer and the app base URL used in invite links.
@@ -261,11 +280,12 @@ func (s *Store) Register(username, email, password string) (sessionToken, userID
 	return tok, u.ID, nil
 }
 
-// Login verifies credentials and returns a session token.
-func (s *Store) Login(username, password string) (sessionToken, userID string, err error) {
+// Login verifies credentials (identifier may be a username OR an email) and
+// returns a session token.
+func (s *Store) Login(identifier, password string) (sessionToken, userID string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	uid, ok := s.d.UsersByName[strings.ToLower(strings.TrimSpace(username))]
+	uid, ok := s.findUserIDLocked(identifier)
 	if !ok {
 		return "", "", ErrCredentials
 	}

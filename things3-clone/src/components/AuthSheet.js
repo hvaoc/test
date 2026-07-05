@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography, radius } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { authenticate, updateServerProfile } from '../store/backend';
-import { resendVerification, getProfile } from '../store/teamApi';
+import { resendVerification, getProfile, requestReset, resetPassword } from '../store/teamApi';
 import { registerAuthOpener } from '../store/authModal';
 
 // First-class Login / Sign Up / Verify modal. Opened from anywhere via
@@ -15,8 +15,10 @@ export default function AuthSheet() {
   const { refreshWorkspace } = useTasks();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState('login'); // login | signup
-  const [step, setStep] = useState('form'); // form | verify
+  const [step, setStep] = useState('form'); // form | verify | forgot | reset
   const [reason, setReason] = useState(null);
+  const [resetCode, setResetCode] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
 
   const [url, setUrl] = useState('http://localhost:8090');
   const [username, setUsername] = useState('');
@@ -32,11 +34,17 @@ export default function AuthSheet() {
   useEffect(
     () =>
       registerAuthOpener((m, opts = {}) => {
-        setMode(m === 'signup' ? 'signup' : 'login');
         setReason(opts.reason || null);
-        setStep('form');
         setErr(null);
         setInfo(null);
+        if (m === 'reset' && opts.code) {
+          setResetCode(opts.code);
+          setNewPassword('');
+          setStep('reset');
+        } else {
+          setMode(m === 'signup' ? 'signup' : 'login');
+          setStep('form');
+        }
         setOpen(true);
       }),
     []
@@ -99,6 +107,37 @@ export default function AuthSheet() {
     }
   };
 
+  const doForgot = async () => {
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    try {
+      await requestReset(username.trim() || email.trim(), url.trim());
+      setInfo('If that account exists, a reset link is on its way. Check your email.');
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doReset = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await resetPassword(resetCode, newPassword, url.trim());
+      setNewPassword('');
+      setResetCode(null);
+      setMode('login');
+      setStep('form');
+      setInfo('Password updated — sign in with your new password.');
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!open) return null;
   const isSignup = mode === 'signup';
 
@@ -122,17 +161,42 @@ export default function AuthSheet() {
               <Btn label="Resend email" variant="outline" onPress={doResend} />
               <Pressable onPress={close}><Text style={styles.link}>Continue without verifying</Text></Pressable>
             </ScrollView>
+          ) : step === 'forgot' ? (
+            <ScrollView contentContainerStyle={styles.body}>
+              <View style={styles.brand}><Text style={styles.brandText}>Reset password</Text></View>
+              <Text style={styles.sub}>Enter your username or email and we’ll send a reset link.</Text>
+              <Field icon="person-outline" value={username} onChangeText={setUsername} placeholder="Username or email" autoCapitalize="none" />
+              {info && <Text style={styles.ok}>{info}</Text>}
+              {err && <Text style={styles.err}>{err}</Text>}
+              <Btn label={busy ? 'Please wait…' : 'Send reset link'} onPress={doForgot} disabled={busy || !username.trim()} />
+              <Pressable onPress={() => { setStep('form'); setErr(null); setInfo(null); }}><Text style={styles.link}>Back to sign in</Text></Pressable>
+            </ScrollView>
+          ) : step === 'reset' ? (
+            <ScrollView contentContainerStyle={styles.body}>
+              <View style={styles.brand}><Text style={styles.brandText}>Set a new password</Text></View>
+              <Field icon="lock-closed-outline" value={newPassword} onChangeText={setNewPassword} placeholder="New password (min 6 chars)" secureTextEntry onSubmitEditing={doReset} />
+              {err && <Text style={styles.err}>{err}</Text>}
+              <Btn label={busy ? 'Please wait…' : 'Update password'} onPress={doReset} disabled={busy || newPassword.length < 6} />
+              <Pressable onPress={() => { setStep('form'); setErr(null); }}><Text style={styles.link}>Cancel</Text></Pressable>
+            </ScrollView>
           ) : (
             <ScrollView contentContainerStyle={styles.body}>
               <View style={styles.brand}><Text style={styles.brandText}>PlayTasks</Text></View>
               <Text style={styles.title}>{isSignup ? 'Create your account' : 'Welcome back'}</Text>
               {reason && <Text style={styles.reason}>{reason}</Text>}
+              {info && <Text style={styles.ok}>{info}</Text>}
 
-              <Field icon="person-outline" value={username} onChangeText={setUsername} placeholder="Username" autoCapitalize="none" />
+              <Field icon="person-outline" value={username} onChangeText={setUsername} placeholder={isSignup ? 'Username' : 'Username or email'} autoCapitalize="none" />
               {isSignup && (
                 <Field icon="mail-outline" value={email} onChangeText={setEmail} placeholder="Email (for verification)" autoCapitalize="none" keyboardType="email-address" />
               )}
               <Field icon="lock-closed-outline" value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry onSubmitEditing={submit} />
+
+              {!isSignup && (
+                <Pressable onPress={() => { setStep('forgot'); setErr(null); setInfo(null); }} style={{ alignSelf: 'flex-end' }}>
+                  <Text style={styles.link}>Forgot password?</Text>
+                </Pressable>
+              )}
 
               <Pressable onPress={() => setAdvanced((a) => !a)} style={styles.advToggle}>
                 <Ionicons name={advanced ? 'chevron-down' : 'chevron-forward'} size={14} color={colors.textTertiary} />

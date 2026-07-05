@@ -28,6 +28,30 @@ const q = (obj) =>
 export const getProfile = () => req('GET', '/v1/profile');
 export const resendVerification = () => req('POST', '/v1/resend-verification');
 
+// Request a password-reset email (public; always "succeeds" — no enumeration).
+export async function requestReset(identifier, serverUrl) {
+  const url = (serverUrl || base() || 'http://localhost:8090').replace(/\/$/, '');
+  await fetch(url + '/v1/request-reset', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ identifier }),
+  }).catch(() => {});
+  return true;
+}
+
+// Set a new password with a reset code (public).
+export async function resetPassword(code, password, serverUrl) {
+  const url = (serverUrl || base() || 'http://localhost:8090').replace(/\/$/, '');
+  const r = await fetch(url + '/v1/reset-password', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code, password }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'this reset link is invalid or already used');
+  return j;
+}
+
 // Verify an email with a code (public endpoint). serverUrl lets the verify link
 // work before the app is signed in.
 export async function verifyEmail(code, serverUrl) {

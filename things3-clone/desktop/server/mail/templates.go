@@ -2,6 +2,32 @@ package mail
 
 import "fmt"
 
+// ResetEmail builds the subject + HTML + text for a password-reset message.
+func ResetEmail(name, resetURL string) (subject, html, text string) {
+	if name == "" {
+		name = "there"
+	}
+	subject = "Reset your PlayTasks password"
+	text = fmt.Sprintf(
+		"Hi %s,\n\nUse this link to set a new password:\n%s\n\n"+
+			"If you didn't request this, you can ignore this email — your password is unchanged.",
+		name, resetURL)
+	html = fmt.Sprintf(`<!doctype html>
+<html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1c1c1e">
+  <div style="max-width:480px;margin:32px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+    <div style="background:#2b6fff;padding:22px 28px;color:#fff;font-size:18px;font-weight:700">PlayTasks</div>
+    <div style="padding:28px">
+      <p style="font-size:16px;margin:0 0 12px">Hi %s, set a new password with the button below.</p>
+      <a href="%s" style="display:inline-block;background:#2b6fff;color:#fff;text-decoration:none;
+        font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px">Reset password</a>
+      <p style="font-size:12px;color:#999;margin:24px 0 0;word-break:break-all">Or paste this link:<br>%s</p>
+    </div>
+  </div>
+  <p style="text-align:center;color:#aaa;font-size:11px">If you didn't request this, ignore this email — your password is unchanged.</p>
+</body></html>`, name, resetURL, resetURL)
+	return subject, html, text
+}
+
 // VerifyEmail builds the subject + HTML + text for an email-verification message.
 func VerifyEmail(name, verifyURL string) (subject, html, text string) {
 	if name == "" {

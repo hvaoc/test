@@ -9,6 +9,7 @@ import { TasksProvider } from './src/store/TasksContext';
 import JoinInvite from './src/components/JoinInvite';
 import VerifyBanner from './src/components/VerifyBanner';
 import AuthSheet from './src/components/AuthSheet';
+import ResetLinkHandler from './src/components/ResetLinkHandler';
 import RootNavigator from './src/navigation/RootNavigator';
 import WailsTitleBar, { useIsWails } from './src/components/WailsTitleBar';
 import { stepZoom, applyStoredZoom } from './src/utils/zoom';
@@ -108,6 +109,7 @@ export default function App() {
               <JoinInvite />
               <VerifyBanner />
               <AuthSheet />
+              <ResetLinkHandler />
             </View>
           </Animated.View>
         </TasksProvider>

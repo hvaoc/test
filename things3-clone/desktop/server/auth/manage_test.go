@@ -202,6 +202,51 @@ func TestEmailVerification(t *testing.T) {
 	}
 }
 
+func TestLoginByEmailAndReset(t *testing.T) {
+	s := newStore(t)
+	s.SetMail(&recMailer{}, "http://app.test")
+	_, uid, err := s.Register("bea", "bea@test.dev", "oldpass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Log in by EMAIL and by username.
+	if _, _, err := s.Login("bea@test.dev", "oldpass1"); err != nil {
+		t.Fatalf("login by email should work: %v", err)
+	}
+	if _, _, err := s.Login("bea", "oldpass1"); err != nil {
+		t.Fatalf("login by username should work: %v", err)
+	}
+
+	// Request a reset (by email), grab the code, reset.
+	s.RequestPasswordReset("bea@test.dev")
+	var code string
+	s.mu.Lock()
+	for c, id := range s.d.Resets {
+		if id == uid {
+			code = c
+		}
+	}
+	s.mu.Unlock()
+	if code == "" {
+		t.Fatal("no reset code issued")
+	}
+	if _, err := s.ResetPassword(code, "newpass1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	// Old password fails; new one works (by email); code can't be reused.
+	if _, _, err := s.Login("bea", "oldpass1"); err == nil {
+		t.Fatal("old password should fail after reset")
+	}
+	if _, _, err := s.Login("bea@test.dev", "newpass1"); err != nil {
+		t.Fatalf("new password login: %v", err)
+	}
+	if _, err := s.ResetPassword(code, "another1"); err == nil {
+		t.Fatal("a used reset code should not work again")
+	}
+}
+
 func TestProfileAndPassword(t *testing.T) {
 	s := newStore(t)
 	alice := mustReg(t, s, "alice")

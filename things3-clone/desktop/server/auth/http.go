@@ -33,6 +33,8 @@ func (s *Store) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/password", s.session(s.handleChangePassword))
 	mux.HandleFunc("/v1/verify", s.handleVerify)                              // public
 	mux.HandleFunc("/v1/resend-verification", s.session(s.handleResendVerify))
+	mux.HandleFunc("/v1/request-reset", s.handleRequestReset)                 // public
+	mux.HandleFunc("/v1/reset-password", s.handleResetPassword)               // public
 
 	// Workspace lifecycle + members
 	mux.HandleFunc("/v1/workspaces/rename", s.session(s.handleRenameWorkspace))
@@ -260,6 +262,42 @@ func (s *Store) handleVerify(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleResendVerify(userID string, w http.ResponseWriter, r *http.Request) {
 	if err := s.ResendVerification(userID); err != nil {
 		writeErr(w, 400, "add an email to your profile first")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleRequestReset is public; it always returns ok (no account enumeration).
+func (s *Store) handleRequestReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		return
+	}
+	var req struct {
+		Identifier string `json:"identifier"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	s.RequestPasswordReset(req.Identifier)
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Store) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		return
+	}
+	var req struct {
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if _, err := s.ResetPassword(req.Code, req.Password); err != nil {
+		if err == ErrWeakPassword {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		writeErr(w, 400, "this reset link is invalid or already used")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
