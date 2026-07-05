@@ -40,6 +40,13 @@ function ensureWorker() {
     };
     worker.onerror = (e) => reject(new Error(e.message || 'worker error'));
   });
+  // If the worker failed to start (e.g. a transient OPFS handle race), forget it
+  // so the next call spins up a fresh one instead of caching the failure forever.
+  _ready.catch(() => {
+    _ready = null;
+    if (_worker) { try { _worker.terminate(); } catch (_) { /* ignore */ } }
+    _worker = null;
+  });
   return _ready;
 }
 

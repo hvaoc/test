@@ -145,9 +145,41 @@ function loadEngine() {
   persist();
 }
 
+// Install the OPFS SAHPool VFS, retrying briefly. Acquiring the pool's exclusive
+// access handles can transiently fail right after a reload (the previous worker's
+// handles aren't released yet) or when another tab holds them — a short backoff
+// clears the common cases.
+async function installPool(sqlite3) {
+  let lastErr;
+  for (let i = 0; i < 8; i++) {
+    try {
+      return await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 120 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+// Remove orphaned per-workspace DB files left by an earlier build (which stored
+// each workspace in its own file). Data now lives in /things.db keyed by
+// workspace, so these are dead and just tie up pool slots / access handles.
+function cleanupStaleFiles(pool) {
+  try {
+    const names = typeof pool.getFileNames === 'function' ? pool.getFileNames() : [];
+    for (const n of names) {
+      if (n !== '/things.db' && /^\/things-.*\.db$/.test(n)) {
+        try { pool.unlink(n); } catch (_) { /* ignore */ }
+      }
+    }
+  } catch (_) { /* ignore */ }
+}
+
 async function init() {
   const sqlite3 = await self.sqlite3InitModule();
-  const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
+  const pool = await installPool(sqlite3);
+  cleanupStaleFiles(pool);
   db = new pool.OpfsSAHPoolDb('/things.db');
   createSchema();
 

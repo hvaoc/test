@@ -297,7 +297,8 @@ export async function authenticate(url, username, password, workspace = '', emai
   if (!tok.ok) throw new Error(tok.body.error || 'could not open tenant');
 
   configureServer({
-    url: base, token: tok.body.token, session, userId, username,
+    url: base, token: tok.body.token, session, userId,
+    username: profile.username || username, // real username, not the email typed to log in
     email: profile.email || email, verified: !!profile.verified,
     tenantId: tenant.id, tenantName: tenant.name, role: tok.body.role,
   });
