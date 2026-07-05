@@ -144,7 +144,18 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
     >
       <View style={styles.headerRow}>
         <Text style={styles.appTitle}>Things</Text>
-        {onToggleSidebar && <SidebarToggle onPress={onToggleSidebar} color={colors.sidebarTextSecondary} />}
+        <View style={styles.headerActions}>
+          {/* New List — always available, so a new/empty install can create its
+              first Area or Project (the sheet has a Project/Area toggle). */}
+          <Pressable
+            hitSlop={8}
+            onPress={() => openNewList(null)}
+            style={({ hovered, pressed }) => [styles.headerBtn, (hovered || pressed) && styles.rowHover]}
+          >
+            <Ionicons name="add" size={22} color={colors.sidebarTextSecondary} />
+          </Pressable>
+          {onToggleSidebar && <SidebarToggle onPress={onToggleSidebar} color={colors.sidebarTextSecondary} />}
+        </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -485,7 +496,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   appTitle: { ...typography.largeTitle, color: colors.sidebarText },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  headerBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+  },
   section: {
     marginBottom: spacing.lg,
     paddingHorizontal: spacing.sm,
