@@ -25,6 +25,7 @@ import { relativeLabel } from '../utils/date';
 import { useTasks, newTask } from '../store/TasksContext';
 import { presenceIdentity } from '../store/backend';
 import { selectSubtasks } from '../store/selectors';
+import RemoteCarets from './RemoteCarets';
 import WailsTitleBar, { useIsWails } from './WailsTitleBar';
 import { useIsWide } from '../navigation/responsive';
 
@@ -184,21 +185,40 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
               />
             </View>
 
-            {/* Notes */}
-            <TextInput
-              style={styles.notes}
-              value={task.notes}
-              placeholder="Notes"
-              placeholderTextColor={colors.placeholder}
-              onChangeText={(text) => updateTask(task.id, { notes: text })}
-              onSelectionChange={
-                me
-                  ? (e) =>
-                      setPresence({ ...me, taskId, cursor: e?.nativeEvent?.selection?.start ?? null })
-                  : undefined
-              }
-              multiline
-            />
+            {/* Notes — with live remote carets (collaborators' cursors). */}
+            <View style={styles.notesWrap}>
+              <TextInput
+                nativeID="task-notes-editor"
+                style={styles.notes}
+                value={task.notes}
+                placeholder="Notes"
+                placeholderTextColor={colors.placeholder}
+                onChangeText={(text) => updateTask(task.id, { notes: text })}
+                onSelectionChange={
+                  me
+                    ? (e) =>
+                        setPresence({ ...me, taskId, cursor: e?.nativeEvent?.selection?.start ?? null })
+                    : undefined
+                }
+                multiline
+              />
+              <RemoteCarets
+                getNode={() =>
+                  typeof document !== 'undefined'
+                    ? document.getElementById('task-notes-editor')
+                    : null
+                }
+                text={task.notes}
+                carets={taskPeers
+                  .filter((p) => p.cursor != null)
+                  .map((p) => ({
+                    key: p.userId || p.user,
+                    color: p.color,
+                    label: p.user,
+                    index: p.cursor,
+                  }))}
+              />
+            </View>
             {/* Teammates whose cursor is in this note right now. */}
             {taskPeers.filter((p) => p.cursor != null).length > 0 && (
               <View style={styles.editingRow}>
@@ -686,11 +706,14 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   titleDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
+  notesWrap: {
+    position: 'relative',
+    marginTop: spacing.lg,
+    marginLeft: spacing.xl + spacing.md,
+  },
   notes: {
     ...typography.body,
     color: colors.text,
-    marginTop: spacing.lg,
-    marginLeft: spacing.xl + spacing.md,
     minHeight: 24,
     padding: 0,
   },
