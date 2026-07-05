@@ -218,9 +218,15 @@ shippable and reversible.
   `ApplyLocalSnapshot`/`Materialize` bridge, sync primitives, and Go tests proving
   (a) offline convergence and (b) **concurrent same-note edits merge** (no
   clobber). No app wiring yet. ✅ engine proven in isolation.
-- **Phase 1 — Swap the engine under the bridge.** Point `core/wasm`, the desktop
-  store, and `mobile/` at `core/ydoc` instead of `core/crdt`. Persist Yjs updates.
-  App layer unchanged. One-time migration: materialize the old CRDT → seed a `Doc`.
+- **Phase 1 — Swap the engine under the bridge. ✅ Done, all four platforms.**
+  Web runs the ygo engine in the WASM worker (`core/wasm/ydoc_exports.go`),
+  persisting a Yjs snapshot blob in SQLite/OPFS; desktop (Wails) and mobile
+  (gomobile) run it via `core/ydstore` (Yjs blob file + state-vector sync). All
+  sync through the ysync server with the identical protocol. The app layer and
+  `backend.js` seam are unchanged. A one-time, safe-fallback migration seeds the
+  ygo doc from the old register tables on the web. Verified: browser create→persist
+  →reload→server round-trip; `go test ./core/ydstore` two-device convergence +
+  no-clobber note merge.
 - **Phase 2 — Real collaborative notes.** Wire the notes editor to `YText` directly
   (granular ops + awareness cursors) instead of round-tripping strings.
 - **Phase 3 — Server + multi-tenant.** ✅ Core built early (`server/ysync`):
