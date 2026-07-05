@@ -4,13 +4,15 @@
 # workspace so you can see live presence / remote carets.
 #
 # Usage:
-#   bash scripts/get-sync-token.sh [username] [password]
+#   bash scripts/get-sync-token.sh [username] [password] [workspace]
 #   SERVER=http://localhost:8090 bash scripts/get-sync-token.sh me secret1
+#   bash scripts/get-sync-token.sh alice alicepw team1   # token for a shared workspace
 set -euo pipefail
 
 SERVER="${SERVER:-http://localhost:8090}"
 UNAME="${1:-me}"
 PASS="${2:-secret1}"
+WORKSPACE="${3:-}"
 
 jq_get() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d$1)" 2>/dev/null || true; }
 
@@ -28,7 +30,13 @@ if [ -z "$token" ]; then
   exit 1
 fi
 
-tenant=$(printf '%s' "$resp" | jq_get '["tenants"][0]["id"]')
+# Use the shared workspace if given, else the account's personal workspace.
+if [ -n "$WORKSPACE" ]; then
+  tenant=$(curl -s -X POST "$SERVER/v1/join" -H "Authorization: Bearer $token" \
+    -H 'content-type: application/json' -d "{\"code\":\"$WORKSPACE\"}" | jq_get '["tenant"]["id"]')
+else
+  tenant=$(printf '%s' "$resp" | jq_get '["tenants"][0]["id"]')
+fi
 sync=$(curl -s -X POST "$SERVER/v1/synctoken" -H "Authorization: Bearer $token" \
   -H 'content-type: application/json' -d "{\"tenantId\":\"$tenant\"}" | jq_get '["token"]')
 

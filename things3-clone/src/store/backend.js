@@ -244,7 +244,7 @@ export function serverConfig() {
 // (including the desktop/mobile bridge) needs no new fields. Teams: additional
 // members are added server-side (POST /v1/members); switching the active tenant
 // is future UI. `mode` is accepted for forward-compatibility.
-export async function authenticate(url, username, password, mode = 'login') {
+export async function authenticate(url, username, password, workspace = '') {
   const base = url.replace(/\/$/, '');
   const jpost = async (path, body, token) => {
     const r = await fetch(base + path, {
@@ -271,8 +271,17 @@ export async function authenticate(url, username, password, mode = 'login') {
   if (!res.ok) throw new Error(res.body.error || 'sign-in failed: ' + res.status);
 
   const { token: session, userId, tenants = [] } = res.body;
-  if (!tenants.length) throw new Error('no tenant for this account');
-  const tenant = tenants[0]; // active tenant defaults to the personal one
+  // A workspace code puts everyone who enters it into one shared tenant (that's
+  // how two accounts collaborate); otherwise use the personal workspace.
+  let tenant;
+  if (workspace && workspace.trim()) {
+    const j = await jpost('/v1/join', { code: workspace.trim() }, session);
+    if (!j.ok) throw new Error(j.body.error || 'could not join workspace');
+    tenant = j.body.tenant;
+  } else {
+    if (!tenants.length) throw new Error('no tenant for this account');
+    tenant = tenants[0];
+  }
 
   const tok = await jpost('/v1/synctoken', { tenantId: tenant.id }, session);
   if (!tok.ok) throw new Error(tok.body.error || 'could not open tenant');

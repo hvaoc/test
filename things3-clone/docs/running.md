@@ -96,33 +96,37 @@ Sign in with the **same username + password** on **both** web and the desktop
 app. Add/edit/reorder a task on one — it appears on the other within ~1s. This
 exercises the ygo engine, persistence, ordering, and the sync server end to end.
 
-### B) Live collaboration (presence, "editing…", remote carets, "added by")
-These need **two _different_ users in the _same_ workspace**. Signing into the
-*same* account on two devices won't show presence (they're the same person). The
-quickest way to see it today is to **simulate a teammate** with the included
-script, which connects a second identity to your workspace over the realtime
-channel:
+### B) Two real users collaborating (presence, "editing…", carets, "added by")
+Collaboration happens inside a **shared workspace**. Two _different_ accounts that
+sign in with the **same Workspace code** land in one workspace and collaborate
+live. (Signing into the *same account* on two devices only syncs data — it's one
+person, so there's no presence.)
 
+**Setup — two users, one workspace:**
+1. **User 1** — e.g. the web app (http://localhost:8081): Settings → Sync →
+   Username `alice`, Password `alicepw`, **Workspace `team1`** → Sign in.
+2. **User 2** — a *separate* session so it's a different login: the **desktop
+   app**, a **second browser**, or a **private/incognito window** (a second tab
+   in the same browser shares the login, so it won't work): Username `bob`,
+   Password `bobpw12`, **Workspace `team1`** → Sign in.
+
+Now add/edit tasks on either side — they converge live. **Open the same task on
+both** to see each other's **presence dot ("bob is here"), the "editing…" hint,
+and a coloured remote caret with a name flag** move inside the note; adding a task
+flashes an ephemeral **"added by …"** on its row.
+
+The first person to use a workspace code owns it; anyone else who enters the same
+code joins as an editor. Leave Workspace blank to use your private workspace.
+
+### C) Or simulate a teammate (no second account needed)
+Connect a fake teammate to your workspace over the realtime channel:
 ```bash
 cd things3-clone/desktop
-
-# 1) Get a sync token for your workspace (use the SAME username/password you
-#    signed in with in the app):
-bash scripts/get-sync-token.sh me secret1
-# -> prints  SYNC_TOKEN=<...>
-
-# 2) Run the simulated teammate (needs Node 22+ for global WebSocket):
-node scripts/sim-teammate.mjs <SYNC_TOKEN> Robin
+bash scripts/get-sync-token.sh alice alicepw team1   # workspace as 3rd arg
+node scripts/sim-teammate.mjs <SYNC_TOKEN> Robin      # Node 22+
 ```
-
-Then, in the app, **open a task**. You'll see **"Robin is here"**, a **"Robin
-editing…"** hint, and a **coloured caret with a "Robin" flag** move inside the
-note; adding a task flashes an ephemeral **"added by Robin"** on its row. The
-script prints what it's doing and moves Robin's cursor around every second.
-
-> Real two-account collaboration in the UI needs a workspace picker (a user is
-> auto-placed in their personal workspace today). That's a small follow-up — ask
-> and it's a quick add.
+Open a task in the app and you'll see "Robin is here", "Robin editing…", a moving
+caret, and periodic "added by Robin" flashes.
 
 ---
 

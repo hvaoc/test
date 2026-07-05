@@ -193,6 +193,43 @@ func TestTenantIsolationReal(t *testing.T) {
 	}
 }
 
+// Two different accounts that enter the SAME workspace code land in one shared
+// tenant and can collaborate; a task one pushes, the other pulls.
+func TestSharedWorkspaceCollaboration(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	// Alice creates the workspace "acme-team"; Bob joins it by the same code.
+	_, aReg := call(t, "POST", srv.URL+"/v1/register", "", map[string]string{"username": "alice", "password": "alicepw"})
+	aSess := aReg["token"].(string)
+	_, aJoin := call(t, "POST", srv.URL+"/v1/join", aSess, map[string]string{"code": "acme-team"})
+	aTenant := aJoin["tenant"].(map[string]any)
+
+	_, bReg := call(t, "POST", srv.URL+"/v1/register", "", map[string]string{"username": "bob", "password": "bobpw12"})
+	bSess := bReg["token"].(string)
+	_, bJoin := call(t, "POST", srv.URL+"/v1/join", bSess, map[string]string{"code": "acme-team"})
+	bTenant := bJoin["tenant"].(map[string]any)
+
+	if aTenant["id"] != bTenant["id"] {
+		t.Fatalf("same workspace code must map to one tenant: alice=%v bob=%v", aTenant["id"], bTenant["id"])
+	}
+	if aTenant["role"] != ysync.RoleOwner || bTenant["role"] != ysync.RoleEditor {
+		t.Fatalf("creator should own, joiner should edit: alice=%v bob=%v", aTenant["role"], bTenant["role"])
+	}
+
+	// Each mints a sync token for the shared workspace, then Alice pushes a task
+	// and Bob pulls it.
+	_, aTok := call(t, "POST", srv.URL+"/v1/synctoken", aSess, map[string]string{"tenantId": aTenant["id"].(string)})
+	_, bTok := call(t, "POST", srv.URL+"/v1/synctoken", bSess, map[string]string{"tenantId": bTenant["id"].(string)})
+
+	call(t, "POST", srv.URL+"/v1/push", aTok["token"].(string), map[string]string{"update": updateWithTask("t1", "Shared task", "hello team")})
+	_, pull := call(t, "POST", srv.URL+"/v1/pull", bTok["token"].(string), map[string]string{})
+	got := tasksFromUpdateB64(t, pull["update"].(string))
+	if got["t1"]["title"] != "Shared task" {
+		t.Fatalf("bob didn't get alice's task in the shared workspace: %v", got)
+	}
+}
+
 // Minting a sync token for a tenant you don't belong to is forbidden.
 func TestSyncTokenRequiresMembership(t *testing.T) {
 	srv := newTestServer(t)

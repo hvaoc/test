@@ -71,12 +71,13 @@ type syncGrant struct {
 }
 
 type data struct {
-	Users       map[string]*user       `json:"users"`       // id -> user
-	UsersByName map[string]string      `json:"usersByName"` // lower(username) -> id
-	Tenants     map[string]*tenant     `json:"tenants"`     // id -> tenant
-	Members     []membership           `json:"members"`
-	Sessions    map[string]string      `json:"sessions"`    // token -> userId
-	SyncTokens  map[string]syncGrant   `json:"syncTokens"`  // token -> grant
+	Users       map[string]*user     `json:"users"`       // id -> user
+	UsersByName map[string]string    `json:"usersByName"` // lower(username) -> id
+	Tenants     map[string]*tenant   `json:"tenants"`     // id -> tenant
+	Members     []membership         `json:"members"`
+	Sessions    map[string]string    `json:"sessions"`    // token -> userId
+	SyncTokens  map[string]syncGrant `json:"syncTokens"`  // token -> grant
+	Workspaces  map[string]string    `json:"workspaces"`  // shared workspace code -> tenantId
 }
 
 // Store is the identity database.
@@ -94,7 +95,7 @@ func Open(path string) (*Store, error) {
 	s.d = data{
 		Users: map[string]*user{}, UsersByName: map[string]string{},
 		Tenants: map[string]*tenant{}, Sessions: map[string]string{},
-		SyncTokens: map[string]syncGrant{},
+		SyncTokens: map[string]syncGrant{}, Workspaces: map[string]string{},
 	}
 	if path == "" {
 		return s, nil
@@ -109,7 +110,40 @@ func Open(path string) (*Store, error) {
 	if err := json.Unmarshal(b, &s.d); err != nil {
 		return nil, err
 	}
+	if s.d.Workspaces == nil { // older data files predate shared workspaces
+		s.d.Workspaces = map[string]string{}
+	}
 	return s, nil
+}
+
+// JoinWorkspace creates-or-joins a shared workspace by `code`: the first user to
+// use a code owns the new workspace; anyone else who enters the same code joins
+// it as an editor. This is the simplest way for two accounts to collaborate. Open
+// join (anyone with the code) is fine for now; proper invites already exist via
+// AddMember for tighter control.
+func (s *Store) JoinWorkspace(userID, code string) (TenantInfo, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return TenantInfo{}, ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tid, ok := s.d.Workspaces[code]
+	if !ok {
+		t := &tenant{ID: id("tenant"), Name: code, Created: s.now()}
+		s.d.Tenants[t.ID] = t
+		s.d.Workspaces[code] = t.ID
+		s.d.Members = append(s.d.Members, membership{UserID: userID, TenantID: t.ID, Role: ysync.RoleOwner})
+		s.saveLocked()
+		return TenantInfo{ID: t.ID, Name: t.Name, Role: ysync.RoleOwner}, nil
+	}
+	if role, member := s.roleLocked(userID, tid); member {
+		return TenantInfo{ID: tid, Name: s.d.Tenants[tid].Name, Role: role}, nil
+	}
+	s.d.Members = append(s.d.Members, membership{UserID: userID, TenantID: tid, Role: ysync.RoleEditor})
+	s.saveLocked()
+	return TenantInfo{ID: tid, Name: s.d.Tenants[tid].Name, Role: ysync.RoleEditor}, nil
 }
 
 func (s *Store) saveLocked() {

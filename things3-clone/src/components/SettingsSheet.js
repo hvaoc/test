@@ -552,6 +552,7 @@ function SyncSection() {
   const [url, setUrl] = useState('http://localhost:8090');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [workspace, setWorkspace] = useState('');
   const [authErr, setAuthErr] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -566,11 +567,11 @@ function SyncSection() {
     }
   };
 
-  const connect = async (mode) => {
+  const connect = async () => {
     setAuthBusy(true);
     setAuthErr(null);
     try {
-      await authenticate(url, username.trim(), password, mode);
+      await authenticate(url, username.trim(), password, workspace.trim());
       setCfg(serverConfig());
       reconnectSync(); // kick off initial sync + realtime
       setPassword('');
@@ -598,8 +599,11 @@ function SyncSection() {
 
       {cfg ? (
         <>
-          <Field label="Signed in" hint="Your devices converge automatically through this account." last>
-            <Text style={styles.value}>{cfg.username || 'account'}</Text>
+          <Field label="Signed in" hint="Your devices converge automatically through this account. Teammates in the same workspace collaborate live." last>
+            <Text style={styles.value}>
+              {cfg.username || 'account'}
+              {cfg.tenantName ? `  ·  workspace: ${cfg.tenantName}` : ''}
+            </Text>
           </Field>
           <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>
             <Btn label={busy ? 'Syncing…' : 'Sync now'} icon="sync" variant="outline" onPress={busy ? undefined : run} />
@@ -620,14 +624,14 @@ function SyncSection() {
           <View style={styles.hr} />
           <GroupTitle>Connect to sync server</GroupTitle>
           <Text style={styles.fieldHint}>
-            Sign in to converge this browser with your other devices in real time. Without an account, this browser still works fully offline.
+            Sign in to converge this browser with your other devices in real time. The account is created on first sign-in (password ≥ 6 chars). To collaborate with someone else, both of you enter the same Workspace. Without an account, this browser still works fully offline.
           </Text>
           <TextInput style={styles.syncInput} value={url} onChangeText={setUrl} placeholder="Server URL" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <TextInput style={styles.syncInput} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <TextInput style={styles.syncInput} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={colors.placeholder} secureTextEntry />
+          <TextInput style={styles.syncInput} value={workspace} onChangeText={setWorkspace} placeholder="Workspace (optional — shared team code)" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>
-            <Btn label={authBusy ? '…' : 'Sign in'} variant="primary" onPress={authBusy ? undefined : () => connect('login')} />
-            <Btn label="Create account" variant="outline" onPress={authBusy ? undefined : () => connect('register')} />
+            <Btn label={authBusy ? '…' : 'Sign in'} variant="primary" onPress={authBusy ? undefined : connect} />
           </View>
           {authErr && <Text style={[styles.fieldHint, { marginTop: spacing.sm, color: colors.overdue }]}>{authErr}</Text>}
         </>

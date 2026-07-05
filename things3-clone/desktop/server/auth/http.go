@@ -25,7 +25,24 @@ func (s *Store) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/login", s.handleLogin)
 	mux.HandleFunc("/v1/tenants", s.session(s.handleTenants))
 	mux.HandleFunc("/v1/members", s.session(s.handleAddMember))
+	mux.HandleFunc("/v1/join", s.session(s.handleJoin))
 	mux.HandleFunc("/v1/synctoken", s.session(s.handleSyncToken))
+}
+
+func (s *Store) handleJoin(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	t, err := s.JoinWorkspace(userID, req.Code)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"tenant": t})
 }
 
 // Handler builds a standalone router (tests). Production mounts auth + sync on
