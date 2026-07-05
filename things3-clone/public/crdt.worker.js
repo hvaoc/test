@@ -20,18 +20,10 @@ importScripts('/wasm_exec.js', '/sqlite3.js');
 const US = '\x1f';
 const ek = (kind, id) => kind + US + id;
 
-let db = null; // sqlite oo1 DB (OPFS-backed) for the active workspace
-let pool = null; // OPFS SAHPool VFS (holds one db file per workspace)
+let db = null; // sqlite oo1 DB (OPFS-backed); ONE file, one OPFS access handle
 let currentWs = 'local'; // active workspace id ('local' = signed-out/personal)
 let ready = false;
 const queue = [];
-
-// Each workspace gets its own SQLite file so switching workspaces never merges
-// their data. 'local' keeps the original path for backward compatibility.
-function dbPath(ws) {
-  ws = String(ws || 'local');
-  return ws === 'local' ? '/things.db' : '/things-' + ws.replace(/[^a-zA-Z0-9_-]/g, '') + '.db';
-}
 
 function unwrap(r) {
   if (!r || r.ok !== true) throw new Error((r && r.error) || 'wasm call failed');
@@ -53,19 +45,26 @@ function txn(fn) {
 }
 
 function createSchema() {
-  // The ygo snapshot lives in one row. The legacy register tables may still exist
-  // from a pre-migration install; we read them once (see migrateLegacy) but never
-  // write them.
-  db.exec(`CREATE TABLE IF NOT EXISTS ydoc(id INTEGER PRIMARY KEY CHECK(id=1), clientid TEXT, snapshot TEXT);`);
+  // One row PER WORKSPACE (keyed by workspace id) so each workspace keeps its own
+  // ygo snapshot in the SAME database file — switching workspaces reloads a
+  // different row rather than opening another OPFS file (which trips SAHPool's
+  // exclusive access handles). The legacy `ydoc` (single id=1 row) and the old
+  // register tables may still exist from earlier installs; we read them once for
+  // migration but never write them.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ydocws(workspace TEXT PRIMARY KEY, clientid TEXT, snapshot TEXT);
+    CREATE TABLE IF NOT EXISTS ydoc(id INTEGER PRIMARY KEY CHECK(id=1), clientid TEXT, snapshot TEXT);
+  `);
 }
 
-// Persist the current ygo document (client id + full-state snapshot).
+// Persist the current ygo document (client id + full-state snapshot) for the
+// active workspace.
 function persist() {
   const clientid = unwrap(self.__ydocClientID()).result;
   const snapshot = unwrap(self.__ydocEncodeAll()).result;
   exec(
-    "INSERT INTO ydoc(id,clientid,snapshot) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET clientid=excluded.clientid,snapshot=excluded.snapshot",
-    [clientid, snapshot]
+    "INSERT INTO ydocws(workspace,clientid,snapshot) VALUES(?,?,?) ON CONFLICT(workspace) DO UPDATE SET clientid=excluded.clientid,snapshot=excluded.snapshot",
+    [currentWs, clientid, snapshot]
   );
 }
 
@@ -111,22 +110,36 @@ function migrateLegacy() {
   return true;
 }
 
-// Reconstruct the ygo engine from the snapshot blob (or migrate / start fresh).
+// Migrate the pre-workspace single-row `ydoc(id=1)` snapshot into the 'local'
+// workspace row. Returns true if it loaded something.
+function migrateOldYdoc() {
+  let row = null;
+  try {
+    db.exec({ sql: 'SELECT clientid,snapshot FROM ydoc WHERE id=1', rowMode: 'array', callback: (r) => {
+      row = { clientid: r[0], snapshot: r[1] };
+    } });
+  } catch (_) { /* table may not exist */ }
+  if (!row) return false;
+  unwrap(self.__ydocLoad(row.clientid, row.snapshot || ''));
+  persist(); // copy into ydocws(currentWs)
+  return true;
+}
+
+// Reconstruct the ygo engine for the ACTIVE workspace (or migrate / start fresh).
 function loadEngine() {
   let row = null;
-  db.exec({ sql: 'SELECT clientid,snapshot FROM ydoc WHERE id=1', rowMode: 'array', callback: (r) => {
+  db.exec({ sql: 'SELECT clientid,snapshot FROM ydocws WHERE workspace=?', bind: [currentWs], rowMode: 'array', callback: (r) => {
     row = { clientid: r[0], snapshot: r[1] };
   } });
-
   if (row) {
     unwrap(self.__ydocLoad(row.clientid, row.snapshot || ''));
     return;
   }
-  // No ygo snapshot yet: try a one-time legacy migration, else start empty.
-  try {
-    if (migrateLegacy()) return;
-  } catch (e) {
-    // fall through to a clean replica; never block startup on migration
+  // No snapshot for this workspace yet. Only 'local' can inherit pre-workspace
+  // data (the old single-row snapshot, then the legacy register tables).
+  if (currentWs === 'local') {
+    try { if (migrateOldYdoc()) return; } catch (e) { /* fall through */ }
+    try { if (migrateLegacy()) return; } catch (e) { /* fall through */ }
   }
   unwrap(self.__ydocNew(''));
   persist();
@@ -134,8 +147,8 @@ function loadEngine() {
 
 async function init() {
   const sqlite3 = await self.sqlite3InitModule();
-  pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
-  db = new pool.OpfsSAHPoolDb(dbPath(currentWs));
+  const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
+  db = new pool.OpfsSAHPoolDb('/things.db');
   createSchema();
 
   const goReady = new Promise((resolve) => { self.__onCrdtReady = resolve; });
@@ -189,23 +202,21 @@ function handle(msg) {
         result = unwrap(self.__ydocHasData()).result;
         break;
       case 'useWorkspace': {
-        // Switch the active workspace's local replica: close the current DB, open
-        // that workspace's own DB, and reload the engine from it. No cross-mixing.
+        // Switch the active workspace: reload the in-memory engine from that
+        // workspace's row in the SAME database. No file open/close (which would
+        // trip OPFS access handles), no cross-mixing of workspace data.
         const ws = String(args[0] || 'local');
         if (ws !== currentWs) {
-          try { db.close(); } catch (_) { /* ignore */ }
-          db = new pool.OpfsSAHPoolDb(dbPath(ws));
-          createSchema();
-          loadEngine();
           currentWs = ws;
+          loadEngine();
         }
         result = { workspace: currentWs };
         break;
       }
       case 'reset':
-        // Wipe the ygo snapshot and start a brand-new empty replica. (Clearing
-        // OPFS from DevTools doesn't touch this SQLite DB; this does.)
-        txn(() => { exec('DELETE FROM ydoc'); });
+        // Wipe the active workspace's snapshot and start a brand-new empty replica.
+        // (Clearing OPFS from DevTools doesn't touch this SQLite DB; this does.)
+        txn(() => { exec('DELETE FROM ydocws WHERE workspace=?', [currentWs]); });
         unwrap(self.__ydocNew(''));
         txn(() => persist());
         result = true;
