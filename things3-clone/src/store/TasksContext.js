@@ -473,6 +473,7 @@ export function TasksProvider({ children }) {
   // can't each push the same backlog and duplicate ops.
   const syncingRef = useRef(false);
   const resyncQueuedRef = useRef(false);
+  const pushTimer = useRef(null);
 
   // Keep the date utils' active timezone in sync before descendants render, so
   // todayKey()/nowMinutes() reflect the setting on the same pass it changes.
@@ -588,7 +589,11 @@ export function TasksProvider({ children }) {
           do {
             resyncQueuedRef.current = false;
             res = await backendSync();
-            if (res && res.snapshot) {
+            // Only rehydrate when remote ops actually merged in (applied > 0). A
+            // push-only sync returns applied 0 with our own snapshot, so skipping
+            // HYDRATE there keeps the auto-push effect below from re-triggering
+            // itself into a loop.
+            if (res && res.snapshot && (res.applied || 0) > 0) {
               try {
                 const payload = JSON.parse(res.snapshot);
                 if (payload && Array.isArray(payload.tasks)) {
@@ -636,6 +641,22 @@ export function TasksProvider({ children }) {
       close();
     };
   }, [state.loaded, syncGen, actions]);
+
+  // Auto-push local edits to the server, debounced. The initial sync + realtime
+  // nudges above only cover PULLS; without this, a change you make never leaves
+  // the device until a manual "Sync now" or an inbound nudge. This depends on
+  // `state`, so it fires after every edit — and since syncNow only rehydrates
+  // when it actually pulls something (applied > 0), it can't loop.
+  useEffect(() => {
+    if (!state.loaded || !serverConfig()) return undefined;
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(() => {
+      actions.syncNow().catch(() => {});
+    }, 900);
+    return () => {
+      if (pushTimer.current) clearTimeout(pushTimer.current);
+    };
+  }, [state, syncGen, actions]);
 
   const value = useMemo(() => ({ state, ...actions }), [state, actions]);
 
