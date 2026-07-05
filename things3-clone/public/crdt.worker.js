@@ -1,26 +1,22 @@
-/* CRDT Web Worker — Phase 1: ygo (Yjs-in-Go) engine.
+/* CRDT Web Worker — ygo (Yjs-in-Go) engine, IndexedDB persistence.
  *
  * Runs the Go-compiled WASM engine (crdt.wasm) off the main thread. The engine is
- * now core/ydoc (our wrapper over reearth/ygo), exposed as __ydoc* globals. State
- * is persisted as a single opaque Yjs snapshot blob (base64) in SQLite on the OPFS
- * SAHPool VFS — the same durable substrate as before, far simpler shape.
+ * core/ydoc (our wrapper over reearth/ygo), exposed as __ydoc* globals. It
+ * persists an opaque Yjs snapshot blob PER WORKSPACE in IndexedDB.
  *
- * On first run after the migration, if the old field-level register tables hold
- * data but there is no ygo snapshot yet, we materialize the old engine (__crdt*,
- * still compiled in) and seed the new ygo document from it — a one-time, in-place
- * migration. Any failure there falls back to a fresh empty replica; startup never
- * blocks.
+ * Why IndexedDB (not OPFS/SQLite): the ygo snapshot is just a blob keyed by
+ * workspace, and IndexedDB has no exclusive access-handle constraint — so it works
+ * across tabs and survives reload races, unlike the OPFS SAHPool VFS (which threw
+ * "createSyncAccessHandle ... another open Access Handle" when a second context
+ * held the file). On first run we do a one-time, best-effort migration from the
+ * old OPFS/SQLite store; any failure there is skipped so startup never blocks.
  *
  * The main thread (src/store/crdtClient.js) drives this over a tiny postMessage
  * RPC. See docs/crdt-ygo.md.
  */
 /* eslint-disable no-undef */
-importScripts('/wasm_exec.js', '/sqlite3.js');
+importScripts('/wasm_exec.js');
 
-const US = '\x1f';
-const ek = (kind, id) => kind + US + id;
-
-let db = null; // sqlite oo1 DB (OPFS-backed); ONE file, one OPFS access handle
 let currentWs = 'local'; // active workspace id ('local' = signed-out/personal)
 let ready = false;
 const queue = [];
@@ -30,159 +26,115 @@ function unwrap(r) {
   return r;
 }
 
-function exec(sql, bind) {
-  db.exec(bind ? { sql, bind } : sql);
+// --- IndexedDB (one record per workspace: { clientid, snapshot }) ------------
+
+const IDB_NAME = 'things3clone-ydoc';
+const STORE = 'workspaces';
+let _idb = null;
+
+function openIDB() {
+  if (_idb) return Promise.resolve(_idb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+    };
+    req.onsuccess = () => { _idb = req.result; resolve(_idb); };
+    req.onerror = () => reject(req.error);
+  });
 }
-function txn(fn) {
-  db.exec('BEGIN');
-  try {
-    fn();
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch (_) { /* ignore */ }
-    throw e;
-  }
+async function idbGet(key) {
+  const d = await openIDB();
+  return new Promise((resolve, reject) => {
+    const r = d.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+    r.onsuccess = () => resolve(r.result || null);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function idbPut(key, val) {
+  const d = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx = d.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(val, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbDel(key) {
+  const d = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx = d.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
-function createSchema() {
-  // One row PER WORKSPACE (keyed by workspace id) so each workspace keeps its own
-  // ygo snapshot in the SAME database file — switching workspaces reloads a
-  // different row rather than opening another OPFS file (which trips SAHPool's
-  // exclusive access handles). The legacy `ydoc` (single id=1 row) and the old
-  // register tables may still exist from earlier installs; we read them once for
-  // migration but never write them.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ydocws(workspace TEXT PRIMARY KEY, clientid TEXT, snapshot TEXT);
-    CREATE TABLE IF NOT EXISTS ydoc(id INTEGER PRIMARY KEY CHECK(id=1), clientid TEXT, snapshot TEXT);
-  `);
-}
-
-// Persist the current ygo document (client id + full-state snapshot) for the
-// active workspace.
-function persist() {
+// Persist the active workspace's ygo document.
+async function persist() {
   const clientid = unwrap(self.__ydocClientID()).result;
   const snapshot = unwrap(self.__ydocEncodeAll()).result;
-  exec(
-    "INSERT INTO ydocws(workspace,clientid,snapshot) VALUES(?,?,?) ON CONFLICT(workspace) DO UPDATE SET clientid=excluded.clientid,snapshot=excluded.snapshot",
-    [currentWs, clientid, snapshot]
-  );
+  await idbPut(currentWs, { clientid, snapshot });
 }
 
-// If the legacy register tables hold data, rebuild the old engine, materialize it,
-// and seed the new ygo document. Returns true if a migration happened.
-function migrateLegacy() {
-  const tableExists = (name) => {
-    let n = 0;
-    db.exec({ sql: "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", bind: [name], rowMode: 'array', callback: (r) => { n = r[0]; } });
-    return n > 0;
-  };
-  if (!tableExists('presence')) return false;
-  let count = 0;
-  db.exec({ sql: 'SELECT count(*) FROM presence WHERE present=1', rowMode: 'array', callback: (r) => { count = r[0]; } });
-  if (!count) return false;
-
-  // Rebuild the legacy engine from its rows (mirrors the old loadEngine).
-  const presence = {}, fields = {}, sets = {}, pending = [];
-  db.exec({ sql: 'SELECT kind,id,present,hlc FROM presence', rowMode: 'array', callback: (r) => {
-    presence[ek(r[0], r[1])] = { p: !!r[2], h: JSON.parse(r[3]) };
-  } });
-  db.exec({ sql: 'SELECT kind,id,field,value,hlc FROM fields', rowMode: 'array', callback: (r) => {
-    const k = ek(r[0], r[1]);
-    (fields[k] = fields[k] || {})[r[2]] = { v: r[3], h: JSON.parse(r[4]) };
-  } });
-  db.exec({ sql: 'SELECT kind,id,field,elem,present,hlc FROM setelems', rowMode: 'array', callback: (r) => {
-    const k = ek(r[0], r[1]);
-    const f = (sets[k] = sets[k] || {});
-    (f[r[2]] = f[r[2]] || {})[r[3]] = { p: !!r[4], h: JSON.parse(r[5]) };
-  } });
-  let meta = null;
-  db.exec({ sql: "SELECT value FROM meta WHERE key='meta'", rowMode: 'array', callback: (r) => { meta = JSON.parse(r[0]); } });
-  unwrap(self.__crdtLoad(JSON.stringify({
-    node: (meta && meta.node) || '', last: (meta && meta.last) || null,
-    cursor: (meta && meta.cursor) || '', presence, fields, sets, pending,
-  })));
-  const stateJSON = unwrap(self.__crdtMaterialize()).result;
-
-  // Seed a fresh ygo document from the materialized legacy state.
-  unwrap(self.__ydocNew(''));
-  unwrap(self.__ydocApplyLocalSnapshot(stateJSON));
-  persist();
-  return true;
-}
-
-// Migrate the pre-workspace single-row `ydoc(id=1)` snapshot into the 'local'
-// workspace row. Returns true if it loaded something.
-function migrateOldYdoc() {
-  let row = null;
-  try {
-    db.exec({ sql: 'SELECT clientid,snapshot FROM ydoc WHERE id=1', rowMode: 'array', callback: (r) => {
-      row = { clientid: r[0], snapshot: r[1] };
-    } });
-  } catch (_) { /* table may not exist */ }
-  if (!row) return false;
-  unwrap(self.__ydocLoad(row.clientid, row.snapshot || ''));
-  persist(); // copy into ydocws(currentWs)
-  return true;
-}
-
-// Reconstruct the ygo engine for the ACTIVE workspace (or migrate / start fresh).
-function loadEngine() {
-  let row = null;
-  db.exec({ sql: 'SELECT clientid,snapshot FROM ydocws WHERE workspace=?', bind: [currentWs], rowMode: 'array', callback: (r) => {
-    row = { clientid: r[0], snapshot: r[1] };
-  } });
+// Load the active workspace's engine from IndexedDB, or migrate/start fresh.
+async function loadEngine() {
+  const row = await idbGet(currentWs);
   if (row) {
     unwrap(self.__ydocLoad(row.clientid, row.snapshot || ''));
     return;
   }
-  // No snapshot for this workspace yet. Only 'local' can inherit pre-workspace
-  // data (the old single-row snapshot, then the legacy register tables).
+  // Only 'local' can inherit anything from the old OPFS store.
   if (currentWs === 'local') {
-    try { if (migrateOldYdoc()) return; } catch (e) { /* fall through */ }
-    try { if (migrateLegacy()) return; } catch (e) { /* fall through */ }
+    try { if (await migrateFromOpfs()) return; } catch (_) { /* ignore */ }
   }
   unwrap(self.__ydocNew(''));
-  persist();
+  await persist();
 }
 
-// Install the OPFS SAHPool VFS, retrying briefly. Acquiring the pool's exclusive
-// access handles can transiently fail right after a reload (the previous worker's
-// handles aren't released yet) or when another tab holds them — a short backoff
-// clears the common cases.
-async function installPool(sqlite3) {
-  let lastErr;
-  for (let i = 0; i < 8; i++) {
-    try {
-      return await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' });
-    } catch (e) {
-      lastErr = e;
-      await new Promise((r) => setTimeout(r, 120 * (i + 1)));
-    }
-  }
-  throw lastErr;
-}
-
-// Remove orphaned per-workspace DB files left by an earlier build (which stored
-// each workspace in its own file). Data now lives in /things.db keyed by
-// workspace, so these are dead and just tie up pool slots / access handles.
-function cleanupStaleFiles(pool) {
+// One-time, best-effort migration from the previous OPFS/SQLite store. Fully
+// guarded and time-bounded: if OPFS can't be opened (e.g. the access-handle
+// contention that motivated this change), we simply start fresh in IndexedDB.
+let _sqliteTried = false;
+async function migrateFromOpfs() {
+  if (_sqliteTried) return false;
+  _sqliteTried = true;
   try {
-    const names = typeof pool.getFileNames === 'function' ? pool.getFileNames() : [];
-    for (const n of names) {
-      if (n !== '/things.db' && /^\/things-.*\.db$/.test(n)) {
-        try { pool.unlink(n); } catch (_) { /* ignore */ }
-      }
+    importScripts('/sqlite3.js');
+    if (typeof self.sqlite3InitModule !== 'function') return false;
+    const sqlite3 = await self.sqlite3InitModule();
+    let pool = null;
+    for (let i = 0; i < 2; i++) {
+      try { pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'things3clone' }); break; }
+      catch (_) { await new Promise((r) => setTimeout(r, 150)); }
     }
-  } catch (_) { /* ignore */ }
+    if (!pool) return false;
+
+    let out = null;
+    try {
+      const db = new pool.OpfsSAHPoolDb('/things.db');
+      const read = (sql) => {
+        try { db.exec({ sql, rowMode: 'array', callback: (r) => { out = { clientid: r[0], snapshot: r[1] }; } }); } catch (_) { /* ignore */ }
+      };
+      read("SELECT clientid,snapshot FROM ydocws WHERE workspace='local'");
+      if (!out) read('SELECT clientid,snapshot FROM ydoc WHERE id=1');
+      try { db.close(); } catch (_) { /* ignore */ }
+    } catch (_) { /* ignore */ }
+    try { if (typeof pool.removeVfs === 'function') await pool.removeVfs(); } catch (_) { /* ignore */ }
+
+    if (!out || !out.snapshot) return false;
+    unwrap(self.__ydocLoad(out.clientid, out.snapshot));
+    await persist();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
+
+// --- init: Go WASM -----------------------------------------------------------
 
 async function init() {
-  const sqlite3 = await self.sqlite3InitModule();
-  const pool = await installPool(sqlite3);
-  cleanupStaleFiles(pool);
-  db = new pool.OpfsSAHPoolDb('/things.db');
-  createSchema();
-
   const goReady = new Promise((resolve) => { self.__onCrdtReady = resolve; });
   const go = new Go();
   const res = await WebAssembly.instantiateStreaming(fetch('/crdt.wasm'), go.importObject).catch(async () => {
@@ -192,15 +144,17 @@ async function init() {
   go.run(res.instance); // runs main(), which calls __onCrdtReady
   await goReady;
 
-  loadEngine();
+  await loadEngine();
 
   ready = true;
-  const pendingMsgs = queue.splice(0);
-  for (const m of pendingMsgs) handle(m);
+  const pending = queue.splice(0);
+  for (const m of pending) enqueue(m);
   self.postMessage({ type: 'ready' });
 }
 
-function handle(msg) {
+// --- RPC (serialized so persistence stays ordered) ---------------------------
+
+async function handle(msg) {
   const { id, method, args = [] } = msg;
   try {
     let result;
@@ -210,7 +164,7 @@ function handle(msg) {
         break;
       case 'applyLocalSnapshot':
         unwrap(self.__ydocApplyLocalSnapshot(args[0]));
-        txn(() => persist());
+        await persist();
         result = true;
         break;
       case 'materialize':
@@ -227,30 +181,25 @@ function handle(msg) {
         break;
       case 'applyUpdate':
         unwrap(self.__ydocApplyUpdate(String(args[0] || '')));
-        txn(() => persist());
+        await persist();
         result = true;
         break;
       case 'hasData':
         result = unwrap(self.__ydocHasData()).result;
         break;
       case 'useWorkspace': {
-        // Switch the active workspace: reload the in-memory engine from that
-        // workspace's row in the SAME database. No file open/close (which would
-        // trip OPFS access handles), no cross-mixing of workspace data.
         const ws = String(args[0] || 'local');
         if (ws !== currentWs) {
           currentWs = ws;
-          loadEngine();
+          await loadEngine();
         }
         result = { workspace: currentWs };
         break;
       }
       case 'reset':
-        // Wipe the active workspace's snapshot and start a brand-new empty replica.
-        // (Clearing OPFS from DevTools doesn't touch this SQLite DB; this does.)
-        txn(() => { exec('DELETE FROM ydocws WHERE workspace=?', [currentWs]); });
+        await idbDel(currentWs);
         unwrap(self.__ydocNew(''));
-        txn(() => persist());
+        await persist();
         result = true;
         break;
       default:
@@ -262,9 +211,15 @@ function handle(msg) {
   }
 }
 
+// Serialize handlers so overlapping RPCs don't interleave their IndexedDB writes.
+let _chain = Promise.resolve();
+function enqueue(msg) {
+  _chain = _chain.then(() => handle(msg)).catch(() => {});
+}
+
 self.onmessage = (ev) => {
   if (!ready) queue.push(ev.data);
-  else handle(ev.data);
+  else enqueue(ev.data);
 };
 
 init().catch((e) => self.postMessage({ type: 'fatal', error: String((e && e.message) || e) }));
