@@ -54,8 +54,10 @@ func TestInviteFlow_EmailAndAccept(t *testing.T) {
 	if inv.URL != "http://app.test/?invite="+inv.Code {
 		t.Fatalf("bad invite url: %s", inv.URL)
 	}
-	if !inv.Emailed || len(rec.to) != 1 || rec.to[0] != "bob@x.com" {
-		t.Fatalf("email not sent correctly: emailed=%v to=%v", inv.Emailed, rec.to)
+	// (Registering with an email also sends a verification email, so just check
+	// the invite reached bob.)
+	if !inv.Emailed || rec.to[len(rec.to)-1] != "bob@x.com" {
+		t.Fatalf("invite email not sent correctly: emailed=%v to=%v", inv.Emailed, rec.to)
 	}
 
 	// Preview works before joining.
@@ -158,6 +160,45 @@ func TestLastOwnerProtection(t *testing.T) {
 	}
 	if err := s.RemoveMember(alice, ws.ID, alice); err != ErrLastOwner {
 		t.Fatalf("removing the last owner should fail: %v", err)
+	}
+}
+
+func TestEmailVerification(t *testing.T) {
+	s := newStore(t)
+	rec := &recMailer{}
+	s.SetMail(rec, "http://app.test")
+
+	_, uid, err := s.Register("dave", "dave@x.com", "pass123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GetProfile(uid).Verified {
+		t.Fatal("account should start unverified")
+	}
+	if len(rec.to) != 1 || rec.to[0] != "dave@x.com" {
+		t.Fatalf("verification email not sent: %v", rec.to)
+	}
+
+	var code string
+	s.mu.Lock()
+	for c, id := range s.d.Verify {
+		if id == uid {
+			code = c
+		}
+	}
+	s.mu.Unlock()
+	if code == "" {
+		t.Fatal("no verification code issued")
+	}
+
+	if _, err := s.Verify(code); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !s.GetProfile(uid).Verified {
+		t.Fatal("account should be verified after using the code")
+	}
+	if _, err := s.Verify(code); err == nil {
+		t.Fatal("a used verification code should not work again")
 	}
 }
 

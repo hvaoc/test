@@ -24,8 +24,23 @@ async function req(method, path, body) {
 const q = (obj) =>
   '?' + Object.entries(obj).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 
-// --- profile ---
+// --- profile + verification ---
 export const getProfile = () => req('GET', '/v1/profile');
+export const resendVerification = () => req('POST', '/v1/resend-verification');
+
+// Verify an email with a code (public endpoint). serverUrl lets the verify link
+// work before the app is signed in.
+export async function verifyEmail(code, serverUrl) {
+  const url = (serverUrl || base() || 'http://localhost:8090').replace(/\/$/, '');
+  const r = await fetch(url + '/v1/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'this verification link is invalid or already used');
+  return j;
+}
 export const updateProfile = (displayName, email) => req('POST', '/v1/profile', { displayName, email }).then((r) => r.profile);
 export const changePassword = (oldPw, newPw) => req('POST', '/v1/password', { old: oldPw, new: newPw });
 

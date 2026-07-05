@@ -28,9 +28,11 @@ func (s *Store) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/join", s.session(s.handleJoin))
 	mux.HandleFunc("/v1/synctoken", s.session(s.handleSyncToken))
 
-	// Profile
+	// Profile + email verification
 	mux.HandleFunc("/v1/profile", s.session(s.handleProfile))
 	mux.HandleFunc("/v1/password", s.session(s.handleChangePassword))
+	mux.HandleFunc("/v1/verify", s.handleVerify)                              // public
+	mux.HandleFunc("/v1/resend-verification", s.session(s.handleResendVerify))
 
 	// Workspace lifecycle + members
 	mux.HandleFunc("/v1/workspaces/rename", s.session(s.handleRenameWorkspace))
@@ -230,6 +232,34 @@ func (s *Store) handleChangePassword(userID string, w http.ResponseWriter, r *ht
 	}
 	if err := s.ChangePassword(userID, req.Old, req.New); err != nil {
 		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleVerify is public: it consumes an email-verification code.
+func (s *Store) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if r.Method == http.MethodPost {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	} else {
+		req.Code = r.URL.Query().Get("code")
+	}
+	if _, err := s.Verify(req.Code); err != nil {
+		writeErr(w, 400, "this verification link is invalid or already used")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true, "verified": true})
+}
+
+func (s *Store) handleResendVerify(userID string, w http.ResponseWriter, r *http.Request) {
+	if err := s.ResendVerification(userID); err != nil {
+		writeErr(w, 400, "add an email to your profile first")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

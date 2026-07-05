@@ -12,6 +12,7 @@ type Profile struct {
 	Username    string `json:"username"`
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
+	Verified    bool   `json:"verified"`
 }
 
 func (s *Store) profileLocked(uid string) Profile {
@@ -19,7 +20,7 @@ func (s *Store) profileLocked(uid string) Profile {
 	if u == nil {
 		return Profile{UserID: uid}
 	}
-	return Profile{UserID: u.ID, Username: u.Username, Email: u.Email, DisplayName: u.DisplayName}
+	return Profile{UserID: u.ID, Username: u.Username, Email: u.Email, DisplayName: u.DisplayName, Verified: u.Verified}
 }
 
 // displayNameLocked returns a user's best human name (display name, else username).

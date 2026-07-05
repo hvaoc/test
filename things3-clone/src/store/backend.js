@@ -244,7 +244,7 @@ export function serverConfig() {
 // (including the desktop/mobile bridge) needs no new fields. Teams: additional
 // members are added server-side (POST /v1/members); switching the active tenant
 // is future UI. `mode` is accepted for forward-compatibility.
-export async function authenticate(url, username, password, workspace = '', email = '') {
+export async function authenticate(url, username, password, workspace = '', email = '', mode = 'auto') {
   const base = url.replace(/\/$/, '');
   const jpost = async (path, body, token) => {
     const r = await fetch(base + path, {
@@ -256,21 +256,31 @@ export async function authenticate(url, username, password, workspace = '', emai
     return { ok: r.ok, status: r.status, body: j };
   };
 
-  let res = await jpost('/v1/login', { username, password });
-  if (!res.ok && res.status === 401) {
-    // Login failed — either a new account (create it) or a wrong password.
-    const reg = await jpost('/v1/register', { username, email, password });
-    if (!reg.ok) {
-      // 409 = the username exists, so login failing means the password was wrong
-      // (not a "taken" problem). Anything else (e.g. weak password) → show as-is.
-      if (reg.status === 409) throw new Error('Wrong password for that account.');
-      throw new Error(reg.body.error || 'could not create account: ' + reg.status);
+  let res;
+  if (mode === 'signup') {
+    res = await jpost('/v1/register', { username, email, password });
+    if (!res.ok) {
+      if (res.status === 409) throw new Error('That username is already taken.');
+      throw new Error(res.body.error || 'could not create account');
     }
-    res = reg;
+  } else {
+    res = await jpost('/v1/login', { username, password });
+    if (!res.ok && res.status === 401 && mode === 'login') {
+      throw new Error('Wrong username or password.');
+    }
+    if (!res.ok && res.status === 401 && mode === 'auto') {
+      // Create the account on first use.
+      const reg = await jpost('/v1/register', { username, email, password });
+      if (!reg.ok) {
+        if (reg.status === 409) throw new Error('Wrong password for that account.');
+        throw new Error(reg.body.error || 'could not create account');
+      }
+      res = reg;
+    }
+    if (!res.ok) throw new Error(res.body.error || 'sign-in failed: ' + res.status);
   }
-  if (!res.ok) throw new Error(res.body.error || 'sign-in failed: ' + res.status);
 
-  const { token: session, userId, tenants = [] } = res.body;
+  const { token: session, userId, tenants = [], profile = {} } = res.body;
   // A workspace code puts everyone who enters it into one shared tenant (that's
   // how two accounts collaborate); otherwise use the personal workspace.
   let tenant;
@@ -288,10 +298,20 @@ export async function authenticate(url, username, password, workspace = '', emai
 
   configureServer({
     url: base, token: tok.body.token, session, userId, username,
+    email: profile.email || email, verified: !!profile.verified,
     tenantId: tenant.id, tenantName: tenant.name, role: tok.body.role,
   });
   await activateLocalReplica(tenant.id);
-  return { userId, tenantId: tenant.id, role: tok.body.role, tenantName: tenant.name };
+  return { userId, tenantId: tenant.id, role: tok.body.role, tenantName: tenant.name, verified: !!profile.verified };
+}
+
+// Update the cached verified/profile fields on the current server config (after a
+// verification or profile change) without re-authenticating.
+export function updateServerProfile(patch) {
+  if (_server) {
+    _server = { ..._server, ...patch };
+    persistServer();
+  }
 }
 
 // Point the local store at a workspace's own replica so switching workspaces

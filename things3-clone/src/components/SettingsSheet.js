@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius, THEMES, getThemeId, setThemeId, subscribeTheme } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { authenticate, logout, serverConfig } from '../store/backend';
+import { openAuth } from '../store/authModal';
 import { useIsWide } from '../navigation/responsive';
 import { DATE_FORMATS, formatDayKey, todayKey } from '../utils/date';
 import {
@@ -533,7 +534,7 @@ function BackupsSection({ reset, resetLocalData, onClose }) {
 // (Go SQLite on desktop/mobile, JS + IndexedDB on web) so it's always a full
 // offline-first replica. On web you sign in to a sync server to converge across
 // devices; "Sync now" runs one push/pull cycle and reports what moved.
-function SyncSection() {
+function SyncSection({ onClose }) {
   const { syncNow, backendName, reconnectSync, refreshWorkspace } = useTasks();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -623,19 +624,13 @@ function SyncSection() {
       ) : isWeb ? (
         <>
           <View style={styles.hr} />
-          <GroupTitle>Connect to sync server</GroupTitle>
           <Text style={styles.fieldHint}>
-            Sign in to converge this browser with your other devices in real time. The account is created on first sign-in (password ≥ 6 chars). To collaborate with someone else, both of you enter the same Workspace. Without an account, this browser still works fully offline.
+            Sign in to sync across your devices and collaborate with your team in real time. The app works fully offline without an account.
           </Text>
-          <TextInput style={styles.syncInput} value={url} onChangeText={setUrl} placeholder="Server URL" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
-          <TextInput style={styles.syncInput} value={username} onChangeText={setUsername} placeholder="Username" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
-          <TextInput style={styles.syncInput} value={email} onChangeText={setEmail} placeholder="Email (optional)" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
-          <TextInput style={styles.syncInput} value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={colors.placeholder} secureTextEntry />
-          <TextInput style={styles.syncInput} value={workspace} onChangeText={setWorkspace} placeholder="Workspace (optional — shared team code)" placeholderTextColor={colors.placeholder} autoCapitalize="none" autoCorrect={false} />
           <View style={{ marginTop: spacing.md, flexDirection: 'row', gap: spacing.md }}>
-            <Btn label={authBusy ? '…' : 'Sign in'} variant="primary" onPress={authBusy ? undefined : connect} />
+            <Btn label="Sign in" variant="primary" onPress={() => { onClose && onClose(); openAuth('login'); }} />
+            <Btn label="Create account" variant="outline" onPress={() => { onClose && onClose(); openAuth('signup'); }} />
           </View>
-          {authErr && <Text style={[styles.fieldHint, { marginTop: spacing.sm, color: colors.overdue }]}>{authErr}</Text>}
         </>
       ) : (
         <Field label="Cloud sync" hint="Set THINGS_SYNC_URL to sync desktop/mobile against a server; otherwise a local mock adapter is used." last>
@@ -810,7 +805,7 @@ export default function SettingsSheet({ visible, onClose }) {
         { label: 'Weekly review', hint: 'A Sunday summary of the week ahead.' },
       ]} />
     ) },
-    { id: 'sync', label: 'Sync', icon: 'sync-outline', render: () => <SyncSection /> },
+    { id: 'sync', label: 'Sync', icon: 'sync-outline', render: () => <SyncSection onClose={onClose} /> },
     { id: 'backups', label: 'Backups', icon: 'cloud-upload-outline', render: () => <BackupsSection reset={reset} resetLocalData={resetLocalData} onClose={onClose} /> },
     { id: 'integrations', label: 'Integrations', icon: 'extension-puzzle-outline', hidden: true, render: () => <IntegrationsSection /> },
     { id: 'calendars', label: 'Calendars', icon: 'calendar-outline', render: () => <CalendarsSection settings={settings} setSetting={setSetting} /> },

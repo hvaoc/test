@@ -53,6 +53,7 @@ type user struct {
 	Email       string `json:"email,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
 	PassHash    string `json:"passHash"`
+	Verified    bool   `json:"verified"`
 	Created     int64  `json:"created"`
 }
 
@@ -84,6 +85,7 @@ type data struct {
 	SyncTokens  map[string]syncGrant `json:"syncTokens"`  // token -> grant
 	Workspaces  map[string]string    `json:"workspaces"`  // shared workspace code -> tenantId
 	Invites     map[string]*invite   `json:"invites"`     // invite code -> invite
+	Verify      map[string]string    `json:"verify"`      // email-verification code -> userId
 }
 
 // Store is the identity database.
@@ -110,7 +112,7 @@ func Open(path string) (*Store, error) {
 		Users: map[string]*user{}, UsersByName: map[string]string{},
 		Tenants: map[string]*tenant{}, Sessions: map[string]string{},
 		SyncTokens: map[string]syncGrant{}, Workspaces: map[string]string{},
-		Invites: map[string]*invite{},
+		Invites: map[string]*invite{}, Verify: map[string]string{},
 	}
 	if path == "" {
 		return s, nil
@@ -130,6 +132,9 @@ func Open(path string) (*Store, error) {
 	}
 	if s.d.Invites == nil {
 		s.d.Invites = map[string]*invite{}
+	}
+	if s.d.Verify == nil {
+		s.d.Verify = map[string]string{}
 	}
 	return s, nil
 }
@@ -214,13 +219,14 @@ func (s *Store) Register(username, email, password string) (sessionToken, userID
 		return "", "", ErrWeakPassword
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := strings.ToLower(username)
 	if _, ok := s.d.UsersByName[key]; ok {
+		s.mu.Unlock()
 		return "", "", ErrExists
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
+		s.mu.Unlock()
 		return "", "", err
 	}
 	u := &user{
@@ -237,7 +243,21 @@ func (s *Store) Register(username, email, password string) (sessionToken, userID
 
 	tok := token()
 	s.d.Sessions[tok] = u.ID
+
+	// Email verification: if an email was given, issue a code + link to send.
+	name, vEmail, vURL, mailer := u.Username, u.Email, "", s.mailer
+	if u.Email != "" {
+		code := token()
+		s.d.Verify[code] = u.ID
+		vURL = s.appURL + "/?verify=" + code
+	}
 	s.saveLocked()
+	s.mu.Unlock()
+
+	if vEmail != "" && vURL != "" && mailer != nil {
+		subject, html, text := mail.VerifyEmail(name, vURL)
+		_ = mailer.Send(vEmail, subject, html, text)
+	}
 	return tok, u.ID, nil
 }
 

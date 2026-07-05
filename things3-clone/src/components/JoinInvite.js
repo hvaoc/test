@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography, radius } from '../theme';
 import { useTasks } from '../store/TasksContext';
 import { serverConfig } from '../store/backend';
+import { openAuth } from '../store/authModal';
 import * as api from '../store/teamApi';
 
 // Reads (and clears) an ?invite=CODE from the URL once, so a refresh doesn't
@@ -73,6 +74,14 @@ export default function JoinInvite() {
       <View style={[styles.banner, { borderColor: tone }]}>
         <Ionicons name={icon} size={18} color={tone} />
         <Text style={styles.text} numberOfLines={2}>{text}</Text>
+        {!signedIn && (
+          <Pressable
+            onPress={() => openAuth('login', { reason: info ? `Join “${info.workspace}”` : 'Sign in to join the workspace' })}
+            style={styles.cta}
+          >
+            <Text style={styles.ctaText}>Sign in</Text>
+          </Pressable>
+        )}
         <Pressable hitSlop={8} onPress={() => setState('dismissed')}>
           <Ionicons name="close" size={18} color={colors.textTertiary} />
         </Pressable>
@@ -104,4 +113,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { boxShadow: '0 4px 18px rgba(0,0,0,0.18)' } : null),
   },
   text: { ...typography.body, color: colors.text, flexShrink: 1 },
+  cta: { backgroundColor: colors.accent, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 6 },
+  ctaText: { ...typography.caption, color: '#fff', fontWeight: '700' },
 });

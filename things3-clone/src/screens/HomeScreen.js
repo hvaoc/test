@@ -20,6 +20,8 @@ import { selectionKey } from '../navigation/responsive';
 import NewListSheet from '../components/NewListSheet';
 import SettingsSheet from '../components/SettingsSheet';
 import WorkspaceSheet from '../components/WorkspaceSheet';
+import { serverConfig, logout } from '../store/backend';
+import { openAuth } from '../store/authModal';
 import QueryBuilderSheet from '../components/QueryBuilderSheet';
 import { emptyQuery } from '../store/query';
 import ProgressPie from '../components/ProgressPie';
@@ -36,7 +38,7 @@ import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 // pushing a new screen. On phones both are undefined and it behaves as a stack.
 export default function HomeScreen({ navigation, selectedKey, embedded, onToggleSidebar }) {
   const insets = useSafeAreaInsets();
-  const { state, setSetting, addCustomView, reorderProjects } = useTasks();
+  const { state, setSetting, addCustomView, reorderProjects, refreshWorkspace } = useTasks();
   const [sheet, setSheet] = useState(false);
   const [newViewOpen, setNewViewOpen] = useState(false);
   // When the New List sheet is opened from an Area's "+", pre-file the project
@@ -49,6 +51,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState(null);
   const profileRef = useRef(null);
+  const account = serverConfig(); // signed-in sync account (null when offline/local)
   const openProfileMenu = () => {
     const node = profileRef.current;
     if (node && node.measureInWindow) {
@@ -280,7 +283,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
           account popover (Settings for now; room to grow). */}
       <Pressable
         ref={profileRef}
-        onPress={openProfileMenu}
+        onPress={account ? openProfileMenu : () => openAuth('login')}
         style={({ pressed, hovered }) => [
           styles.profileRow,
           { paddingBottom: insets.bottom + spacing.sm },
@@ -289,12 +292,21 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
         ]}
       >
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>H</Text>
+          <Text style={styles.avatarText}>
+            {account ? (account.username || '?').charAt(0).toUpperCase() : '↪'}
+          </Text>
         </View>
         <Text style={styles.profileName} numberOfLines={1}>
-          Havoc <Text style={styles.profilePlan}>· Max</Text>
+          {account ? (
+            <>
+              {account.username}
+              {account.tenantName ? <Text style={styles.profilePlan}> · {account.tenantName}</Text> : null}
+            </>
+          ) : (
+            'Sign in or sign up'
+          )}
         </Text>
-        <Ionicons name="chevron-up" size={16} color={colors.sidebarTextSecondary} />
+        <Ionicons name={account ? 'chevron-up' : 'log-in-outline'} size={16} color={colors.sidebarTextSecondary} />
       </Pressable>
 
       <Modal
@@ -316,7 +328,9 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
               },
             ]}
           >
-            <Text style={styles.menuEmail} numberOfLines={1}>havk.co@gmail.com</Text>
+            <Text style={styles.menuEmail} numberOfLines={1}>
+              {(account && (account.email || account.username)) || 'Signed in'}
+            </Text>
             <View style={styles.menuDivider} />
             <Pressable
               style={({ hovered, pressed }) => [
@@ -343,6 +357,21 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             >
               <Ionicons name="settings-outline" size={18} color={colors.sidebarText} />
               <Text style={styles.menuItemText}>Settings</Text>
+            </Pressable>
+            <View style={styles.menuDivider} />
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.menuItem,
+                (hovered || pressed) && styles.menuItemActive,
+              ]}
+              onPress={() => {
+                setProfileOpen(false);
+                logout();
+                refreshWorkspace();
+              }}
+            >
+              <Ionicons name="log-out-outline" size={18} color={colors.sidebarText} />
+              <Text style={styles.menuItemText}>Sign out</Text>
             </Pressable>
           </Pressable>
         </Pressable>

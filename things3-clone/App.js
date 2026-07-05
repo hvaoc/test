@@ -7,6 +7,8 @@ import { StatusBar } from 'expo-status-bar';
 
 import { TasksProvider } from './src/store/TasksContext';
 import JoinInvite from './src/components/JoinInvite';
+import VerifyBanner from './src/components/VerifyBanner';
+import AuthSheet from './src/components/AuthSheet';
 import RootNavigator from './src/navigation/RootNavigator';
 import WailsTitleBar, { useIsWails } from './src/components/WailsTitleBar';
 import { stepZoom, applyStoredZoom } from './src/utils/zoom';
@@ -104,6 +106,8 @@ export default function App() {
                 <RootNavigator />
               </NavigationContainer>
               <JoinInvite />
+              <VerifyBanner />
+              <AuthSheet />
             </View>
           </Animated.View>
         </TasksProvider>
