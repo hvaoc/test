@@ -71,11 +71,17 @@ func (h *Hub) Push(scope string, update []byte) (int64, error) {
 	return ver, nil
 }
 
-// Pull returns everything the client (identified by its state vector) is missing.
-func (h *Hub) Pull(scope string, clientSV []byte) ([]byte, int64, error) {
+// Pull returns everything the client (identified by its state vector) is missing,
+// plus the server's own state vector so the client can push back exactly what the
+// server lacks.
+func (h *Hub) Pull(scope string, clientSV []byte) (update []byte, serverSV []byte, version int64, err error) {
 	r, err := h.room(scope)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return r.Diff(clientSV)
+	update, version, err = r.Diff(clientSV)
+	if err != nil {
+		return nil, nil, version, err
+	}
+	return update, r.StateVector(), version, nil
 }

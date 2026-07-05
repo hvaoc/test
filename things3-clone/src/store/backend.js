@@ -237,19 +237,18 @@ export function serverConfig() {
   return _server;
 }
 
-// Register or log in against the sync server, storing the returned token so all
-// future sync() calls authenticate. `mode` is 'login' | 'register'.
+// Connect to the sync server. Phase 1 (ygo/ysync): auth is a STUB — the bearer
+// token is simply "tenant:user" (see desktop/server/ysync). A username without a
+// ':' joins the shared "default" tenant, so teammates who sign in with just their
+// name collaborate; use "tenant:user" to pick a specific team. Thorough auth
+// (real identities, passwords, membership) lands in the next phase behind this
+// same function — the sync core won't change. `password`/`mode` are accepted for
+// forward-compatibility but unused today.
 export async function authenticate(url, username, password, mode = 'login') {
   const base = url.replace(/\/$/, '');
-  const r = await fetch(base + '/v1/' + (mode === 'register' ? 'register' : 'login'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || (mode + ' failed: ' + r.status));
-  configureServer({ url: base, token: body.token, userId: body.userId, username });
-  return body;
+  const token = username.includes(':') ? username : `default:${username}`;
+  configureServer({ url: base, token, username });
+  return { token };
 }
 
 export function logout() {
@@ -338,39 +337,32 @@ async function serverSync(crdt) {
 
 async function wasmServerSync() {
   const base = _server.url.replace(/\/$/, '');
-  const pending = JSON.parse(await crdtClient.peekPending());
-  for (let i = 0; i < pending.length; i += PUSH_CHUNK) {
-    const chunk = pending.slice(i, i + PUSH_CHUNK);
-    const r = await fetch(base + '/v1/push', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token },
-      body: JSON.stringify({ ops: chunk }),
-    });
-    if (!r.ok) {
-      // 409 = the server rejected our timestamps as too far in the future.
-      // The unpushed ops stay queued; surface a clear, actionable message.
-      if (r.status === 409) {
-        throw new Error("This device's clock looks wrong (set too far ahead). Fix the date & time, then sync again.");
-      }
-      throw new Error('push failed: ' + r.status); // unpushed ops stay queued
-    }
-  }
-  if (pending.length) await crdtClient.dropPending(pending.length);
-  const cursor = await crdtClient.getCursor();
-  const pr = await fetch(base + '/v1/pull?cursor=' + encodeURIComponent(cursor || ''), {
-    headers: { authorization: 'Bearer ' + _server.token },
-  });
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
+
+  // Offline-first state-vector exchange (docs/crdt-ygo.md §4). Pull first: send
+  // our state vector, receive exactly what we're missing plus the server's own
+  // state vector. Then push exactly what the server is missing.
+  const sv = await crdtClient.stateVector();
+  const pr = await fetch(base + '/v1/pull', { method: 'POST', headers, body: JSON.stringify({ sv }) });
   if (!pr.ok) throw new Error('pull failed: ' + pr.status);
-  const body = await pr.json();
-  const merged = await crdtClient.applyRemote(JSON.stringify(body.ops || []));
-  await crdtClient.setCursor(body.cursor || cursor);
+  const pulled = await pr.json();
+  let applied = 0;
+  if (pulled.update) {
+    await crdtClient.applyUpdate(pulled.update);
+    applied = 1;
+  }
+
+  const diff = await crdtClient.encodeDiff(pulled.sv || '');
+  const push = await fetch(base + '/v1/push', { method: 'POST', headers, body: JSON.stringify({ update: diff }) });
+  if (!push.ok) throw new Error('push failed: ' + push.status);
+  const pushed = await push.json();
+
   return {
     adapter: 'server',
-    pushed: pending.length,
-    pulled: (body.ops || []).length,
-    applied: merged.applied,
-    skipped: merged.skipped,
-    cursor: body.cursor,
+    pushed: pushed.version,
+    pulled: applied,
+    applied,
+    skipped: 0,
     snapshot: await crdtClient.materialize(),
   };
 }

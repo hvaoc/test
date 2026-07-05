@@ -72,6 +72,7 @@ type pullReq struct {
 }
 type pullResp struct {
 	Update  string `json:"update"` // base64 diff the client is missing
+	SV      string `json:"sv"`     // base64 server state vector (for the client's push)
 	Version int64  `json:"version"`
 }
 
@@ -85,12 +86,12 @@ func (h *Hub) handlePull(scope string, _ Principal, w http.ResponseWriter, r *ht
 		writeErr(w, 400, "bad sv encoding")
 		return
 	}
-	update, ver, err := h.Pull(scope, sv)
+	update, serverSV, ver, err := h.Pull(scope, sv)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, pullResp{Update: b64enc(update), Version: ver})
+	writeJSON(w, 200, pullResp{Update: b64enc(update), SV: b64enc(serverSV), Version: ver})
 }
 
 var upgrader = websocket.Upgrader{

@@ -1,6 +1,7 @@
 package ysync
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/reearth/ygo/crdt"
@@ -36,8 +37,15 @@ func (r *Room) Apply(update []byte) (int64, bool, error) {
 	if len(update) == 0 {
 		return r.ver, false, nil
 	}
+	// A client often pushes a diff that turns out to contain nothing new (its view
+	// already matched ours). Detect that via the state vector so we don't bump the
+	// version, persist, or nudge teammates for a no-op.
+	before := crdt.EncodeStateVectorV1(r.doc)
 	if err := crdt.ApplyUpdateV1(r.doc, update, nil); err != nil {
 		return r.ver, false, err
+	}
+	if bytes.Equal(before, crdt.EncodeStateVectorV1(r.doc)) {
+		return r.ver, false, nil
 	}
 	r.ver++
 	return r.ver, true, nil
@@ -63,6 +71,14 @@ func (r *Room) Snapshot() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return crdt.EncodeStateAsUpdateV1(r.doc, nil)
+}
+
+// StateVector is the room's wire-encoded state vector, so a client can compute
+// exactly what the server is missing and push only that.
+func (r *Room) StateVector() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return crdt.EncodeStateVectorV1(r.doc)
 }
 
 func (r *Room) subscribe() (int64, <-chan int64) {

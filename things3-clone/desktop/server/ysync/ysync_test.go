@@ -12,10 +12,11 @@ import (
 // --- HTTP client helpers (exercise the real router + wire format) ------------
 
 type client struct {
-	t      *testing.T
-	srv    *httptest.Server
-	token  string
-	engine *ydoc.Engine
+	t        *testing.T
+	srv      *httptest.Server
+	token    string
+	engine   *ydoc.Engine
+	serverSV []byte // server state vector from the last pull, for efficient push
 }
 
 func newClient(t *testing.T, srv *httptest.Server, token string) *client {
@@ -32,18 +33,29 @@ func (c *client) post(path string, body any) map[string]any {
 	return resp
 }
 
-// push sends this client's full state; pull fetches+applies what it's missing.
-func (c *client) push() {
-	c.post("/v1/push", map[string]string{"update": b64enc(c.engine.EncodeAll())})
-}
+// pull fetches+applies what this client is missing and remembers the server's
+// state vector; push then sends exactly what the server is missing — the real
+// offline-first flow the web/native clients use.
 func (c *client) pull() {
 	resp := c.post("/v1/pull", map[string]string{"sv": b64enc(c.engine.StateVector())})
-	upd, _ := b64dec(resp["update"].(string))
-	if len(upd) > 0 {
-		if err := c.engine.ApplyUpdate(upd); err != nil {
-			c.t.Fatalf("apply pulled update: %v", err)
+	if u, _ := resp["update"].(string); u != "" {
+		upd, _ := b64dec(u)
+		if len(upd) > 0 {
+			if err := c.engine.ApplyUpdate(upd); err != nil {
+				c.t.Fatalf("apply pulled update: %v", err)
+			}
 		}
 	}
+	if s, _ := resp["sv"].(string); s != "" {
+		c.serverSV, _ = b64dec(s)
+	}
+}
+func (c *client) push() {
+	diff, err := c.engine.EncodeDiff(c.serverSV)
+	if err != nil {
+		c.t.Fatalf("encode diff: %v", err)
+	}
+	c.post("/v1/push", map[string]string{"update": b64enc(diff)})
 }
 
 func (c *client) tasks() map[string]map[string]any {

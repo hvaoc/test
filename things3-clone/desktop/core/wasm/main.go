@@ -196,6 +196,7 @@ func register() {
 
 func main() {
 	register()
+	registerYdoc() // Phase 1: ygo/ydoc engine exports (__ydoc*)
 	// Signal the worker that the exported functions are ready.
 	if cb := js.Global().Get("__onCrdtReady"); cb.Type() == js.TypeFunction {
 		cb.Invoke()

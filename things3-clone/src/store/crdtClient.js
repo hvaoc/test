@@ -52,16 +52,17 @@ async function call(method, args = []) {
   });
 }
 
+// Phase 1 (ygo/ydoc): the engine speaks whole-state snapshots + opaque Yjs
+// updates (base64) and offline-first state-vector sync, not the old op log.
 export const crdtClient = {
   init: () => ensureWorker().then(() => call('info')),
   info: () => call('info'),
   applyLocalSnapshot: (stateJSON) => call('applyLocalSnapshot', [stateJSON]),
   materialize: () => call('materialize'),
-  peekPending: () => call('peekPending'),
-  dropPending: (n) => call('dropPending', [n]),
-  applyRemote: (opsJSON) => call('applyRemote', [opsJSON]),
-  getCursor: () => call('getCursor'),
-  setCursor: (c) => call('setCursor', [c]),
+  stateVector: () => call('stateVector'), // base64 state vector
+  encodeDiff: (sinceSVb64) => call('encodeDiff', [sinceSVb64]), // base64 update peer is missing
+  encodeAll: () => call('encodeAll'), // base64 full-state update
+  applyUpdate: (updateB64) => call('applyUpdate', [updateB64]),
   hasData: () => call('hasData'),
   reset: () => call('reset'),
 };
