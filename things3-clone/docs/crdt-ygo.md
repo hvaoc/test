@@ -239,9 +239,12 @@ shippable and reversible.
   layer); and **live presence/awareness** over the sync WebSocket (`server/ysync`
   relay + `TaskDetailModal` shows who's on a task and their note cursor: "X is
   here" / "X editing…"). Both verified (unit tests + live browser).
-  *Remaining:* pixel-accurate remote carets *inside* the note (needs a custom
-  editor surface — RN TextInput can't overlay carets; the cursor offset is already
-  broadcast); Redis fan-out for multi-instance scale.
+  Also done: **live remote carets** inside the note (`RemoteCarets`, a reusable
+  web overlay that positions coloured caret bars + name flags over a <textarea>
+  via the hidden-mirror technique) and an **ephemeral "added by X" flash** on task
+  rows (one-shot activity relayed over the awareness WS, never persisted, auto-
+  fades). Both verified in a live browser.
+  *Remaining:* Redis fan-out for multi-instance scale.
 - **Phase 3 — Server + multi-tenant.** ✅ Core built early (`server/ysync`):
   per-tenant Doc, tenant isolation, push/pull state-vector sync, WS nudge,
   pluggable auth + persistence. Remaining: real auth (Phase 2), Redis fan-out for
