@@ -130,6 +130,48 @@ func (a *App) Sync() string {
 	return res
 }
 
+// syncPrefs persists the sync-server connection so a desktop sign-in survives
+// restarts — mirroring what the web app keeps in localStorage.
+type syncPrefs struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
+func syncPrefsPath() string { return filepath.Join(dataDir(), "sync.json") }
+
+func loadSyncPrefs() syncPrefs {
+	var p syncPrefs
+	if b, err := os.ReadFile(syncPrefsPath()); err == nil {
+		_ = json.Unmarshal(b, &p)
+	}
+	return p
+}
+
+func saveSyncPrefs(p syncPrefs) {
+	if b, err := json.Marshal(p); err == nil {
+		_ = os.WriteFile(syncPrefsPath(), b, 0o600)
+	}
+}
+
+// SetSyncServer points the store's cloud adapter at a real server and persists
+// the connection, so the desktop app signs in with the same username/password
+// as the web app: the JS layer authenticates, then hands us the URL + token.
+func (a *App) SetSyncServer(url, token string) {
+	if a.store == nil || url == "" || token == "" {
+		return
+	}
+	saveSyncPrefs(syncPrefs{URL: url, Token: token})
+	a.store.SetAdapter(core.NewHTTPAdapter(url, token))
+}
+
+// ClearSyncServer signs out: drop the connection and revert to the local mock.
+func (a *App) ClearSyncServer() {
+	saveSyncPrefs(syncPrefs{})
+	if a.store != nil {
+		a.store.SetAdapter(core.NewMockAdapter(dataDir()))
+	}
+}
+
 // GetWindowMode / SetWindowMode are callable from JS as
 // window.go.main.App.GetWindowMode() / .SetWindowMode("maximized"|"remember").
 func (a *App) GetWindowMode() string { return loadPrefs().Mode }
@@ -147,17 +189,20 @@ func (a *App) SetWindowMode(mode string) {
 // so it appears already in the right size/state — no resize flash.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Open the embedded database and attach a cloud adapter. If THINGS_SYNC_URL
-	// (+ THINGS_SYNC_TOKEN) is set, sync against the real server; otherwise fall
-	// back to the file-backed mock so the app is always demoable. Failure is
-	// non-fatal: the frontend keeps working from its in-memory seed.
+	// Open the embedded database and attach a cloud adapter. Precedence:
+	//   1. THINGS_SYNC_URL env (power users / CI)
+	//   2. a persisted sign-in (Settings → Sync in the app)
+	//   3. the file-backed mock, so the app is always demoable offline.
+	// Failure is non-fatal: the frontend keeps working from its in-memory seed.
 	if store, err := core.Open(dataDir()); err == nil {
+		a.store = store
 		if url := os.Getenv("THINGS_SYNC_URL"); url != "" {
 			store.SetAdapter(core.NewHTTPAdapter(url, os.Getenv("THINGS_SYNC_TOKEN")))
+		} else if sp := loadSyncPrefs(); sp.URL != "" && sp.Token != "" {
+			store.SetAdapter(core.NewHTTPAdapter(sp.URL, sp.Token))
 		} else {
 			store.SetAdapter(core.NewMockAdapter(dataDir()))
 		}
-		a.store = store
 	}
 	p := loadPrefs()
 	if p.Mode == "remember" && p.Width > 0 && p.Height > 0 {

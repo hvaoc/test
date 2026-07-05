@@ -220,6 +220,18 @@ loadServerConfig(); // restore a prior session at module load
 export function configureServer(cfg) {
   _server = cfg && cfg.url && cfg.token ? cfg : null;
   persistServer();
+  // On the desktop (Wails), the Go engine does the actual push/pull, so hand it
+  // the same connection. The JS side keeps its own _server for the realtime
+  // WebSocket + Settings UI. Fire-and-forget.
+  try {
+    const app = wailsApp();
+    if (app && typeof app.SetSyncServer === 'function') {
+      if (_server) app.SetSyncServer(_server.url, _server.token);
+      else if (typeof app.ClearSyncServer === 'function') app.ClearSyncServer();
+    }
+  } catch {
+    /* ignore — sync still works once the app rebinds */
+  }
 }
 export function serverConfig() {
   return _server;
