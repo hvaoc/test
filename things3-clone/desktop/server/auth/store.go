@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"things3-clone-desktop/server/mail"
 	"things3-clone-desktop/server/ysync"
 
 	"golang.org/x/crypto/bcrypt"
@@ -38,6 +39,8 @@ var (
 	ErrForbidden    = errors.New("forbidden")
 	ErrNotFound     = errors.New("not found")
 	ErrBadRole      = errors.New("invalid role")
+	ErrLastOwner    = errors.New("you are the last owner — transfer ownership or delete the workspace")
+	ErrInvite       = errors.New("invitation is invalid, revoked, or expired")
 )
 
 func validRole(r string) bool {
@@ -45,10 +48,12 @@ func validRole(r string) bool {
 }
 
 type user struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	PassHash string `json:"passHash"`
-	Created  int64  `json:"created"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	PassHash    string `json:"passHash"`
+	Created     int64  `json:"created"`
 }
 
 type tenant struct {
@@ -78,6 +83,7 @@ type data struct {
 	Sessions    map[string]string    `json:"sessions"`    // token -> userId
 	SyncTokens  map[string]syncGrant `json:"syncTokens"`  // token -> grant
 	Workspaces  map[string]string    `json:"workspaces"`  // shared workspace code -> tenantId
+	Invites     map[string]*invite   `json:"invites"`     // invite code -> invite
 }
 
 // Store is the identity database.
@@ -86,16 +92,25 @@ type Store struct {
 	path string
 	now  func() int64
 	d    data
+
+	mailer mail.Mailer // sends invitation emails (LogMailer if unset)
+	appURL string      // base URL used to build invite/join links
 }
 
 // Open loads the store from path (creating an empty one if absent). Pass "" for
 // an in-memory store (tests).
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, now: func() int64 { return time.Now().Unix() }}
+	s := &Store{
+		path:   path,
+		now:    func() int64 { return time.Now().Unix() },
+		mailer: mail.LogMailer{},
+		appURL: "http://localhost:8081",
+	}
 	s.d = data{
 		Users: map[string]*user{}, UsersByName: map[string]string{},
 		Tenants: map[string]*tenant{}, Sessions: map[string]string{},
 		SyncTokens: map[string]syncGrant{}, Workspaces: map[string]string{},
+		Invites: map[string]*invite{},
 	}
 	if path == "" {
 		return s, nil
@@ -113,7 +128,22 @@ func Open(path string) (*Store, error) {
 	if s.d.Workspaces == nil { // older data files predate shared workspaces
 		s.d.Workspaces = map[string]string{}
 	}
+	if s.d.Invites == nil {
+		s.d.Invites = map[string]*invite{}
+	}
 	return s, nil
+}
+
+// SetMail configures the mailer and the app base URL used in invite links.
+func (s *Store) SetMail(m mail.Mailer, appURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m != nil {
+		s.mailer = m
+	}
+	if appURL != "" {
+		s.appURL = strings.TrimRight(appURL, "/")
+	}
 }
 
 // JoinWorkspace creates-or-joins a shared workspace by `code`: the first user to
@@ -174,8 +204,8 @@ func id(prefix string) string {
 // --- account lifecycle ------------------------------------------------------
 
 // Register creates a user + a personal tenant they own, and returns a session
-// token and the user id.
-func (s *Store) Register(username, password string) (sessionToken, userID string, err error) {
+// token and the user id. Email is optional.
+func (s *Store) Register(username, email, password string) (sessionToken, userID string, err error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return "", "", ErrNoUsername
@@ -193,7 +223,10 @@ func (s *Store) Register(username, password string) (sessionToken, userID string
 	if err != nil {
 		return "", "", err
 	}
-	u := &user{ID: id("user"), Username: username, PassHash: string(hash), Created: s.now()}
+	u := &user{
+		ID: id("user"), Username: username, Email: strings.TrimSpace(email),
+		PassHash: string(hash), Created: s.now(),
+	}
 	s.d.Users[u.ID] = u
 	s.d.UsersByName[key] = u.ID
 

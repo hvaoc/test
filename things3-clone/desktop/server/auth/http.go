@@ -27,6 +27,40 @@ func (s *Store) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/members", s.session(s.handleAddMember))
 	mux.HandleFunc("/v1/join", s.session(s.handleJoin))
 	mux.HandleFunc("/v1/synctoken", s.session(s.handleSyncToken))
+
+	// Profile
+	mux.HandleFunc("/v1/profile", s.session(s.handleProfile))
+	mux.HandleFunc("/v1/password", s.session(s.handleChangePassword))
+
+	// Workspace lifecycle + members
+	mux.HandleFunc("/v1/workspaces/rename", s.session(s.handleRenameWorkspace))
+	mux.HandleFunc("/v1/workspaces/delete", s.session(s.handleDeleteWorkspace))
+	mux.HandleFunc("/v1/workspaces/leave", s.session(s.handleLeaveWorkspace))
+	mux.HandleFunc("/v1/workspaces/members", s.session(s.handleListMembers))
+	mux.HandleFunc("/v1/workspaces/members/role", s.session(s.handleChangeRole))
+	mux.HandleFunc("/v1/workspaces/members/remove", s.session(s.handleRemoveMember))
+
+	// Invitations
+	mux.HandleFunc("/v1/invites", s.session(s.handleInvites))          // GET list, POST create
+	mux.HandleFunc("/v1/invites/revoke", s.session(s.handleRevokeInvite))
+	mux.HandleFunc("/v1/invites/accept", s.session(s.handleAcceptInvite))
+	mux.HandleFunc("/v1/invites/info", s.handleInviteInfo)             // public preview
+}
+
+// errStatus maps a store error to an HTTP status.
+func errStatus(err error) int {
+	switch err {
+	case ErrForbidden, ErrLastOwner:
+		return 403
+	case ErrNotFound:
+		return 404
+	case ErrExists:
+		return 409
+	case ErrCredentials, ErrUnauthorized:
+		return 401
+	default:
+		return 400
+	}
 }
 
 func (s *Store) handleJoin(userID string, w http.ResponseWriter, r *http.Request) {
@@ -55,11 +89,13 @@ func (s *Store) Handler() http.Handler {
 
 type credsReq struct {
 	Username string `json:"username"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 type authResp struct {
-	Token   string       `json:"token"`  // session token
+	Token   string       `json:"token"` // session token
 	UserID  string       `json:"userId"`
+	Profile Profile      `json:"profile"`
 	Tenants []TenantInfo `json:"tenants"`
 }
 
@@ -69,16 +105,12 @@ func (s *Store) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
-	tok, uid, err := s.Register(req.Username, req.Password)
+	tok, uid, err := s.Register(req.Username, req.Email, req.Password)
 	if err != nil {
-		code := 400
-		if err == ErrExists {
-			code = 409
-		}
-		writeErr(w, code, err.Error())
+		writeErr(w, errStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, 200, authResp{Token: tok, UserID: uid, Tenants: s.ListTenants(uid)})
+	writeJSON(w, 200, authResp{Token: tok, UserID: uid, Profile: s.GetProfile(uid), Tenants: s.ListTenants(uid)})
 }
 
 func (s *Store) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +124,7 @@ func (s *Store) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, err.Error())
 		return
 	}
-	writeJSON(w, 200, authResp{Token: tok, UserID: uid, Tenants: s.ListTenants(uid)})
+	writeJSON(w, 200, authResp{Token: tok, UserID: uid, Profile: s.GetProfile(uid), Tenants: s.ListTenants(uid)})
 }
 
 // session wraps a handler, resolving the bearer session token to a user id.
@@ -162,6 +194,210 @@ func (s *Store) handleSyncToken(userID string, w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, 200, map[string]string{"token": tok, "role": role})
+}
+
+// --- profile ---
+
+func (s *Store) handleProfile(userID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req struct {
+			DisplayName string `json:"displayName"`
+			Email       string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, 400, "bad request")
+			return
+		}
+		p, err := s.UpdateProfile(userID, req.DisplayName, req.Email)
+		if err != nil {
+			writeErr(w, errStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"profile": p})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"profile": s.GetProfile(userID), "tenants": s.ListTenants(userID)})
+}
+
+func (s *Store) handleChangePassword(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Old string `json:"old"`
+		New string `json:"new"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.ChangePassword(userID, req.Old, req.New); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// --- workspace lifecycle + members ---
+
+func (s *Store) handleRenameWorkspace(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TenantID string `json:"tenantId"`
+		Name     string `json:"name"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	t, err := s.RenameWorkspace(userID, req.TenantID, req.Name)
+	if err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"tenant": t})
+}
+
+func (s *Store) handleDeleteWorkspace(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TenantID string `json:"tenantId"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.DeleteWorkspace(userID, req.TenantID); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Store) handleLeaveWorkspace(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TenantID string `json:"tenantId"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.LeaveWorkspace(userID, req.TenantID); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Store) handleListMembers(userID string, w http.ResponseWriter, r *http.Request) {
+	members, err := s.ListMembers(userID, r.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"members": members})
+}
+
+func (s *Store) handleChangeRole(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TenantID string `json:"tenantId"`
+		UserID   string `json:"userId"`
+		Role     string `json:"role"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.ChangeMemberRole(userID, req.TenantID, req.UserID, req.Role); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Store) handleRemoveMember(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TenantID string `json:"tenantId"`
+		UserID   string `json:"userId"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.RemoveMember(userID, req.TenantID, req.UserID); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// --- invitations ---
+
+func (s *Store) handleInvites(userID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req struct {
+			TenantID string `json:"tenantId"`
+			Role     string `json:"role"`
+			Email    string `json:"email"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) != nil {
+			writeErr(w, 400, "bad request")
+			return
+		}
+		inv, err := s.CreateInvite(userID, req.TenantID, req.Role, req.Email)
+		if err != nil {
+			writeErr(w, errStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"invite": inv})
+		return
+	}
+	invites, err := s.ListInvites(userID, r.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"invites": invites})
+}
+
+func (s *Store) handleRevokeInvite(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if err := s.RevokeInvite(userID, req.Code); err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Store) handleAcceptInvite(userID string, w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	t, err := s.AcceptInvite(userID, req.Code)
+	if err != nil {
+		writeErr(w, errStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"tenant": t})
+}
+
+// handleInviteInfo is public (no session) so a join screen can preview an
+// invitation before the user signs in.
+func (s *Store) handleInviteInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		return
+	}
+	inv, err := s.InviteInfo(r.URL.Query().Get("code"))
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"invite": inv})
 }
 
 // --- small helpers ---

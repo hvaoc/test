@@ -16,12 +16,16 @@ import (
 	"path/filepath"
 
 	"things3-clone-desktop/server/auth"
+	"things3-clone-desktop/server/mail"
 	"things3-clone-desktop/server/ysync"
 )
 
 func main() {
 	addr := flag.String("addr", ":8090", "listen address")
 	data := flag.String("data", "", "directory for persistence (empty = in-memory, lost on restart)")
+	smtp := flag.String("smtp", "localhost:1025", "SMTP host:port for invite emails (dev: MailPit); empty = log only")
+	mailFrom := flag.String("mail-from", "PlayTasks <no-reply@playtasks.local>", "From address for emails")
+	appURL := flag.String("app-url", "http://localhost:8081", "base URL of the web app, used in invite links")
 	flag.Parse()
 
 	var store ysync.Persistence
@@ -43,6 +47,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("ysync: auth store: %v", err)
 	}
+
+	// Invite email: MailPit in dev (view at http://localhost:8025), or log-only.
+	var mailer mail.Mailer = mail.LogMailer{}
+	if *smtp != "" {
+		mailer = &mail.SMTPMailer{Addr: *smtp, From: *mailFrom}
+		log.Printf("ysync: invite email via SMTP %s (from %q); app links use %s", *smtp, *mailFrom, *appURL)
+	} else {
+		log.Printf("ysync: invite email disabled (log only); app links use %s", *appURL)
+	}
+	accounts.SetMail(mailer, *appURL)
 
 	// One mux: auth routes + sync routes. The sync layer authorizes every push/pull
 	// against the accounts store (a tenant-scoped sync token -> user+tenant+role).
