@@ -499,10 +499,11 @@ function BackupsSection({ reset, onClose }) {
       <View style={styles.hr} />
       <GroupTitle>Sample data</GroupTitle>
       <Text style={styles.fieldHint}>
-        Your data is saved on-device and restored on next launch. Reset to wipe it and start over from the demo data.
+        The app starts empty. Load a rich set of demo to-dos to explore every
+        view. This replaces whatever is currently on this device.
       </Text>
       <View style={{ marginTop: spacing.md, alignItems: 'flex-start' }}>
-        <Btn label="Reset to sample data" icon="refresh" variant="outline" onPress={() => { reset(); onClose(); }} />
+        <Btn label="Load sample data" icon="sparkles" variant="outline" onPress={() => { reset(); onClose(); }} />
       </View>
     </>
   );

@@ -482,9 +482,10 @@ export function TasksProvider({ children }) {
       if (payload && Array.isArray(payload.tasks)) {
         dispatch({ type: 'HYDRATE', payload });
       } else {
-        const seed = buildSampleData();
-        dispatch({ type: 'HYDRATE', payload: seed });
-        saveSnapshot(seed).catch(() => {});
+        // Start fresh/empty — no automatic sample data. The user loads the demo
+        // explicitly from Settings → Sample data. (Auto-seeding every device
+        // duplicated the sample set when two devices synced to one account.)
+        dispatch({ type: 'HYDRATE', payload: {} });
       }
     })();
     return () => {
