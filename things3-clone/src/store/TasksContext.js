@@ -569,11 +569,15 @@ export function TasksProvider({ children }) {
     };
   }, [state]);
 
-  // Phase 2: keep the web record store (sqlite.wasm/OPFS) mirrored from the current
-  // tasks, so query-backed views (useRecordList) stay in sync. Web-only + guarded;
-  // a failure just leaves those views on their in-memory fallback.
+  // Keep the record store mirrored from the current tasks so query-backed views
+  // (useRecordList) stay in sync — ONLY where the save path doesn't already own the
+  // record store. On web the coordinator backend ('record') writes structured data
+  // to the record engine via saveSnapshot, so mirroring there would double-write and
+  // flood the op-log; skip it. On native (ygo save path today) the mirror still feeds
+  // the query store until the native record coordinator lands.
   useEffect(() => {
     if (!state.loaded || !recordAvailable()) return undefined;
+    if (backendName() === 'record') return undefined;
     const t = setTimeout(() => {
       mirrorTasks(state.tasks);
     }, 300);

@@ -82,4 +82,12 @@ export const recordStore = {
   moveTask: (id, beforeId, afterId) => call('moveTask', [id, beforeId, afterId]),
   deleteTask: (id) => call('deleteTask', [id]),
   reset: () => call('reset'),
+  // Whole-state seam + op-log sync (structured data — replaces the shared ygo doc).
+  applyLocalSnapshot: (state) => call('applyLocalSnapshot', [state]),
+  materialize: () => call('materialize'),
+  pendingOps: (limit) => call('pendingOps', [limit]),
+  markSynced: (seqs) => call('markSynced', [seqs]),
+  applyRemote: (ops) => call('applyRemote', [ops]),
+  cursor: () => call('cursor'),
+  setCursor: (c) => call('setCursor', [c]),
 };

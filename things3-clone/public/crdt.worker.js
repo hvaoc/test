@@ -184,8 +184,16 @@ async function handle(msg) {
         await persist();
         result = true;
         break;
+      case 'applyLocalSnapshotAux':
+        unwrap(self.__ydocApplyLocalSnapshotAux(args[0]));
+        await persist();
+        result = true;
+        break;
       case 'materialize':
         result = unwrap(self.__ydocMaterialize()).result;
+        break;
+      case 'noteText':
+        result = unwrap(self.__ydocNoteText(String(args[0] || ''))).result;
         break;
       case 'scopes':
         result = JSON.parse(unwrap(self.__ydocScopes()).result);

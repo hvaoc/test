@@ -1,6 +1,7 @@
 package record
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -17,6 +18,19 @@ type HLC struct {
 
 func (h HLC) String() string {
 	return strconv.FormatInt(h.Wall, 10) + "." + strconv.FormatInt(h.Ctr, 10) + "." + h.Node
+}
+
+// MarshalJSON/UnmarshalJSON serialize the HLC as its compact "wall.ctr.node"
+// string on the wire, so a record Op is byte-identical across the Go engine
+// (native) and the JS engine (web) — both exchange the same ops through the server.
+func (h HLC) MarshalJSON() ([]byte, error) { return json.Marshal(h.String()) }
+func (h *HLC) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*h = parseHLC(s)
+	return nil
 }
 
 func parseHLC(s string) HLC {

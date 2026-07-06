@@ -15,12 +15,12 @@ import (
 // audience:
 //
 //   - shared  (ScopeShared)      one doc: index + entity field maps + tag sets +
-//                                 the global tag list. Synced to every tenant member.
+//     the global tag list. Synced to every tenant member.
 //   - note:<taskId>              one small doc per task holding just that task's
-//                                 notes text. Synced ON DEMAND — only while a task is
-//                                 open — to the members who open it.
+//     notes text. Synced ON DEMAND — only while a task is
+//     open — to the members who open it.
 //   - settings (ScopeSettings)   one doc: the settings map. Synced ONLY across the
-//                                 same user's own devices, never to teammates.
+//     same user's own devices, never to teammates.
 //
 // The app still talks to the engine in whole-state snapshots (ApplyLocalSnapshot /
 // Materialize) — that local seam is unchanged. What changed is that SYNC and
@@ -102,6 +102,16 @@ func (e *Engine) doc(scope string) *crdt.Doc {
 
 // HasData reports whether any shared entity is present.
 func (e *Engine) HasData() bool { return len(e.shared.GetMap(indexRoot).Keys()) > 0 }
+
+// NoteText returns a task's notes from its per-task note doc (or "" if not loaded).
+// Used by the client coordinator to overlay an open task's note onto the record
+// engine's structured state, since the shared ygo doc no longer holds tasks.
+func (e *Engine) NoteText(taskID string) string {
+	if nd := e.notes[taskID]; nd != nil {
+		return nd.GetText(noteBodyRoot).ToString()
+	}
+	return ""
+}
 
 // Scopes lists every scope with a live local doc, for persistence. shared and
 // settings are always present; note scopes appear once their doc exists (i.e. the
@@ -350,6 +360,66 @@ func (e *Engine) applyOn(d *crdt.Doc, writes []func(txn *crdt.Transaction)) {
 			w(txn)
 		}
 	})
+}
+
+// ApplyLocalSnapshotAux applies ONLY the parts of the whole-state snapshot that live
+// on the ygo layer — settings (per-user scope) and each task's notes (per-task docs)
+// — skipping every structured entity, which the record engine now owns. The client
+// coordinator calls this once the shared ygo doc is retired, so ygo carries no task
+// data. Notes are only touched for tasks that have notes or an existing note doc
+// (never creating empty per-task docs).
+func (e *Engine) ApplyLocalSnapshotAux(stateJSON string) error {
+	var snap snapshot
+	if err := json.Unmarshal([]byte(stateJSON), &snap); err != nil {
+		return err
+	}
+
+	noteWrites := map[string][]func(txn *crdt.Transaction){}
+	for _, obj := range snap.Tasks {
+		id, _ := obj["id"].(string)
+		if id == "" {
+			continue
+		}
+		newNote, _ := obj["notes"].(string)
+		nd := e.notes[id]
+		if nd == nil && newNote == "" {
+			continue
+		}
+		if nd == nil {
+			nd = crdt.New(crdt.WithClientID(crdt.ClientID(e.device)))
+			e.notes[id] = nd
+		}
+		yt := nd.GetText(noteBodyRoot)
+		old := yt.ToString()
+		if old != newNote {
+			o, n := old, newNote
+			noteWrites[id] = append(noteWrites[id], func(txn *crdt.Transaction) { applyTextDiff(txn, yt, o, n) })
+		}
+	}
+
+	var settingsWrites []func(txn *crdt.Transaction)
+	if snap.Settings != nil {
+		sm := e.settings.GetMap(settingsRoot)
+		cur := sm.Entries()
+		for k, v := range snap.Settings {
+			if cv, ok := cur[k]; !ok || canonJSON(cv) != canonJSON(v) {
+				kk, vv := k, v
+				settingsWrites = append(settingsWrites, func(txn *crdt.Transaction) { sm.Set(txn, kk, vv) })
+			}
+		}
+		for k := range cur {
+			if _, ok := snap.Settings[k]; !ok {
+				kk := k
+				settingsWrites = append(settingsWrites, func(txn *crdt.Transaction) { sm.Delete(txn, kk) })
+			}
+		}
+	}
+
+	e.applyOn(e.settings, settingsWrites)
+	for id, ws := range noteWrites {
+		e.applyOn(e.notes[id], ws)
+	}
+	return nil
 }
 
 // ---- documents -> snapshot (materialize) ----

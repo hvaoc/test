@@ -20,6 +20,7 @@
 import { Platform } from 'react-native';
 import { Crdt } from './crdt';
 import { crdtClient, crdtWorkerAvailable } from './crdtClient';
+import { recordStore, recordWorkerAvailable } from './recordClient';
 
 // Only the persisted slices of state travel to storage (never `loaded`, etc.).
 export function serializableState(state) {
@@ -320,9 +321,11 @@ export function updateServerProfile(patch) {
 // desktop/mobile use a single native store today.
 export async function activateLocalReplica(tenantId) {
   try {
-    if (backend().name === 'wasm') {
+    if (backend().name === 'record') {
       await crdtClient.init();
       await crdtClient.useWorkspace(tenantId || 'local');
+      // (The record engine uses a single OPFS DB today; per-workspace record
+      // isolation is a follow-up. ygo notes/settings switch per workspace above.)
     }
   } catch {
     /* best effort */
@@ -497,45 +500,106 @@ async function wasmSyncScope(base, headers, scope) {
   return { applied, version: pushed.version };
 }
 
-async function wasmServerSync() {
+// The record op-log sync for STRUCTURED data (tasks, projects, areas, …). Push local
+// ops as deltas, pull the tenant's ops since our cursor. This replaces the monolithic
+// shared ygo doc — O(change) on the wire, scales to 1M (docs/architecture-1m §3-4).
+async function recordServerSync(base, headers) {
+  const pending = await recordStore.pendingOps(0);
+  if (pending.length) {
+    const ops = pending.map((p) => p.op);
+    const pr = await fetch(base + '/v1/records/push', { method: 'POST', headers, body: JSON.stringify({ ops }) });
+    if (!pr.ok) throw new Error('records push failed: ' + pr.status);
+    await recordStore.markSynced(pending.map((p) => p.seq));
+  }
+  const cur = await recordStore.cursor();
+  const rr = await fetch(base + '/v1/records/pull', { method: 'POST', headers, body: JSON.stringify({ cursor: cur ? parseInt(cur, 10) : 0 }) });
+  if (!rr.ok) throw new Error('records pull failed: ' + rr.status);
+  const body = await rr.json();
+  if (body.ops && body.ops.length) await recordStore.applyRemote(body.ops);
+  await recordStore.setCursor(String(body.cursor != null ? body.cursor : ''));
+  return (body.ops || []).length;
+}
+
+// Merge the record engine's structured state (source of truth for tasks/projects/…)
+// with the ygo layer's settings (per-user) and any open task's notes (per-task doc).
+async function coordinatorMaterialize() {
+  const structured = JSON.parse(await recordStore.materialize());
+  let settings = {};
+  try {
+    settings = JSON.parse(await crdtClient.materialize()).settings || {};
+  } catch {
+    /* ygo unavailable — structured still works */
+  }
+  structured.settings = settings;
+  // Overlay notes for currently-open tasks (on-demand; the rest stay "").
+  for (const id of _openNotes) {
+    const t = structured.tasks.find((x) => x.id === id);
+    if (t) {
+      try { t.notes = await crdtClient.noteText(id); } catch { /* ignore */ }
+    }
+  }
+  return structured;
+}
+
+// One-time migration: if the record engine is empty but the legacy shared ygo doc
+// holds structured data, lift it into the record engine so tasks now sync via the
+// op-log. Settings + notes already live on the ygo layer and stay there.
+let _recordMigrated = false;
+async function migrateYdocToRecordIfNeeded() {
+  if (_recordMigrated) return;
+  _recordMigrated = true;
+  try {
+    if (await recordStore.hasData()) return; // already on the record engine
+    if (!(await crdtClient.hasData())) return; // nothing legacy to migrate
+    const legacy = await crdtClient.materialize(); // old shared doc: entities + notes + settings
+    await recordStore.applyLocalSnapshot(legacy);
+  } catch {
+    /* best-effort — a fresh start still works */
+  }
+}
+
+async function coordinatorServerSync() {
   const base = _server.url.replace(/\/$/, '');
   const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
-
-  // Always sync shared (tenant) + settings (this user's private scope), plus any
-  // task whose notes are currently open.
-  const scopes = ['shared', 'settings', ...[..._openNotes].map((id) => 'note:' + id)];
-  let applied = 0;
-  let version = 0;
-  for (const scope of scopes) {
-    const r = await wasmSyncScope(base, headers, scope);
-    applied += r.applied;
-    if (scope === 'shared') version = r.version;
-  }
-
+  // Structured data via the record op-log (tenant scope).
+  const pulled = await recordServerSync(base, headers);
+  // Settings (per-user) + any open task's notes via their ygo scopes. NO shared scope.
+  await wasmSyncScope(base, headers, 'settings');
+  for (const id of _openNotes) await wasmSyncScope(base, headers, 'note:' + id);
   return {
     adapter: 'server',
-    pushed: version,
-    pulled: applied,
-    applied,
+    pushed: 0,
+    pulled,
+    applied: pulled,
     skipped: 0,
-    snapshot: await crdtClient.materialize(),
+    snapshot: JSON.stringify(await coordinatorMaterialize()),
   };
 }
 
-function wasmWebAdapter() {
+// The web coordinator: structured data on the record engine (op-log sync), settings
+// + notes on the ygo layer. Replaces the single-ygo-doc adapter.
+function coordinatorWebAdapter() {
   return {
-    name: 'wasm',
+    name: 'record',
     async loadSnapshot() {
+      await recordStore.init();
       await crdtClient.init();
-      if (!(await crdtClient.hasData())) return null;
-      return JSON.parse(await crdtClient.materialize());
+      await migrateYdocToRecordIfNeeded();
+      const hasStructured = await recordStore.hasData();
+      let settings = {};
+      try { settings = JSON.parse(await crdtClient.materialize()).settings || {}; } catch { /* ignore */ }
+      if (!hasStructured && Object.keys(settings).length === 0) return null;
+      return await coordinatorMaterialize();
     },
     async saveSnapshot(state) {
-      await crdtClient.applyLocalSnapshot(JSON.stringify(serializableState(state)));
+      const json = JSON.stringify(serializableState(state));
+      await recordStore.applyLocalSnapshot(json); // structured → record op-log
+      await crdtClient.applyLocalSnapshotAux(json); // settings + notes → ygo
     },
     async sync() {
+      await recordStore.init();
       await crdtClient.init();
-      if (_server) return wasmServerSync();
+      if (_server) return coordinatorServerSync();
       return { adapter: 'local' };
     },
   };
@@ -560,14 +624,16 @@ export async function openTaskNote(taskId) {
       const snap = await native.syncNote(taskId);
       return snap ? JSON.parse(snap) : null;
     }
-    if (backend().name === 'wasm') {
+    if (backend().name === 'record') {
       _openNotes.add(taskId);
+      await crdtClient.init();
       if (_server) {
         const base = _server.url.replace(/\/$/, '');
         const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
         await wasmSyncScope(base, headers, 'note:' + taskId);
       }
-      return JSON.parse(await crdtClient.materialize());
+      // Merged structured state with this task's (now-synced) note overlaid.
+      return await coordinatorMaterialize();
     }
   } catch {
     /* best-effort: offline or transient — the note still works locally */
@@ -612,7 +678,10 @@ function jsWebAdapter() {
 }
 
 function webAdapter() {
-  return crdtWorkerAvailable() ? wasmWebAdapter() : jsWebAdapter();
+  // Preferred: the record engine (op-log sync for structured data) + ygo (notes,
+  // settings). Falls back to the pure-JS CRDT only when Workers/WASM are missing.
+  if (recordWorkerAvailable() && crdtWorkerAvailable()) return coordinatorWebAdapter();
+  return jsWebAdapter();
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +707,12 @@ export async function resetLocal() {
       await app.ResetStore();
     } else if (native && typeof native.reset === 'function') {
       await native.reset();
+    } else if (recordWorkerAvailable() && crdtWorkerAvailable()) {
+      await recordStore.init();
+      await recordStore.reset();
+      await recordStore.setCursor('');
+      await crdtClient.init();
+      await crdtClient.reset();
     } else if (crdtWorkerAvailable()) {
       await crdtClient.init();
       await crdtClient.reset();

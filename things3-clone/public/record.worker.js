@@ -304,6 +304,124 @@ function hydrate(tasks) {
   return countTasks({});
 }
 
+// ---- whole-state seam across ALL entity kinds (mirrors core/record/snapshot.go) ----
+const ENTITY_KINDS = ['area', 'project', 'heading', 'task', 'customView'];
+const PLURAL = { area: 'areas', project: 'projects', heading: 'headings', task: 'tasks', customView: 'customViews' };
+const SEP = ' ';
+function recSkip(kind, field) { return field === 'id' || (kind === 'task' && (field === 'notes' || field === 'tags')); }
+
+function loadPresentMap() { const m = {}; for (const r of all('SELECT kind,id,present FROM presence')) m[r.kind + SEP + r.id] = r.present === 1; return m; }
+function loadFieldsMap() { const m = {}; for (const r of all('SELECT kind,id,field,value FROM fields')) { const k = r.kind + SEP + r.id; (m[k] || (m[k] = {}))[r.field] = r.value; } return m; }
+function loadTaskTagsMap() { const m = {}; for (const r of all("SELECT id,elem FROM setelems WHERE kind='task' AND field='tags' AND present=1")) { (m[r.id] || (m[r.id] = {}))[decode(r.elem)] = true; } return m; }
+
+// applyLocalSnapshot diffs the app's whole-state against the CRDT registers and
+// emits ONLY the changed ops (delta-sized), across every structured kind. Notes and
+// settings are ignored (they live on the ygo layer).
+function applyLocalSnapshot(state) {
+  const snap = typeof state === 'string' ? JSON.parse(state) : state;
+  const curP = loadPresentMap(), curF = loadFieldsMap(), curT = loadTaskTagsMap();
+  const ops = [], seen = {};
+  for (const kind of ENTITY_KINDS) {
+    for (const obj of (snap[PLURAL[kind]] || [])) {
+      const id = obj.id; if (!id) continue;
+      const ek = kind + SEP + id; seen[ek] = true;
+      if (!curP[ek]) ops.push({ type: 'presence', kind, id, present: true });
+      const cf = curF[ek] || {};
+      for (const field in obj) {
+        if (recSkip(kind, field)) continue;
+        const c = canon(obj[field]);
+        if (cf[field] !== c) ops.push({ type: 'field', kind, id, field, value: c });
+      }
+      if (kind === 'task') {
+        const want = {};
+        for (const t of (Array.isArray(obj.tags) ? obj.tags : [])) { want[t] = true; if (!(curT[id] && curT[id][t])) ops.push({ type: 'set', kind: 'task', id, field: 'tags', elem: canon(t), present: true }); }
+        for (const t in (curT[id] || {})) { if (!want[t]) ops.push({ type: 'set', kind: 'task', id, field: 'tags', elem: canon(t), present: false }); }
+      }
+    }
+  }
+  for (const name of (snap.tags || [])) { const ek = 'tag' + SEP + name; seen[ek] = true; if (!curP[ek]) ops.push({ type: 'presence', kind: 'tag', id: name, present: true }); }
+  for (const ek in curP) { if (curP[ek] && !seen[ek]) { const i = ek.indexOf(SEP); ops.push({ type: 'presence', kind: ek.slice(0, i), id: ek.slice(i + 1), present: false }); } }
+  if (!ops.length) return true;
+  run('BEGIN');
+  try {
+    const touched = {};
+    for (const op of ops) { op.hlc = stamp(); applyOp(op, true); if (op.kind === 'task') touched[op.id] = (touched[op.id] || false) || (op.type === 'presence' || (op.type === 'field' && op.field === 'title')); }
+    for (const id in touched) reproject(id, touched[id]);
+    saveState(); run('COMMIT');
+  } catch (e) { run('ROLLBACK'); throw e; }
+  return true;
+}
+
+// materialize rebuilds the app's whole-state JSON from the registers. Task notes
+// come back "" (ygo text layer) and settings {} (per-user ygo scope).
+function materialize() {
+  const present = loadPresentMap(), fields = loadFieldsMap(), tags = loadTaskTagsMap();
+  const out = {};
+  for (const kind of ENTITY_KINDS) {
+    const coll = [];
+    for (const ek in present) {
+      if (!present[ek]) continue;
+      const i = ek.indexOf(SEP); if (ek.slice(0, i) !== kind) continue;
+      const id = ek.slice(i + 1);
+      const obj = { id };
+      for (const f in (fields[ek] || {})) obj[f] = decode(fields[ek][f]);
+      if (kind === 'task') { obj.notes = ''; obj.tags = Object.keys(tags[id] || {}).sort(); }
+      coll.push(obj);
+    }
+    coll.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    out[PLURAL[kind]] = coll;
+  }
+  const tagList = [];
+  for (const ek in present) { if (present[ek]) { const i = ek.indexOf(SEP); if (ek.slice(0, i) === 'tag') tagList.push(ek.slice(i + 1)); } }
+  out.tags = tagList.sort();
+  out.settings = {};
+  return JSON.stringify(out);
+}
+
+// ---- op-log sync (op wire shape {t,k,i,f,e,v,p,h} — identical to the Go engine) ----
+function witness(hlcS) {
+  const r = parseHLC(hlcS), w = Date.now();
+  const mx = Math.max(last.wall, r.wall, w);
+  let ctr;
+  if (mx === last.wall && mx === r.wall) ctr = Math.max(last.ctr, r.ctr) + 1;
+  else if (mx === last.wall) ctr = last.ctr + 1;
+  else if (mx === r.wall) ctr = r.ctr + 1;
+  else ctr = 0;
+  last = { wall: mx, ctr, node };
+}
+function pendingOps(limit) {
+  return all('SELECT seq,optype,kind,id,field,elem,value,present,hlc FROM oplog WHERE synced=0 ORDER BY seq LIMIT ?', [limit | 0 || 100000])
+    .map((r) => ({ seq: r.seq, op: { t: r.optype, k: r.kind, i: r.id, f: r.field || '', e: r.elem || '', v: r.value || '', p: r.present === 1, h: r.hlc } }));
+}
+function markSynced(seqs) {
+  if (!seqs || !seqs.length) return true;
+  run('BEGIN');
+  try { for (const s of seqs) run('UPDATE oplog SET synced=1 WHERE seq=?', [s]); run('COMMIT'); }
+  catch (e) { run('ROLLBACK'); throw e; }
+  return true;
+}
+// applyRemote merges pulled ops (LWW), witnesses their clocks, reprojects touched
+// tasks, and does NOT re-log them. Wire ops use {t,k,i,f,e,v,p,h}.
+function applyRemote(ops) {
+  if (!ops || !ops.length) return true;
+  run('BEGIN');
+  try {
+    const touched = {};
+    for (const w of ops) {
+      witness(w.h);
+      if (parseHLC(w.h).node === node) continue; // our own echo
+      const op = { type: w.t, kind: w.k, id: w.i, field: w.f || '', elem: w.e || '', value: w.v || '', present: !!w.p, hlc: w.h };
+      const applied = applyOp(op, false);
+      if (applied && op.kind === 'task') touched[op.id] = (touched[op.id] || false) || (op.type === 'presence' || (op.type === 'field' && op.field === 'title'));
+    }
+    for (const id in touched) reproject(id, touched[id]);
+    saveState(); run('COMMIT');
+  } catch (e) { run('ROLLBACK'); throw e; }
+  return true;
+}
+function getCursor() { return metaGet('cursor') || ''; }
+function setCursor(c) { metaSet('cursor', c == null ? '' : String(c)); return true; }
+
 // ---- single-owner init (Web Lock held for the worker's lifetime + install retry) ----
 async function acquireOwnership() {
   if (!(self.navigator && navigator.locks)) return; // fallback: rely on install retry
@@ -335,6 +453,14 @@ async function init() {
 const handlers = {
   hydrate: (tasks) => hydrate(tasks),
   hasData: () => countTasks({}) > 0,
+  // whole-state seam + op-log sync (structured data — replaces the shared ygo doc)
+  applyLocalSnapshot: (state) => applyLocalSnapshot(state),
+  materialize: () => materialize(),
+  pendingOps: (limit) => pendingOps(limit),
+  markSynced: (seqs) => markSynced(seqs),
+  applyRemote: (ops) => applyRemote(ops),
+  cursor: () => getCursor(),
+  setCursor: (c) => setCursor(c),
   queryTasks: (q) => queryTasks(q),
   queryList: (listId, params) => queryList(listId, params),
   searchTasks: (text, q) => searchTasks(text, q),

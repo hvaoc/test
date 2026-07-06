@@ -106,6 +106,19 @@ func registerYdoc() {
 		return ok("")
 	}))
 
+	// __ydocApplyLocalSnapshotAux(stateJSON) -> "" — apply ONLY settings + notes
+	// (skip structured entities, which the record engine owns).
+	g.Set("__ydocApplyLocalSnapshotAux", fn(func(args []js.Value) any {
+		e, bad := needY()
+		if bad != nil {
+			return bad
+		}
+		if err := e.ApplyLocalSnapshotAux(args[0].String()); err != nil {
+			return fail(err)
+		}
+		return ok("")
+	}))
+
 	// __ydocMaterialize() -> stateJSON (whole-state read across scopes).
 	g.Set("__ydocMaterialize", fn(func(args []js.Value) any {
 		e, bad := needY()
@@ -185,6 +198,15 @@ func registerYdoc() {
 			return bad
 		}
 		return ok(strconv.FormatUint(e.ClientID(), 10))
+	}))
+
+	// __ydocNoteText(taskId) -> string (a task's note from its per-task doc).
+	g.Set("__ydocNoteText", fn(func(args []js.Value) any {
+		e, bad := needY()
+		if bad != nil {
+			return bad
+		}
+		return ok(e.NoteText(args[0].String()))
 	}))
 
 	// __ydocHasData() -> bool.

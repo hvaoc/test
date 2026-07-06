@@ -68,7 +68,11 @@ export const crdtClient = {
   init: () => ensureWorker().then(() => call('info')),
   info: () => call('info'),
   applyLocalSnapshot: (stateJSON) => call('applyLocalSnapshot', [stateJSON]),
+  // Apply only the ygo-layer parts (settings + notes); structured entities are owned
+  // by the record engine now.
+  applyLocalSnapshotAux: (stateJSON) => call('applyLocalSnapshotAux', [stateJSON]),
   materialize: () => call('materialize'),
+  noteText: (taskId) => call('noteText', [taskId]), // a task's note text (per-task doc)
   scopes: () => call('scopes'), // string[] of live scopes to sync
   stateVector: (scope) => call('stateVector', [scope]), // base64 state vector for a scope
   encodeDiff: (scope, sinceSVb64) => call('encodeDiff', [scope, sinceSVb64]), // base64 update peer is missing
