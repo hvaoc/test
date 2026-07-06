@@ -196,12 +196,48 @@ func TestConvergence(t *testing.T) {
 
 	o1, _ := s1.GetTask(id)
 	o2, _ := s2.GetTask(id)
-	if o1["title"] != o2["title"] || o1["priority"] != o2["priority"] || o1["completed"] != o2["completed"] {
+	if o1["title"] != o2["title"] || o1["priority"] != o2["priority"] || o1["status"] != o2["status"] {
 		t.Fatalf("diverged:\n s1=%v\n s2=%v", o1, o2)
 	}
 	// different-field edits both survive; same-field LWW is deterministic
-	if o1["title"] != "renamed" || o1["priority"] != float64(3) || o1["completed"] != true {
+	if o1["title"] != "renamed" || o1["priority"] != float64(3) || o1["status"] != "completed" {
 		t.Fatalf("unexpected merge: %v", o1)
+	}
+}
+
+// TestQueryListToday: the smart-list SQL matches the app's Today filter.
+func TestQueryListToday(t *testing.T) {
+	s := open(t)
+	s.CreateTask(TaskInput{ID: "a", Title: "due today", When: "today"})
+	s.CreateTask(TaskInput{ID: "b", Title: "evening", When: "evening"})
+	s.CreateTask(TaskInput{ID: "c", Title: "overdue", When: "2020-01-01"})
+	s.CreateTask(TaskInput{ID: "d", Title: "future", When: "2999-01-01"})
+	s.CreateTask(TaskInput{ID: "e", Title: "someday", When: "someday"})
+	s.CreateTask(TaskInput{ID: "f", Title: "subtask", When: "today", ParentID: "a"})
+	s.CreateTask(TaskInput{ID: "g", Title: "done today", When: "today", Status: "completed"})
+
+	rows, err := s.QueryList("today", "2026-07-06")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.ID] = true
+	}
+	// a (today), b (evening), c (overdue) qualify; d (future), e (someday),
+	// f (subtask), g (completed) do not.
+	for _, id := range []string{"a", "b", "c"} {
+		if !got[id] {
+			t.Fatalf("Today should include %s: %+v", id, rows)
+		}
+	}
+	for _, id := range []string{"d", "e", "f", "g"} {
+		if got[id] {
+			t.Fatalf("Today should exclude %s: %+v", id, rows)
+		}
+	}
+	if _, err := s.QueryList("inbox", "2026-07-06"); err == nil {
+		t.Fatal("unsupported list should error")
 	}
 }
 

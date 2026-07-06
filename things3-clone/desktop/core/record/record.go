@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS oplog (
 CREATE INDEX IF NOT EXISTS oplog_unsynced ON oplog(seq) WHERE synced = 0;
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
--- Derived read-model for tasks (rebuildable from fields/presence).
+-- Derived read-model for tasks (rebuildable from fields/presence). Mirrors the app
+-- shape: completion is status (open/completed/canceled/trashed) with a derived
+-- completed flag; ord mirrors the app's numeric order for smart-list queries.
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT '',
@@ -114,12 +116,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   deadline TEXT NOT NULL DEFAULT '',
   priority INTEGER NOT NULL DEFAULT 0,
   completed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'open',
+  parentId TEXT NOT NULL DEFAULT '',
+  ord REAL NOT NULL DEFAULT 0,
   rank TEXT NOT NULL DEFAULT '',
   notesPreview TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS tasks_rank ON tasks(rank);
-CREATE INDEX IF NOT EXISTS tasks_project ON tasks(projectId, rank);
-CREATE INDEX IF NOT EXISTS tasks_when ON tasks(whenDate) WHERE completed = 0;
+CREATE INDEX IF NOT EXISTS tasks_proj_comp ON tasks(projectId, completed, rank);
+CREATE INDEX IF NOT EXISTS tasks_status_ord ON tasks(status, ord);
 CREATE INDEX IF NOT EXISTS tasks_completed ON tasks(completed, rank);
 
 -- Full-text search over title + notes (offline). id UNINDEXED lets us map hits
@@ -152,6 +157,11 @@ func asString(canonJSON string) string {
 }
 func asInt(canonJSON string) int64 { var n int64; _ = json.Unmarshal([]byte(canonJSON), &n); return n }
 func asBool(canonJSON string) bool { var b bool; _ = json.Unmarshal([]byte(canonJSON), &b); return b }
+func asFloat(canonJSON string) float64 {
+	var n float64
+	_ = json.Unmarshal([]byte(canonJSON), &n)
+	return n
+}
 
 // ---- op application (LWW) ----
 
@@ -242,13 +252,23 @@ func reprojectTaskTx(tx *sql.Tx, id string, ftsDirty bool) error {
 	rows.Close()
 
 	notes := asString(f["notes"])
-	if _, e := tx.Exec(`INSERT INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,rank,notesPreview)
-		VALUES(?,?,?,?,?,?,?,?,?)
+	status := asString(f["status"])
+	if status == "" { // derive from the legacy completed flag for older data
+		if asBool(f["completed"]) {
+			status = "completed"
+		} else {
+			status = "open"
+		}
+	}
+	if _, e := tx.Exec(`INSERT INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,status,parentId,ord,rank,notesPreview)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET title=excluded.title, projectId=excluded.projectId,
 		  whenDate=excluded.whenDate, deadline=excluded.deadline, priority=excluded.priority,
-		  completed=excluded.completed, rank=excluded.rank, notesPreview=excluded.notesPreview`,
+		  completed=excluded.completed, status=excluded.status, parentId=excluded.parentId,
+		  ord=excluded.ord, rank=excluded.rank, notesPreview=excluded.notesPreview`,
 		id, asString(f["title"]), asString(f["projectId"]), asString(f["when"]),
-		asString(f["deadline"]), asInt(f["priority"]), b2i(asBool(f["completed"])),
+		asString(f["deadline"]), asInt(f["priority"]), b2i(status == "completed"),
+		status, asString(f["parentId"]), asFloat(f["order"]),
 		asString(f["rank"]), preview(notes)); e != nil {
 		return e
 	}
@@ -288,17 +308,32 @@ func preview(s string) string {
 // ---- write API (per-entity, O(1)) ----
 
 // TaskInput is the field set for creating/replacing a task. Empty Rank appends.
+// Completion is `Status` (open/completed/canceled/trashed), matching the app; the
+// legacy Completed bool is a convenience that maps to Status when Status is empty.
 type TaskInput struct {
-	ID        string
-	Title     string
-	ProjectID string
-	When      string
-	Deadline  string
-	Priority  int
-	Completed bool
-	Notes     string
-	Rank      string
-	Tags      []string
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	ProjectID string   `json:"projectId"`
+	When      string   `json:"when"`
+	Deadline  string   `json:"deadline"`
+	Priority  int      `json:"priority"`
+	Completed bool     `json:"completed"`
+	Status    string   `json:"status"`
+	ParentID  string   `json:"parentId"`
+	Order     float64  `json:"order"`
+	Notes     string   `json:"notes"`
+	Rank      string   `json:"rank"`
+	Tags      []string `json:"tags"`
+}
+
+func (t TaskInput) status() string {
+	if t.Status != "" {
+		return t.Status
+	}
+	if t.Completed {
+		return "completed"
+	}
+	return "open"
 }
 
 func (t TaskInput) fieldOps() []Op {
@@ -309,7 +344,9 @@ func (t TaskInput) fieldOps() []Op {
 		{Type: "field", Kind: "task", ID: t.ID, Field: "when", Value: canonAny(t.When)},
 		{Type: "field", Kind: "task", ID: t.ID, Field: "deadline", Value: canonAny(t.Deadline)},
 		{Type: "field", Kind: "task", ID: t.ID, Field: "priority", Value: canonAny(t.Priority)},
-		{Type: "field", Kind: "task", ID: t.ID, Field: "completed", Value: canonAny(t.Completed)},
+		{Type: "field", Kind: "task", ID: t.ID, Field: "status", Value: canonAny(t.status())},
+		{Type: "field", Kind: "task", ID: t.ID, Field: "parentId", Value: canonAny(t.ParentID)},
+		{Type: "field", Kind: "task", ID: t.ID, Field: "order", Value: canonAny(t.Order)},
 		{Type: "field", Kind: "task", ID: t.ID, Field: "notes", Value: canonAny(t.Notes)},
 		{Type: "field", Kind: "task", ID: t.ID, Field: "rank", Value: canonAny(t.Rank)},
 	}
@@ -413,8 +450,8 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 		return err
 	}
 	defer pStmt.Close()
-	tStmt, err := tx.Prepare(`INSERT OR REPLACE INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,rank,notesPreview)
-		VALUES(?,?,?,?,?,?,?,?,?)`)
+	tStmt, err := tx.Prepare(`INSERT OR REPLACE INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,status,parentId,ord,rank,notesPreview)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -438,6 +475,8 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 			{"title", canonAny(t.Title)}, {"projectId", canonAny(t.ProjectID)},
 			{"when", canonAny(t.When)}, {"deadline", canonAny(t.Deadline)},
 			{"priority", canonAny(t.Priority)}, {"completed", canonAny(t.Completed)},
+			{"status", canonAny(t.status())}, {"parentId", canonAny(t.ParentID)},
+			{"order", canonAny(t.Order)},
 			{"notes", canonAny(t.Notes)}, {"rank", canonAny(t.Rank)},
 		}
 		if _, err = pStmt.Exec(t.ID, h); err != nil {
@@ -454,7 +493,8 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 				return err
 			}
 		}
-		if _, err = tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(t.Completed), t.Rank, preview(t.Notes)); err != nil {
+		st := t.status()
+		if _, err = tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(st == "completed"), st, t.ParentID, t.Order, t.Rank, preview(t.Notes)); err != nil {
 			return err
 		}
 		if _, err = ftsStmt.Exec(t.ID, t.Title); err != nil {
@@ -484,9 +524,19 @@ func (s *Store) SetTaskField(id, field string, value any) error {
 	return s.writeOps([]Op{{Type: "field", Kind: "task", ID: id, Field: field, Value: canonAny(value)}}, id)
 }
 
-// ToggleComplete sets a task's completion state.
+// ToggleComplete sets a task's completion state. Completion is `status` (the app's
+// model), so this sets status=completed|open, not a separate flag.
 func (s *Store) ToggleComplete(id string, completed bool) error {
-	return s.SetTaskField(id, "completed", completed)
+	st := "open"
+	if completed {
+		st = "completed"
+	}
+	return s.SetTaskField(id, "status", st)
+}
+
+// SetStatus sets the task's status (open/completed/canceled/trashed).
+func (s *Store) SetStatus(id, status string) error {
+	return s.SetTaskField(id, "status", status)
 }
 
 // MoveTask repositions a task between beforeID and afterID (either may be "" for
@@ -585,13 +635,13 @@ var scalarOps = map[string]bool{"=": true, "!=": true, "<>": true, ">": true, "<
 // Query is a filter over the tasks read-model. The convenience fields cover the
 // common cases; Conditions expresses the full operator set.
 type Query struct {
-	ProjectID    string // shorthand for {"projectId","=",...}
-	When         string // shorthand for {"when","=",...}
-	OnlyOpen     bool   // completed = 0
-	OnlyComplete bool   // completed = 1
-	Conditions   []Cond // =, !=, <>, >, <, >=, <=, in, not in
-	Limit        int
-	Offset       int
+	ProjectID    string `json:"projectId"`    // shorthand for {"projectId","=",...}
+	When         string `json:"when"`         // shorthand for {"when","=",...}
+	OnlyOpen     bool   `json:"onlyOpen"`     // completed = 0
+	OnlyComplete bool   `json:"onlyComplete"` // completed = 1
+	Conditions   []Cond `json:"conditions"`   // =, !=, <>, >, <, >=, <=, in, not in
+	Limit        int    `json:"limit"`
+	Offset       int    `json:"offset"`
 }
 
 // TaskRow is a list-view row (the columns a list actually renders).
@@ -703,6 +753,23 @@ func (s *Store) SearchTasks(text string, q Query) ([]TaskRow, error) {
 		full += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
 	}
 	return s.scanRows(full, append([]any{ftsQuery(text)}, args...))
+}
+
+// QueryList runs a smart-list query in SQL (mirrors src/store/selectors.js and the
+// web adapter's queryList). Currently supports "today"; other lists return an error
+// so the caller falls back to its in-memory selector until they're ported.
+func (s *Store) QueryList(listID, todayKey string) ([]TaskRow, error) {
+	if listID != "today" {
+		return nil, fmt.Errorf("record: queryList unsupported list %q", listID)
+	}
+	// Today = open, top-level, and due today/evening OR a concrete date/deadline
+	// on-or-before today; ordered by the app's numeric order.
+	return s.scanRows(`SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM tasks
+		WHERE status='open' AND (parentId IS NULL OR parentId='')
+		  AND ( whenDate IN ('today','evening')
+		        OR (whenDate LIKE '____-__-__' AND whenDate <= ?)
+		        OR (deadline LIKE '____-__-__' AND deadline <= ?) )
+		ORDER BY ord, id`, []any{todayKey, todayKey})
 }
 
 // CountTasks returns the number of matching tasks via an indexed COUNT (never loads

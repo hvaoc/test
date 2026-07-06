@@ -191,7 +191,7 @@ function createTask(t) {
 function setTaskField(id, field, value) {
   writeOps([fieldOp(id, field, value)], id, field === 'title');
 }
-function toggleComplete(id, completed) { writeOps([fieldOp(id, 'completed', !!completed)], id, false); }
+function toggleComplete(id, completed) { writeOps([fieldOp(id, 'status', completed ? 'completed' : 'open')], id, false); }
 function moveTask(id, beforeId, afterId) {
   const prev = beforeId ? (one('SELECT rank FROM tasks WHERE id=?', [beforeId]) || {}).rank || '' : '';
   const next = afterId ? (one('SELECT rank FROM tasks WHERE id=?', [afterId]) || {}).rank || '' : '';
