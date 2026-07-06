@@ -124,7 +124,11 @@ CREATE INDEX IF NOT EXISTS tasks_completed ON tasks(completed, rank);
 
 -- Full-text search over title + notes (offline). id UNINDEXED lets us map hits
 -- back to a task and re-sync a single row.
-CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(id UNINDEXED, title, notes);
+-- Title-only, word-prefix search (FTS5 default tokenizer). Notes are intentionally
+-- NOT searchable; every other field filters via indexed SQL comparison operators,
+-- not FTS. (Future: 'trigram' tokenizer for substring/contains — see
+-- docs/architecture-1m.md §3.)
+CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(id UNINDEXED, title);
 `)
 	return err
 }
@@ -254,14 +258,15 @@ func reprojectTaskTx(tx *sql.Tx, id string, ftsDirty bool) error {
 	if _, e := tx.Exec(`DELETE FROM tasks_fts WHERE id=?`, id); e != nil {
 		return e
 	}
-	_, e := tx.Exec(`INSERT INTO tasks_fts(id,title,notes) VALUES(?,?,?)`, id, asString(f["title"]), notes)
+	_, e := tx.Exec(`INSERT INTO tasks_fts(id,title) VALUES(?,?)`, id, asString(f["title"]))
 	return e
 }
 
-// opAffectsFTS reports whether one op changes searchable text (title/notes) or a
-// task's existence — the only cases that require rewriting its FTS row.
+// opAffectsFTS reports whether one op changes the searchable title or a task's
+// existence — the only cases that require rewriting its FTS row. Notes are not
+// indexed, so notes edits never touch FTS.
 func opAffectsFTS(op Op) bool {
-	return op.Type == "presence" || (op.Type == "field" && (op.Field == "title" || op.Field == "notes"))
+	return op.Type == "presence" || (op.Type == "field" && op.Field == "title")
 }
 
 func opsAffectFTS(ops []Op) bool {
@@ -414,7 +419,7 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 		return err
 	}
 	defer tStmt.Close()
-	ftsStmt, err := tx.Prepare(`INSERT INTO tasks_fts(id,title,notes) VALUES(?,?,?)`)
+	ftsStmt, err := tx.Prepare(`INSERT INTO tasks_fts(id,title) VALUES(?,?)`)
 	if err != nil {
 		return err
 	}
@@ -452,7 +457,7 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 		if _, err = tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(t.Completed), t.Rank, preview(t.Notes)); err != nil {
 			return err
 		}
-		if _, err = ftsStmt.Exec(t.ID, t.Title, t.Notes); err != nil {
+		if _, err = ftsStmt.Exec(t.ID, t.Title); err != nil {
 			return err
 		}
 	}
@@ -553,12 +558,38 @@ func (s *Store) rankOf(id string) (string, error) {
 
 // ---- read API (queries, not materializations) ----
 
-// Query is a filter over the tasks read-model. Zero values mean "no constraint".
+// Cond is one structured filter: Field OP Values, e.g. {"priority",">=",[2]} or
+// {"projectId","in",["p1","p2"]}. These are the operator filters for every field
+// EXCEPT the title (which uses FTS via SearchTasks). Values are compared as indexed
+// SQL, never full-text.
+type Cond struct {
+	Field  string `json:"field"`
+	Op     string `json:"op"`
+	Values []any  `json:"values"`
+}
+
+// filterColumns whitelists which fields can be filtered and maps them to their
+// read-model column. A whitelist (not string interpolation) keeps the SQL
+// injection-safe — an unknown field is an error, never concatenated in.
+var filterColumns = map[string]string{
+	"projectId": "projectId",
+	"priority":  "priority",
+	"when":      "whenDate",
+	"deadline":  "deadline",
+	"completed": "completed",
+	"rank":      "rank",
+}
+
+var scalarOps = map[string]bool{"=": true, "!=": true, "<>": true, ">": true, "<": true, ">=": true, "<=": true}
+
+// Query is a filter over the tasks read-model. The convenience fields cover the
+// common cases; Conditions expresses the full operator set.
 type Query struct {
-	ProjectID    string
-	When         string
-	OnlyOpen     bool // completed = 0
-	OnlyComplete bool // completed = 1
+	ProjectID    string // shorthand for {"projectId","=",...}
+	When         string // shorthand for {"when","=",...}
+	OnlyOpen     bool   // completed = 0
+	OnlyComplete bool   // completed = 1
+	Conditions   []Cond // =, !=, <>, >, <, >=, <=, in, not in
 	Limit        int
 	Offset       int
 }
@@ -575,33 +606,82 @@ type TaskRow struct {
 	Rank      string `json:"rank"`
 }
 
-func (q Query) where() (string, []any) {
-	var conds []string
+func normVal(v any) any {
+	if b, ok := v.(bool); ok {
+		return b2i(b) // completed etc. are stored as 0/1
+	}
+	return v
+}
+
+// where builds the parameterised WHERE clause. alias ("" or "t.") qualifies the
+// columns so the same builder works for a plain query and the FTS join.
+func (q Query) where(alias string) (string, []any, error) {
+	var parts []string
 	var args []any
+	col := func(name string) string { return alias + name }
+
 	if q.ProjectID != "" {
-		conds = append(conds, "projectId=?")
+		parts = append(parts, col("projectId")+"=?")
 		args = append(args, q.ProjectID)
 	}
 	if q.When != "" {
-		conds = append(conds, "whenDate=?")
+		parts = append(parts, col("whenDate")+"=?")
 		args = append(args, q.When)
 	}
 	if q.OnlyOpen {
-		conds = append(conds, "completed=0")
+		parts = append(parts, col("completed")+"=0")
 	}
 	if q.OnlyComplete {
-		conds = append(conds, "completed=1")
+		parts = append(parts, col("completed")+"=1")
 	}
-	if len(conds) == 0 {
-		return "", args
+
+	for _, c := range q.Conditions {
+		column, ok := filterColumns[c.Field]
+		if !ok {
+			return "", nil, fmt.Errorf("record: unknown filter field %q", c.Field)
+		}
+		op := strings.ToLower(strings.TrimSpace(c.Op))
+		switch op {
+		case "in", "not in":
+			if len(c.Values) == 0 {
+				if op == "in" {
+					parts = append(parts, "0=1") // IN () matches nothing; NOT IN () matches all
+				}
+				continue
+			}
+			ph := strings.TrimSuffix(strings.Repeat("?,", len(c.Values)), ",")
+			kw := "IN"
+			if op == "not in" {
+				kw = "NOT IN"
+			}
+			parts = append(parts, col(column)+" "+kw+" ("+ph+")")
+			for _, v := range c.Values {
+				args = append(args, normVal(v))
+			}
+		default:
+			if !scalarOps[op] {
+				return "", nil, fmt.Errorf("record: unsupported operator %q", c.Op)
+			}
+			if len(c.Values) != 1 {
+				return "", nil, fmt.Errorf("record: operator %q needs exactly one value", c.Op)
+			}
+			parts = append(parts, col(column)+" "+op+" ?")
+			args = append(args, normVal(c.Values[0]))
+		}
 	}
-	return " WHERE " + strings.Join(conds, " AND "), args
+	if len(parts) == 0 {
+		return "", args, nil
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args, nil
 }
 
 // QueryTasks returns a paged, rank-ordered slice of rows matching q. Memory is
 // bounded by Limit, never the dataset.
 func (s *Store) QueryTasks(q Query) ([]TaskRow, error) {
-	where, args := q.where()
+	where, args, err := q.where("")
+	if err != nil {
+		return nil, err
+	}
 	sqlStr := `SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM tasks` + where + ` ORDER BY rank, id`
 	if q.Limit > 0 {
 		sqlStr += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
@@ -609,31 +689,31 @@ func (s *Store) QueryTasks(q Query) ([]TaskRow, error) {
 	return s.scanRows(sqlStr, args)
 }
 
-// SearchTasks runs an offline FTS5 full-text query over title+notes, intersected
-// with q's structured filters, rank-ordered and paged.
+// SearchTasks runs an offline FTS5 word-prefix query over the task TITLE only,
+// intersected with q's structured (operator) filters, rank-ordered and paged.
 func (s *Store) SearchTasks(text string, q Query) ([]TaskRow, error) {
-	where, args := q.where()
-	// tasks_fts MATCH gives ids; join back to the read-model for columns + filters.
-	inner := `SELECT id FROM tasks_fts WHERE tasks_fts MATCH ?`
+	where, args, err := q.where("t.")
+	if err != nil {
+		return nil, err
+	}
 	full := `SELECT t.id,t.title,t.projectId,t.whenDate,t.deadline,t.priority,t.completed,t.rank
-	         FROM tasks t JOIN (` + inner + `) m ON m.id=t.id` + where + ` ORDER BY t.rank, t.id`
+	         FROM tasks t JOIN (SELECT id FROM tasks_fts WHERE tasks_fts MATCH ?) m ON m.id=t.id` +
+		where + ` ORDER BY t.rank, t.id`
 	if q.Limit > 0 {
 		full += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
 	}
-	// re-qualify WHERE column names to the t. alias
-	full = strings.Replace(full, " WHERE projectId", " WHERE t.projectId", 1)
-	full = strings.NewReplacer("WHERE completed", "WHERE t.completed", "AND completed", "AND t.completed",
-		"WHERE whenDate", "WHERE t.whenDate", "AND whenDate", "AND t.whenDate",
-		"AND projectId", "AND t.projectId").Replace(full)
 	return s.scanRows(full, append([]any{ftsQuery(text)}, args...))
 }
 
 // CountTasks returns the number of matching tasks via an indexed COUNT (never loads
 // rows) — for view badges.
 func (s *Store) CountTasks(q Query) (int, error) {
-	where, args := q.where()
+	where, args, err := q.where("")
+	if err != nil {
+		return 0, err
+	}
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks`+where, args...).Scan(&n)
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM tasks`+where, args...).Scan(&n)
 	return n, err
 }
 

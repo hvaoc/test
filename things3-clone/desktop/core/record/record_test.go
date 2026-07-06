@@ -67,9 +67,10 @@ func TestToggleCompleteAndCount(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	s := open(t)
-	s.CreateTask(TaskInput{Title: "Quarterly report", Notes: "finish the numbers"})
-	s.CreateTask(TaskInput{Title: "Water the plants", Notes: "living room"})
+	s.CreateTask(TaskInput{Title: "Quarterly report", Notes: "finish the numbers", ProjectID: "p1"})
+	s.CreateTask(TaskInput{Title: "Water the plants", Notes: "living room", ProjectID: "p2"})
 
+	// word-prefix match on the title
 	rows, err := s.SearchTasks("quarter", Query{})
 	if err != nil {
 		t.Fatal(err)
@@ -77,15 +78,63 @@ func TestSearch(t *testing.T) {
 	if len(rows) != 1 || rows[0].Title != "Quarterly report" {
 		t.Fatalf("search 'quarter' = %+v", rows)
 	}
-	// match on notes body too
-	rows, _ = s.SearchTasks("numbers", Query{})
-	if len(rows) != 1 {
-		t.Fatalf("search 'numbers' = %+v", rows)
+	// notes are NOT searchable — a notes-only term matches nothing
+	if rows, _ = s.SearchTasks("numbers", Query{}); len(rows) != 0 {
+		t.Fatalf("notes must not be searchable, got %+v", rows)
 	}
-	// filters intersect with FTS
-	rows, _ = s.SearchTasks("the", Query{OnlyOpen: true})
-	if len(rows) != 2 {
-		t.Fatalf("search 'the' open = %+v", rows)
+	// a title word matches, and operator filters intersect with the title search
+	rows, _ = s.SearchTasks("plant", Query{Conditions: []Cond{{Field: "projectId", Op: "=", Values: []any{"p2"}}}})
+	if len(rows) != 1 || rows[0].Title != "Water the plants" {
+		t.Fatalf("search 'plant' in p2 = %+v", rows)
+	}
+	rows, _ = s.SearchTasks("plant", Query{Conditions: []Cond{{Field: "projectId", Op: "=", Values: []any{"p1"}}}})
+	if len(rows) != 0 {
+		t.Fatalf("search 'plant' in p1 should be empty, got %+v", rows)
+	}
+}
+
+func TestOperatorFilters(t *testing.T) {
+	s := open(t)
+	s.CreateTask(TaskInput{ID: "t1", Title: "A", ProjectID: "p1", Priority: 1, When: "2026-07-01"})
+	s.CreateTask(TaskInput{ID: "t2", Title: "B", ProjectID: "p2", Priority: 3, When: "2026-07-10"})
+	s.CreateTask(TaskInput{ID: "t3", Title: "C", ProjectID: "p1", Priority: 2, When: "2026-07-20"})
+
+	check := func(name string, conds []Cond, wantIDs ...string) {
+		t.Helper()
+		rows, err := s.QueryTasks(Query{Conditions: conds})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := map[string]bool{}
+		for _, r := range rows {
+			got[r.ID] = true
+		}
+		if len(rows) != len(wantIDs) {
+			t.Fatalf("%s: got %d rows %+v, want %v", name, len(rows), rows, wantIDs)
+		}
+		for _, id := range wantIDs {
+			if !got[id] {
+				t.Fatalf("%s: missing %s in %+v", name, id, rows)
+			}
+		}
+	}
+
+	check("priority>=2", []Cond{{Field: "priority", Op: ">=", Values: []any{2}}}, "t2", "t3")
+	check("priority!=3", []Cond{{Field: "priority", Op: "!=", Values: []any{3}}}, "t1", "t3")
+	check("projectId in p1", []Cond{{Field: "projectId", Op: "in", Values: []any{"p1"}}}, "t1", "t3")
+	check("projectId not in p1", []Cond{{Field: "projectId", Op: "not in", Values: []any{"p1"}}}, "t2")
+	check("when < 2026-07-15", []Cond{{Field: "when", Op: "<", Values: []any{"2026-07-15"}}}, "t1", "t2")
+	check("combined", []Cond{
+		{Field: "priority", Op: "<>", Values: []any{3}},
+		{Field: "when", Op: "<", Values: []any{"2026-07-15"}},
+	}, "t1")
+
+	// a non-filterable / unknown field must error, never be interpolated into SQL
+	if _, err := s.QueryTasks(Query{Conditions: []Cond{{Field: "notes", Op: "=", Values: []any{"x"}}}}); err == nil {
+		t.Fatal("expected error for non-filterable field 'notes'")
+	}
+	if _, err := s.QueryTasks(Query{Conditions: []Cond{{Field: "priority", Op: "DROP", Values: []any{1}}}}); err == nil {
+		t.Fatal("expected error for unsupported operator")
 	}
 }
 

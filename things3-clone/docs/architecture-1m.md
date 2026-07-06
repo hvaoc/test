@@ -62,8 +62,29 @@ are **rows in SQLite**, each field an independently-versioned CRDT register
 (LWW + Hybrid Logical Clock), exactly as `core/store.go` already models them. This
 layer never loads the whole workspace: it answers **queries** (this view, this
 project, this search — paged) and writes **per entity**. This is what makes 1M
-storage, search, and filter work with bounded memory. Full-text search is SQLite
-**FTS5**.
+storage, search, and filter work with bounded memory.
+
+**The search model** (decided):
+- **Title** is the only full-text field, via a SQLite **FTS5** index using the
+  default tokenizer → **word-prefix** matching (typing `rep` finds "Quarterly
+  **Rep**ort"). The index exists solely so a title search is O(log n) instead of an
+  O(n) `LIKE '%…%'` scan of a million rows.
+- **Notes are NOT searchable.** They are not in the FTS index and are not copied
+  into the record layer for search — they live only in the per-task ygo document
+  (below). This keeps the index small and means notes edits never touch it.
+- **Every other field** (priority, dates, tags, project, completion, …) filters
+  with **indexed SQL comparison operators** — `=`, `!=`, `<>`, `>`, `<`, `>=`,
+  `<=`, `IN`, `NOT IN` — *not* FTS. Fields are whitelisted (unknown field → error),
+  so filters are injection-safe. This mirrors the operator model `query.js` already
+  uses on the frontend.
+
+> **Future option — substring/contains search.** If word-prefix proves too strict
+> (e.g. matching "p**rep**aration"), swap the title FTS tokenizer to `trigram`:
+> `CREATE VIRTUAL TABLE tasks_fts USING fts5(id UNINDEXED, title, tokenize='trigram')`.
+> That gives fast indexed `LIKE`/substring matching at 1M, at the cost of a larger
+> index (trigrams of the title). It is a one-line tokenizer change plus a reindex;
+> no schema or query-shape change. True typo-tolerant fuzzy (subsequence) is *not*
+> indexable and is deliberately out of scope at 1M.
 
 **Text layer (the documents).** The *rich-text fields that need character-level
 collaboration* — a task's **notes/description** — are each a **small ygo document**
@@ -112,11 +133,11 @@ byte-compatible. What changes is the **shape of the API**, because
 **Reads become queries, not materializations.** New store methods return only what
 a screen shows, backed by indexes:
 
-- `QueryTasks(scope, filter, sort, page)` — e.g. tasks in project P, or matching a
-  saved filter, ordered by `rank`, limited/paged. Backed by SQLite indexes on
-  `projectId`, `when/due`, `priority`, `state`, and the fractional `rank`.
-- `SearchTasks(text, filter, page)` — FTS5 `MATCH` over title/notes-preview +
-  structured predicates. Offline, bounded memory.
+- `QueryTasks(q)` — tasks matching operator conditions (`=`/`!=`/`<>`/`>`/`<`/`>=`/
+  `<=`/`IN`/`NOT IN` over whitelisted fields), ordered by `rank, id`, limited/paged.
+  Backed by SQLite indexes on `projectId`, `when`, `completed`, and `rank`.
+- `SearchTasks(text, q)` — FTS5 word-prefix `MATCH` over the **title only**,
+  intersected with the same operator conditions. Offline, bounded memory.
 - `GetTask(id)` — one entity, for the detail view.
 - Counts for badges via indexed `COUNT`, never by loading rows.
 
