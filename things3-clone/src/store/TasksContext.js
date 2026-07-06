@@ -491,6 +491,11 @@ function reducer(state, action) {
 export function TasksProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const saveTimer = useRef(null);
+  // Set by structural actions (move Today<->Inbox, change project, complete,
+  // reorder, delete) so the very next save flushes immediately (0ms) instead of
+  // waiting out the debounce — query-backed views then re-run right away. Rapid
+  // edits (typing a title/notes) keep the debounce.
+  const flushSaveRef = useRef(false);
   // Bumped after sign-in / sign-out so the realtime effect re-subscribes.
   const [syncGen, setSyncGen] = useState(0);
   // Serialize syncs: a sync in flight coalesces further requests into a single
@@ -562,9 +567,14 @@ export function TasksProvider({ children }) {
   useEffect(() => {
     if (!state.loaded) return undefined;
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    // Structural changes flush right away (0ms) so query-backed views (e.g. Today)
+    // re-run and cross-tab/cross-device propagation starts with no perceptible lag;
+    // rapid edits (typing) keep the 100ms batch.
+    const delay = flushSaveRef.current ? 0 : 100;
+    flushSaveRef.current = false;
     saveTimer.current = setTimeout(() => {
       saveSnapshot(state).catch(() => {});
-    }, 100);
+    }, delay);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
@@ -617,13 +627,20 @@ export function TasksProvider({ children }) {
           activityRef.current({ kind: 'added', taskId: id, user: me.user, color: me.color });
         }
       },
-      updateTask: (id, patch) => dispatch({ type: 'UPDATE_TASK', id, patch }),
-      toggleTask: (id) => dispatch({ type: 'TOGGLE_TASK', id }),
-      reorderTasks: (ids) => dispatch({ type: 'REORDER_TASKS', ids }),
+      updateTask: (id, patch) => {
+        // A move (schedule/project/deadline/priority/parent change) is structural →
+        // flush now; a title/notes edit is not → keep the debounce.
+        if (patch && ('when' in patch || 'projectId' in patch || 'deadline' in patch || 'priority' in patch || 'parentId' in patch)) {
+          flushSaveRef.current = true;
+        }
+        dispatch({ type: 'UPDATE_TASK', id, patch });
+      },
+      toggleTask: (id) => { flushSaveRef.current = true; dispatch({ type: 'TOGGLE_TASK', id }); },
+      reorderTasks: (ids) => { flushSaveRef.current = true; dispatch({ type: 'REORDER_TASKS', ids }); },
       setProjectLayout: (payload) => dispatch({ type: 'SET_PROJECT_LAYOUT', payload }),
-      setStatus: (id, status) => dispatch({ type: 'SET_STATUS', id, status }),
-      deleteTask: (id) => dispatch({ type: 'DELETE_TASK', id }),
-      restoreTask: (id) => dispatch({ type: 'RESTORE_TASK', id }),
+      setStatus: (id, status) => { flushSaveRef.current = true; dispatch({ type: 'SET_STATUS', id, status }); },
+      deleteTask: (id) => { flushSaveRef.current = true; dispatch({ type: 'DELETE_TASK', id }); },
+      restoreTask: (id) => { flushSaveRef.current = true; dispatch({ type: 'RESTORE_TASK', id }); },
       emptyTrash: () => dispatch({ type: 'EMPTY_TRASH' }),
 
       addCheck: (taskId, title) => dispatch({ type: 'ADD_CHECK', taskId, title }),
