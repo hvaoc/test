@@ -189,18 +189,23 @@ peek/drop for crash-safety) is the record-layer transport. Changes:
 |---|---|---|---|
 | Desktop (Wails) | native SQLite via Go core (`modernc.org/sqlite`) + FTS5 | ygo per-task | no memory concern at 1M |
 | Mobile (gomobile) | native SQLite via the same Go core + FTS5 | ygo per-task | same code as desktop |
-| Web (WASM) | SQLite-WASM (OPFS, single-tab-owner Web Lock) **or** IndexedDB indexed store | ygo per-task | web is the constrained platform; the read-model is disposable/rebuildable so single-context is acceptable |
+| Web (WASM) | **SQLite-WASM (OPFS) with a single-owner Web Lock** | ygo per-task | decided — matches native for shared code + full FTS5; the read-model is disposable/rebuildable so single-context is safe |
 
 The record-layer engine + sync live in the **shared Go core** so all three
 platforms run one logical model (the project's "Do Not Repeat" rule). ygo stays for
 the text layer. We stay in Go; never y.js.
 
-> Note on web storage: the recent move of the *whole-doc* blob to IndexedDB fixed
-> the OPFS access-handle crash. At 1M the record layer needs indexed queries/FTS,
-> which argues for SQLite-WASM again — but now as a *disposable, single-owner read-
-> model*, not the source-of-truth blob, so the access-handle constraint is tolerable
-> (Web Lock elects one tab; corruption is recoverable by rebuild). Final web-storage
-> choice is Phase 3, gated on the load-test numbers (§7).
+> **Web storage, decided.** The recent move of the *whole-doc* blob to IndexedDB
+> fixed the OPFS access-handle crash and is the transitional home for today's blob.
+> The 1M **record layer** on web uses **SQLite-WASM (OPFS) with a single-owner Web
+> Lock** — chosen over IndexedDB+indexes to match native (one shared query/FTS path)
+> and get real FTS5 on web. This does *not* reintroduce the crash: the OPFS-SQLite
+> here is a **disposable, rebuildable replica** (not the source of truth), and a Web
+> Lock (or SharedWorker) elects exactly one owner tab to hold the handles while other
+> tabs proxy to it — so no two contexts ever contend for a handle, and corruption is
+> recoverable by rebuilding from the op-log/server. The three conditions that made
+> the original crash fatal (authoritative blob · exclusive handle · no coordination)
+> are all removed.
 
 ---
 
@@ -258,9 +263,10 @@ Each phase is independently shippable and leaves the app working.
 - **Phase 2 — Frontend on queries.** Views/lists read via paged queries + live
   deltas instead of the materialized whole-state; writes go per-entity. Ordering
   via `rank` writes. Decide shared-vs-personal sidebar order.
-- **Phase 3 — Web storage for the record layer.** SQLite-WASM (single-owner Web
-  Lock) or IndexedDB indexed store, per the load-test. Record layer runs in the
-  worker on all platforms.
+- **Phase 3 — Web storage for the record layer.** SQLite-WASM (OPFS) behind a
+  single-owner Web Lock, so the record layer runs in the worker on all platforms
+  with one shared query/FTS path. Other tabs proxy to the owner; the replica is
+  rebuildable, so contention/corruption is never fatal.
 - **Phase 4 — Text layer rescope.** Move notes from the workspace doc into per-task
   ygo documents, loaded on open; wire cursors/awareness per task.
 - **Phase 5 — Scoped sync + push-over-WS.** Server routes tenant vs user scope;
