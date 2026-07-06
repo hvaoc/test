@@ -21,6 +21,9 @@ func (h *Hub) Mount(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/v1/push", h.authed(h.handlePush))
 	mux.HandleFunc("/v1/pull", h.authed(h.handlePull))
+	// Record op-log (structured-data delta stream — replaces the shared ygo doc).
+	mux.HandleFunc("/v1/records/push", h.authed(h.handleRecordsPush))
+	mux.HandleFunc("/v1/records/pull", h.authed(h.handleRecordsPull))
 	mux.HandleFunc("/v1/stream", h.handleStream)
 }
 
@@ -120,9 +123,11 @@ var upgrader = websocket.Upgrader{
 //
 // Client -> server frames: {"type":"presence","state":{...}} — broadcast to peers.
 // Server -> client frames:
-//   {"type":"changed","version":n}           data changed; pull
-//   {"type":"presence","from":id,"state":{}}  a peer's awareness state
-//   {"type":"presence-leave","from":id}       a peer disconnected
+//
+//	{"type":"changed","version":n}           data changed; pull
+//	{"type":"presence","from":id,"state":{}}  a peer's awareness state
+//	{"type":"presence-leave","from":id}       a peer disconnected
+//
 // `from` is an opaque per-connection id; the client identity lives inside `state`.
 func (h *Hub) handleStream(w http.ResponseWriter, r *http.Request) {
 	p, err := h.auth.Resolve(bearer(r))

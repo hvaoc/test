@@ -21,7 +21,10 @@ const (
 // the request; nothing else changes.
 type ScopeFunc func(p Principal, r *http.Request) string
 
-// Hub owns the live rooms (one per scope), the persistence layer, and auth.
+// Hub owns the live rooms (one per scope), the persistence layer, and auth. It
+// serves two transports over the same tenant scoping + auth: ygo state-vector rooms
+// (notes, settings) and per-tenant record OP-LOGS (the structured-data delta stream
+// that replaces the monolithic shared ygo doc — docs/architecture-1m §3-4).
 type Hub struct {
 	auth  Authenticator
 	store Persistence
@@ -29,15 +32,30 @@ type Hub struct {
 
 	mu    sync.Mutex
 	rooms map[string]*Room
+
+	recMu   sync.Mutex
+	recLogs map[string]*recordLog // scope -> append-only op log
 }
 
 // NewHub builds a hub. Pass DevAuth{} + a Persistence impl for Phase 1.
 func NewHub(auth Authenticator, store Persistence) *Hub {
 	return &Hub{
-		auth:  auth,
-		store: store,
-		Scope: func(p Principal, _ *http.Request) string { return p.TenantID },
-		rooms: map[string]*Room{},
+		auth:    auth,
+		store:   store,
+		Scope:   func(p Principal, _ *http.Request) string { return p.TenantID },
+		rooms:   map[string]*Room{},
+		recLogs: map[string]*recordLog{},
+	}
+}
+
+// notifyIfPresent nudges a scope's live stream connections (if any) so they pull.
+// Used after a record push, reusing the ygo room's WS fan-out.
+func (h *Hub) notifyIfPresent(scope string) {
+	h.mu.Lock()
+	r, ok := h.rooms[scope]
+	h.mu.Unlock()
+	if ok {
+		r.notify()
 	}
 }
 
