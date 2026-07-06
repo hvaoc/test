@@ -381,10 +381,15 @@ func (e *Engine) ApplyLocalSnapshotAux(stateJSON string) error {
 			continue
 		}
 		newNote, _ := obj["notes"].(string)
-		nd := e.notes[id]
-		if nd == nil && newNote == "" {
+		// CRITICAL: the coordinator materializes non-open tasks with notes="" (notes
+		// are on-demand). So a bulk save must NEVER clear/create a note from "" — that
+		// would wipe every persisted note on load. Only SET a non-empty note (the
+		// open-task edit path). A genuine clear-to-empty is out of scope for the bulk
+		// save; it needs a targeted note write while the task is open.
+		if newNote == "" {
 			continue
 		}
+		nd := e.notes[id]
 		if nd == nil {
 			nd = crdt.New(crdt.WithClientID(crdt.ClientID(e.device)))
 			e.notes[id] = nd

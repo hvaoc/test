@@ -341,7 +341,7 @@ function applyLocalSnapshot(state) {
   }
   for (const name of (snap.tags || [])) { const ek = 'tag' + SEP + name; seen[ek] = true; if (!curP[ek]) ops.push({ type: 'presence', kind: 'tag', id: name, present: true }); }
   for (const ek in curP) { if (curP[ek] && !seen[ek]) { const i = ek.indexOf(SEP); ops.push({ type: 'presence', kind: ek.slice(0, i), id: ek.slice(i + 1), present: false }); } }
-  if (!ops.length) return true;
+  if (!ops.length) return 0;
   run('BEGIN');
   try {
     const touched = {};
@@ -349,7 +349,7 @@ function applyLocalSnapshot(state) {
     for (const id in touched) reproject(id, touched[id]);
     saveState(); run('COMMIT');
   } catch (e) { run('ROLLBACK'); throw e; }
-  return true;
+  return ops.length; // # of ops applied (0 = no change) → drives cross-tab notify
 }
 
 // materialize rebuilds the app's whole-state JSON from the registers. Task notes
@@ -403,7 +403,8 @@ function markSynced(seqs) {
 // applyRemote merges pulled ops (LWW), witnesses their clocks, reprojects touched
 // tasks, and does NOT re-log them. Wire ops use {t,k,i,f,e,v,p,h}.
 function applyRemote(ops) {
-  if (!ops || !ops.length) return true;
+  if (!ops || !ops.length) return 0;
+  let n = 0;
   run('BEGIN');
   try {
     const touched = {};
@@ -412,12 +413,13 @@ function applyRemote(ops) {
       if (parseHLC(w.h).node === node) continue; // our own echo
       const op = { type: w.t, kind: w.k, id: w.i, field: w.f || '', elem: w.e || '', value: w.v || '', present: !!w.p, hlc: w.h };
       const applied = applyOp(op, false);
+      if (applied) n++;
       if (applied && op.kind === 'task') touched[op.id] = (touched[op.id] || false) || (op.type === 'presence' || (op.type === 'field' && op.field === 'title'));
     }
     for (const id in touched) reproject(id, touched[id]);
     saveState(); run('COMMIT');
   } catch (e) { run('ROLLBACK'); throw e; }
-  return true;
+  return n; // # applied (0 = nothing new) → drives cross-tab notify
 }
 function getCursor() { return metaGet('cursor') || ''; }
 function setCursor(c) { metaSet('cursor', c == null ? '' : String(c)); return true; }
