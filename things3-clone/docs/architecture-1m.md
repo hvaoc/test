@@ -271,6 +271,40 @@ driven by **JavaScript in a dedicated Worker**, behind the `RecordStore` port.
   This removes the three conditions that made the earlier `createSyncAccessHandle`
   crash fatal (authoritative blob · exclusive handle · no coordination).
 
+**Measured in-browser (Phase 3 proof, `public/sqlite-bench.html`).** `sqlite.wasm`
++ OPFS in a Worker, page cache **pinned at 2 MB** while the OPFS database holds the
+rows on disk:
+
+| tasks | edit | query | FTS search |
+|---:|---:|---:|---:|
+| 100k | 13.6 ms | 11.8 ms | 5.7 ms |
+| **1M** | **19.0 ms** | **23.2 ms** | **14.5 ms** |
+
+Latency barely moves from 100k → 1M though the database is **300×+ larger than the
+cache** — so memory is bounded by the working set, not the dataset, exactly as on
+native. Absolute numbers are higher than native Go (sub-ms) because each cache miss
+is an OPFS read, but they are an order of magnitude inside "instant" and run in the
+Worker, off the UI thread.
+
+**Learnings that harden the code on _every_ tier:**
+1. **Single-owner is mandatory, and crash recovery is slow.** A Worker killed
+   mid-transaction held its OPFS SAHPool handles for **>60 s** before the browser
+   released them. So: elect one owner via a Web Lock and hand off gracefully; never
+   spawn a competing worker; and for the abrupt-crash case, recover by acquiring a
+   **fresh pool** rather than busy-waiting on the wedged handles.
+2. **Indexes must cover the actual view queries, and run `ANALYZE`.** Without a
+   composite `(projectId, completed, rank)` index + stats, SQLite full-scanned and a
+   list query took **235 ms**; with them it dropped to **7 ms**. This index design
+   applies identically to the native Go store — same queries, same indexes.
+3. **Bulk import must be set-based.** A per-row JS→WASM insert loop capped at
+   ~1k rows/s; generating rows inside SQLite (a recursive CTE / `INSERT … SELECT`)
+   seeded 1M in seconds. The initial-sync/hydrate path on all tiers should import in
+   bulk, not row-by-row.
+4. **Bounded memory is a `cache_size` guarantee, not luck** — pin the steady-state
+   page cache small; use a large cache only transiently during import.
+5. **Monotonic (zero-padded) ids** give sequential primary-key locality, avoiding
+   random-write thrash during large imports.
+
 > IndexedDB remains **only** the transitional home for today's whole-document ygo
 > blob (it fixed that crash). It is not the record-layer store.
 

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sqlite.wasm + OPFS — 1M proof</title>
+<style>
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 28px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8a94a6; margin: 0 0 18px; }
+  #status { color: #7ec9a2; margin: 12px 0; font-variant-numeric: tabular-nums; }
+  #status.err { color: #e5766f; }
+  table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  th, td { border: 1px solid #2a2f3a; padding: 7px 16px; text-align: right; }
+  th { color: #7fb2e6; font-weight: 600; background: #161a22; }
+  td:first-child, th:first-child { text-align: left; }
+  .note { color: #8a94a6; max-width: 640px; margin-top: 16px; }
+  .cap { color: #c9a54a; }
+</style>
+</head>
+<body>
+  <h1>SQLite-WASM + OPFS — 1,000,000 tasks in the browser</h1>
+  <p class="sub">Official <code>sqlite.wasm</code> + OPFS VFS, in a Worker, page cache <span class="cap">pinned at 2&nbsp;MB</span>.</p>
+  <div id="status">initialising sqlite.wasm…</div>
+  <table id="results">
+    <thead><tr><th>tasks</th><th>OPFS on disk</th><th>seed</th><th>edit</th><th>query</th><th>FTS search</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="note" id="note"></p>
+
+  <script>
+    const tbody = document.querySelector('#results tbody');
+    const status = document.getElementById('status');
+    const fmtBytes = (b) => {
+      if (!b) return '—';
+      const u = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      while (b >= 1024 && i < 3) { b /= 1024; i++; }
+      return b.toFixed(1) + ' ' + u[i];
+    };
+    const ms = (v) => v.toFixed(2) + ' ms';
+    const worker = new Worker('/sqlite-bench.worker.js');
+    worker.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'progress') {
+        if (d.phase === 'indexing') status.textContent = `building indexes + FTS for ${d.target.toLocaleString()}…`;
+        else if (d.phase && d.phase.indexOf('OPFS') >= 0) status.textContent = d.phase;
+        else status.textContent = `seeding ${d.done.toLocaleString()} / ${d.target.toLocaleString()}…`;
+      } else if (d.type === 'row') {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td>${d.n.toLocaleString()}</td><td>${fmtBytes(d.usage)}</td>` +
+          `<td>${(d.seedMs / 1000).toFixed(1)} s</td>` +
+          `<td>${ms(d.edit)}</td><td>${ms(d.query)}</td><td>${ms(d.search)}</td>`;
+        tbody.appendChild(tr);
+        status.textContent = `measured ${d.n.toLocaleString()} ✓`;
+      } else if (d.type === 'done') {
+        status.textContent = 'done ✓ — all sizes measured';
+        document.getElementById('note').textContent = d.note || '';
+        document.title = 'DONE — sqlite.wasm 1M';
+      } else if (d.type === 'error') {
+        status.className = 'err';
+        status.textContent = 'ERROR: ' + d.error;
+        document.title = 'ERROR — sqlite.wasm 1M';
+      }
+    };
+  </script>
+</body>
+</html>
