@@ -475,8 +475,19 @@ Each phase is independently shippable and leaves the app working.
   app: a task created via the real composer is mirrored into `sqlite.wasm`/OPFS and
   returned by `queryList('today')`, which drives the rendered list. **Remaining:**
   per-entity writes to drop the mirror's transitional lag; port the other smart
-  lists' filters into `queryList`; and the native (Wails/gomobile) adapter that
-  binds `core/record` so desktop/mobile use the same port. See the seam below.
+  lists' filters into `queryList`. See the seam below.
+
+  **Native adapters:**
+  - *Desktop (Wails):* the WKWebView reports `Platform.OS==='web'`, so it uses the
+    web `record.worker.js` adapter as-is — covered by the web work (build to confirm).
+  - *Mobile (iOS/Android):* `core/record` is brought to parity with the web adapter
+    (status/parentId/ord/`queryList`) and wrapped for gomobile (`mobile/record.go`,
+    a JSON-string API mirroring the web adapter). `gomobile bind -target=ios` builds
+    a **`RecordMobile.xcframework`** (device + simulator) exposing all `Record*`
+    methods to native code — the Go record engine (incl. `modernc` SQLite) compiles
+    and binds for iOS. **Remaining:** an RN native module bridging those methods to
+    JS, a `RecordStore` adapter for `Platform.OS==='ios'`, and an app rebuild. The
+    iOS app itself already builds + runs in the simulator (on its existing engine).
 - **Phase 3 — Web adapter (§5.3).** JS record adapter over the official
   `sqlite.wasm` + OPFS VFS in a dedicated Worker, behind the `RecordStore` port;
   single-owner Web Lock across tabs. Prove 1M in-browser (heap bounded, query/FTS
