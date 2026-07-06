@@ -14,15 +14,16 @@ release/production builds on this machine (Expo SDK 54 / RN 0.81, New Architectu
 |---|---|---:|---|
 | **Web** | `expo export` bundle (`dist-web`) | **13 MB** on disk · **~2.0 MB gzipped over the wire** | dominated by a droppable legacy `crdt.wasm` |
 | **iOS** | `.app` (Release) | **86 MB** (simulator, fat) | a device `.ipa` thins to one arch + App Store compression |
-| **Android** | `.apk` (universal) | debug **89 MB** · release universal similar order | native `.so`s dominate; an **AAB** ships ~1 ABI (**~30–35 MB/device**) |
-| **Desktop** | Wails `.app` (macOS) | _not built this run_ | Go binary + embedded web assets; WebKit is the system framework |
+| **Android** | `.apk` (universal, Release) | **123 MB** universal · **AAB 97 MB** · **~57 MB install / ~42 MB download per device** (arm64) | native `.so`s dominate; Play delivers only the device's ABI |
+| **Desktop** | Wails `.app` (macOS, signed + notarized) | **22 MB** | one Go binary with embedded web assets; WebKit is a system framework |
 
 The single biggest line item on native is the **gomobile Go engine** (`libgojni.so`),
 which packs the Go runtime + `modernc.org/sqlite` + `ygo` + `core/record`:
 
 | Engine artifact | Size |
 |---|---:|
-| `libgojni.so` per Android ABI | **~15 MB** |
+| `libgojni.so` per Android ABI (**Release**, measured) | **~10.5 MB** (arm64) |
+| `libgojni.so` per Android ABI (debug) | ~15 MB |
 | Go engine inside the iOS binary (per slice, static) | **~27 MB** |
 | `RecordMobile.xcframework` (iOS, device + sim = 3 slices) | 81 MB |
 | `RecordMobile.aar` (Android, 4 ABIs) | 35 MB |
@@ -62,30 +63,61 @@ further — expect materially smaller on-device.
 
 ## Android
 
-- **Debug (universal) APK:** 89 MB (measured) — carries **all four ABIs**, and each
-  ABI includes a ~15 MB `libgojni.so`, so the Go engine alone is ~60 MB of that.
-- **Release (universal) APK:** the same order of magnitude — R8 minifies the
-  Java/Kotlin/dex (a few MB) but **not** the native `.so`s, which dominate the size.
-  A universal release is therefore *not* the number to quote for users.
-- **Production recommendation — ship an AAB** (`./gradlew bundleRelease`): Google Play
-  delivers only the device's ABI, so a phone downloads **~1×** `libgojni.so` (~15 MB)
-  plus the other native libs + dex ≈ **~30–35 MB/device**, not the ~60 MB of engine
-  across all ABIs. That's the real user-facing size.
+All numbers below are **measured** from the actual Release build (`assembleRelease` +
+`bundleRelease`, R8 enabled).
+
+- **Release universal APK: 123 MB** — carries **all four ABIs** (`arm64-v8a`,
+  `armeabi-v7a`, `x86`, `x86_64`). Each ABI's native libs are ~22–29 MB, so the four
+  copies are the bulk of the file. This is the sideload/CI artifact, **not** the
+  user-facing number.
+- **Release AAB: 97 MB** — what you upload to Play. It contains all ABIs too; Play
+  splits it per device on download.
+- **Per-device (measured from the APK's contents):**
+
+  | Device ABI | `libgojni.so` | install on disk | download |
+  |---|---:|---:|---:|
+  | **arm64-v8a** (modern phones) | 10.5 MB | **56.6 MB** | **~42 MB** |
+  | armeabi-v7a (old 32-bit) | 10.4 MB | 51.1 MB | ~36 MB |
+  | x86_64 (emulator) | 11.0 MB | 57.7 MB | ~43 MB |
+
+  Per device = **shared (28.8 MB dex + resources + assets, ~14 MB compressed)** + **one
+  ABI's native libs** (not all four). `libgojni.so` — the entire Go/`core/record`/`ygo`
+  engine — is only **~10.5 MB** in Release (Go strips harder than the ~15 MB debug lib).
+- **Production recommendation — ship the AAB.** Play delivers one ABI, so a modern phone
+  downloads **~42 MB** and installs **~57 MB**, not the 123 MB universal. Play's own
+  re-compression trims the download further.
+
+> Note: AGP stores native `.so`s **uncompressed inside the APK** (`extractNativeLibs=false`,
+> for faster startup + smaller install delta), so the per-ABI libs don't shrink within the
+> APK — but Play re-compresses them for over-the-wire delivery.
 
 ## Desktop (Wails, macOS)
 
-Not built in this run. A Wails `.app` bundles the **Go binary** (which includes
-`core/record` + `ygo` + the Wails/WebKit bindings) plus the **embedded web assets**
-(the `dist-web` export). macOS **WebKit is a system framework** (not bundled), so the
-`.app` is roughly *Go binary + web assets* — build with `npm run desktop` to measure.
+Release `.app` (arm64, Developer-ID signed + Apple-notarized): **22 MB**, essentially
+all of it one file:
+
+| Part | Size |
+|---|---:|
+| main binary (`Contents/MacOS/Things Clone`) | 22 MB |
+| Resources (just `iconfile.icns`) | 36 KB |
+| bundled frameworks | 0 — **WebKit is a system framework** |
+
+Wails **embeds the `dist-web` export directly into the Go binary** (Go `embed`), so
+there are no loose web assets in the bundle — the 22 MB binary is `core/record` +
+`ygo` + the Wails/WebKit bindings + the Go runtime + the embedded web app. This is the
+**leanest native tier**: because it reuses the OS WebKit and static-links one Go binary
+(no per-ABI duplication, no Hermes/React Native frameworks), it's ~4× smaller than the
+mobile `.app`/APK.
 
 ---
 
 ## Takeaways
 
-- The **Go engine (`libgojni.so`, ~15 MB/ABI)** is the dominant native cost. It's the
-  price of one shared, bullet-proof CRDT engine across platforms; per-device delivery
-  (AAB on Android, thinning on iOS) keeps what users actually download reasonable.
+- The **Go engine (`libgojni.so`, ~10.5 MB/ABI in Release)** is the dominant native
+  cost. It's the price of one shared, bullet-proof CRDT engine across platforms;
+  per-device delivery (AAB on Android, thinning on iOS) keeps what users actually
+  download reasonable (~42 MB on a modern Android phone). Desktop pays it once as a
+  22 MB static binary.
 - **Web is the lean tier** (~0.7 MB gz app + ~1.3 MB wasm on demand) — and dropping
   the legacy `crdt.wasm` removes 5 MB.
 - Debug artifacts (universal APK, simulator `.app`) are **not** representative of what
