@@ -20,7 +20,7 @@
 import { Platform } from 'react-native';
 import { Crdt } from './crdt';
 import { crdtClient, crdtWorkerAvailable } from './crdtClient';
-import { recordStore, recordWorkerAvailable } from './recordClient';
+import { recordStore, recordWorkerAvailable, onRecordChanged } from './recordClient';
 
 // Only the persisted slices of state travel to storage (never `loaded`, etc.).
 export function serializableState(state) {
@@ -639,6 +639,14 @@ export async function openTaskNote(taskId) {
     /* best-effort: offline or transient — the note still works locally */
   }
   return null;
+}
+
+// Subscribe to LOCAL cross-tab changes: another tab of the same browser changed the
+// shared record store (leader broadcast over BroadcastChannel). Returns an
+// unsubscribe fn. Works fully offline. No-op on native / non-coordinator.
+export function onLocalChange(cb) {
+  if (backend().name === 'record') return onRecordChanged(cb);
+  return () => {};
 }
 
 // Stop syncing a task's notes (call when its detail view closes).

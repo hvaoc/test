@@ -19,6 +19,7 @@ import {
   saveSnapshot,
   sync as backendSync,
   backendName,
+  onLocalChange,
   serverConfig,
   openRealtime,
   presenceIdentity,
@@ -568,6 +569,25 @@ export function TasksProvider({ children }) {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [state]);
+
+  // Live cross-tab sync (offline): when another tab of the same browser changes the
+  // shared record store, the leader broadcasts and we reload our snapshot so this tab
+  // updates — no server needed. A no-op save (state already matches) won't
+  // re-broadcast, so there's no reload loop.
+  useEffect(() => {
+    if (!state.loaded) return undefined;
+    const unsub = onLocalChange(() => {
+      (async () => {
+        try {
+          const snap = await loadSnapshot();
+          if (snap && Array.isArray(snap.tasks)) dispatch({ type: 'HYDRATE', payload: snap });
+        } catch {
+          /* ignore */
+        }
+      })();
+    });
+    return unsub;
+  }, [state.loaded]);
 
   // Keep the record store mirrored from the current tasks so query-backed views
   // (useRecordList) stay in sync — ONLY where the save path doesn't already own the
