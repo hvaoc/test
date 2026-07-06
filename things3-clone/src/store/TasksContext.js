@@ -564,7 +564,7 @@ export function TasksProvider({ children }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveSnapshot(state).catch(() => {});
-    }, 250);
+    }, 100);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
