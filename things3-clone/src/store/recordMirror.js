@@ -9,12 +9,17 @@
 
 import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
-import { recordStore, recordWorkerAvailable } from './recordClient';
+import { recordStore as recordStoreWeb, recordWorkerAvailable } from './recordClient';
+import { recordStoreNative, recordNativeAvailable } from './recordNative';
 
-// The web record adapter is a Worker + sqlite.wasm; only available on web. Native
-// (Wails/gomobile) will bind core/record directly — a separate adapter.
+// One RecordStore port, two adapters: the web Worker + sqlite.wasm on web (and the
+// Wails WKWebView, which reports Platform 'web'), or the gomobile core/record engine
+// via the RecordNative Expo module on iOS/Android. recordMirror uses whichever fits.
+const usingNative = recordNativeAvailable();
+const store = usingNative ? recordStoreNative : recordStoreWeb;
+
 export function recordAvailable() {
-  return Platform.OS === 'web' && recordWorkerAvailable();
+  return usingNative || (Platform.OS === 'web' && recordWorkerAvailable());
 }
 
 // Generation counter — bumped after each mirror so mounted queries re-run.
@@ -53,7 +58,7 @@ export function mirrorTasks(tasks) {
   if (!recordAvailable()) return _pending;
   _pending = _pending.then(async () => {
     try {
-      await recordStore.hydrate((tasks || []).map(mapTask));
+      await store.hydrate((tasks || []).map(mapTask));
       bump();
     } catch (_) { /* leave the app on its in-memory path */ }
   });
@@ -70,7 +75,7 @@ export function useRecordList(listId, params) {
     if (!recordAvailable() || !listId) { setRows(null); return undefined; }
     let cancelled = false;
     const load = () => {
-      recordStore
+      store
         .queryList(listId, params)
         .then((r) => { if (!cancelled) setRows(r); })
         .catch(() => { if (!cancelled) setRows(null); });

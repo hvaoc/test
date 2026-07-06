@@ -1,0 +1,7 @@
+{
+  "name": "record-native",
+  "version": "1.0.0",
+  "description": "Native record-layer engine for iOS (gomobile).",
+  "main": "index.ts",
+  "private": true
+}
