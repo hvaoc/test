@@ -130,6 +130,28 @@ func (a *App) Sync() string {
 	return res
 }
 
+// SyncNote syncs one task's note scope on demand (call when its detail view opens)
+// and returns a JSON SyncResult-shaped payload whose snapshot has the merged note.
+func (a *App) SyncNote(taskID string) string {
+	if a.store == nil {
+		return `{"adapter":"none"}`
+	}
+	snap, err := a.store.SyncNote(taskID)
+	if err != nil {
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(b)
+	}
+	b, _ := json.Marshal(map[string]string{"adapter": "server", "snapshot": snap})
+	return string(b)
+}
+
+// CloseNote stops syncing a task's note scope (call when its detail view closes).
+func (a *App) CloseNote(taskID string) {
+	if a.store != nil {
+		a.store.CloseNote(taskID)
+	}
+}
+
 // syncPrefs persists the sync-server connection so a desktop sign-in survives
 // restarts — mirroring what the web app keeps in localStorage.
 type syncPrefs struct {

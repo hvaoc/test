@@ -59,17 +59,21 @@ async function call(method, args = []) {
   });
 }
 
-// Phase 1 (ygo/ydoc): the engine speaks whole-state snapshots + opaque Yjs
-// updates (base64) and offline-first state-vector sync, not the old op log.
+// The engine speaks whole-state snapshots + opaque Yjs updates (base64) and
+// offline-first state-vector sync. Sync/persistence are PER-SCOPE ("shared",
+// "settings", "note:<taskId>") — see docs/architecture-1m.md §2.2 — so the sync
+// primitives take a scope; the whole-state seam (applyLocalSnapshot/materialize)
+// routes across scopes internally.
 export const crdtClient = {
   init: () => ensureWorker().then(() => call('info')),
   info: () => call('info'),
   applyLocalSnapshot: (stateJSON) => call('applyLocalSnapshot', [stateJSON]),
   materialize: () => call('materialize'),
-  stateVector: () => call('stateVector'), // base64 state vector
-  encodeDiff: (sinceSVb64) => call('encodeDiff', [sinceSVb64]), // base64 update peer is missing
-  encodeAll: () => call('encodeAll'), // base64 full-state update
-  applyUpdate: (updateB64) => call('applyUpdate', [updateB64]),
+  scopes: () => call('scopes'), // string[] of live scopes to sync
+  stateVector: (scope) => call('stateVector', [scope]), // base64 state vector for a scope
+  encodeDiff: (scope, sinceSVb64) => call('encodeDiff', [scope, sinceSVb64]), // base64 update peer is missing
+  encodeAll: (scope) => call('encodeAll', [scope]), // base64 full-state update for a scope
+  applyUpdate: (scope, updateB64) => call('applyUpdate', [scope, updateB64]),
   hasData: () => call('hasData'),
   reset: () => call('reset'),
   // Switch the active workspace's local replica (each workspace has its own DB).

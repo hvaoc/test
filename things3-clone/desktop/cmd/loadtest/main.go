@@ -185,7 +185,7 @@ func measure(n, notesLen int) {
 	runtime.ReadMemStats(&ms)
 	heap := ms.HeapAlloc
 
-	all := eng.EncodeAll()
+	all, _ := eng.EncodeAll(ydoc.ScopeShared)
 	snapBytes := len(all)
 
 	t1 := time.Now()
@@ -196,7 +196,7 @@ func measure(n, notesLen int) {
 	matDur := time.Since(t1)
 
 	t2 := time.Now()
-	if _, err := eng.EncodeDiff(nil); err != nil {
+	if _, err := eng.EncodeDiff(ydoc.ScopeShared, nil); err != nil {
 		fmt.Printf("%10d  ERROR EncodeDiff: %v\n", n, err)
 		return
 	}

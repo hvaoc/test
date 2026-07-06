@@ -16,11 +16,11 @@ type client struct {
 	srv      *httptest.Server
 	token    string
 	engine   *ydoc.Engine
-	serverSV []byte // server state vector from the last pull, for efficient push
+	serverSV map[string][]byte // per-scope server state vector from the last pull
 }
 
 func newClient(t *testing.T, srv *httptest.Server, token string) *client {
-	return &client{t: t, srv: srv, token: token, engine: ydoc.New()}
+	return &client{t: t, srv: srv, token: token, engine: ydoc.New(), serverSV: map[string][]byte{}}
 }
 
 func (c *client) post(path string, body any) map[string]any {
@@ -33,29 +33,51 @@ func (c *client) post(path string, body any) map[string]any {
 	return resp
 }
 
-// pull fetches+applies what this client is missing and remembers the server's
-// state vector; push then sends exactly what the server is missing — the real
-// offline-first flow the web/native clients use.
-func (c *client) pull() {
-	resp := c.post("/v1/pull", map[string]string{"sv": b64enc(c.engine.StateVector())})
+// pullScope fetches+applies what this client is missing in one scope and remembers
+// the server's state vector for it; pushScope then sends exactly what the server is
+// missing — the real offline-first flow, now per-scope.
+func (c *client) pullScope(scope string) {
+	sv, _ := c.engine.StateVector(scope)
+	resp := c.post("/v1/pull", map[string]string{"scope": scope, "sv": b64enc(sv)})
 	if u, _ := resp["update"].(string); u != "" {
 		upd, _ := b64dec(u)
 		if len(upd) > 0 {
-			if err := c.engine.ApplyUpdate(upd); err != nil {
-				c.t.Fatalf("apply pulled update: %v", err)
+			if err := c.engine.ApplyUpdate(scope, upd); err != nil {
+				c.t.Fatalf("apply pulled update (%s): %v", scope, err)
 			}
 		}
 	}
 	if s, _ := resp["sv"].(string); s != "" {
-		c.serverSV, _ = b64dec(s)
+		c.serverSV[scope], _ = b64dec(s)
+	}
+}
+func (c *client) pushScope(scope string) {
+	diff, err := c.engine.EncodeDiff(scope, c.serverSV[scope])
+	if err != nil {
+		c.t.Fatalf("encode diff (%s): %v", scope, err)
+	}
+	c.post("/v1/push", map[string]string{"scope": scope, "update": b64enc(diff)})
+}
+
+// pull/push iterate the client's live scopes (shared, settings, and any note
+// scopes it already holds). Notes for tasks the client hasn't opened are NOT
+// pulled here — that's on-demand via syncNote.
+func (c *client) pull() {
+	for _, s := range c.engine.Scopes() {
+		c.pullScope(s)
 	}
 }
 func (c *client) push() {
-	diff, err := c.engine.EncodeDiff(c.serverSV)
-	if err != nil {
-		c.t.Fatalf("encode diff: %v", err)
+	for _, s := range c.engine.Scopes() {
+		c.pushScope(s)
 	}
-	c.post("/v1/push", map[string]string{"update": b64enc(diff)})
+}
+
+// syncNote simulates opening a task: it syncs just that task's note scope on demand.
+func (c *client) syncNote(taskID string) {
+	scope := ydoc.NoteScope(taskID)
+	c.pushScope(scope)
+	c.pullScope(scope)
 }
 
 func (c *client) tasks() map[string]map[string]any {
@@ -100,10 +122,19 @@ func TestTeamCollaboration_SameTenant(t *testing.T) {
 	}
 	alice.push()
 
-	// Bob pulls and sees Alice's task.
+	// Bob pulls and sees Alice's task title (shared scope). The note is NOT here —
+	// it lives in its own scope and arrives only when Bob opens the task.
 	bob.pull()
 	if bob.tasks()["t1"]["title"] != "Ship v1" {
 		t.Fatalf("bob didn't receive alice's task: %v", bob.tasks())
+	}
+	if n, _ := bob.tasks()["t1"]["notes"].(string); n != "" {
+		t.Fatalf("note should not ride the shared scope; bob already has %q", n)
+	}
+	// Bob opens the task -> syncs the note scope on demand, getting the base "draft".
+	bob.syncNote("t1")
+	if n, _ := bob.tasks()["t1"]["notes"].(string); n != "draft" {
+		t.Fatalf("bob didn't receive the note on open: %q", n)
 	}
 
 	// Concurrent edits to the SAME note: Alice prepends, Bob appends. Both offline.

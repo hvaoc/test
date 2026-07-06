@@ -1,18 +1,27 @@
 // Package ydoc maps the Things-clone domain (areas, projects, headings, tasks,
-// tags, settings) onto a single ygo (Yjs-in-Go) document, and bridges the app's
-// whole-state snapshots to/from that document. It is the one shared CRDT core for
-// every platform — compiled to WASM for the web worker, linked natively into the
-// Wails desktop store, and gomobile-bound for iOS/Android — replacing the
-// hand-written field-level engine in core/crdt.
+// tags, settings) onto ygo (Yjs-in-Go) documents, and bridges the app's whole-state
+// snapshots to/from them. It is the one shared CRDT core for every platform —
+// compiled to WASM for the web worker, linked natively into the Wails desktop
+// store, and gomobile-bound for iOS/Android — replacing the hand-written
+// field-level engine in core/crdt.
 //
-// See docs/crdt-ygo.md for the full design. Schema summary:
+// The domain is split across THREE sync scopes (docs/architecture-1m.md §2.2), each
+// its own ygo document so it syncs independently to the right audience:
 //
-//   root YMap  "index"            key "<kind>:<id>" -> true      (existence)
-//   root YMap  "<kind>:<id>"      one key per scalar field       (per-field LWW)
-//   root YText "note:<taskId>"    task notes                     (char-level merge)
-//   root YMap  "tags:<taskId>"    key "<tag>" -> true            (per-task tag set)
-//   root YMap  "settings"         one key per setting            (per-key LWW)
-//   index key  "tag:<name>"                                      (global tag list)
+//   SHARED doc (scope "shared", -> every tenant member):
+//     root YMap  "index"          key "<kind>:<id>" -> true     (existence)
+//     root YMap  "<kind>:<id>"    one key per scalar field      (per-field LWW)
+//     root YMap  "tags:<taskId>"  key "<tag>" -> true           (per-task tag set)
+//     index key  "tag:<name>"                                   (global tag list)
+//
+//   NOTE docs (scope "note:<taskId>", one per task, -> members who open the task):
+//     root YText "b"              that task's notes             (char-level merge)
+//
+//   SETTINGS doc (scope "settings", -> this user's own devices only):
+//     root YMap  "settings"       one key per setting           (per-key LWW)
+//
+// noteTextName/"note:<taskId>" (below) is the LEGACY location of notes inside the
+// shared doc, kept only so MigrateLegacy can lift them out into their own docs.
 //
 // Nested shared types are intentionally avoided: ygo v1.30.0 only exposes root
 // accessors (doc.GetMap/GetText/GetArray) as stable public API, so every entity is
@@ -49,7 +58,9 @@ func indexKey(kind, id string) string { return kind + ":" + id }
 // entityMapName is the root YMap holding one entity's scalar fields.
 func entityMapName(kind, id string) string { return kind + ":" + id }
 
-// noteTextName is the root YText holding a task's notes.
+// noteTextName is the LEGACY root-YText name for a task's notes inside the shared
+// doc (pre-scopes). Notes now live in their own per-task doc; this remains only for
+// MigrateLegacy to read the old location.
 func noteTextName(taskID string) string { return "note:" + taskID }
 
 // tagsMapName is the root YMap holding a task's tag set.

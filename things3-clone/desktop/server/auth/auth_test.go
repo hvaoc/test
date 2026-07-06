@@ -69,13 +69,15 @@ func snap(tasks ...map[string]any) string {
 func updateWithTask(id, title, notes string) string {
 	e := ydoc.New()
 	_ = e.ApplyLocalSnapshot(snap(map[string]any{"id": id, "title": title, "notes": notes, "checklist": []any{}, "tags": []any{}}))
-	return base64.StdEncoding.EncodeToString(e.EncodeAll())
+	// These auth/push tests exercise the tenant/shared scope (title, role gating).
+	blob, _ := e.EncodeAll(ydoc.ScopeShared)
+	return base64.StdEncoding.EncodeToString(blob)
 }
 func tasksFromUpdateB64(t *testing.T, b64 string) map[string]map[string]any {
 	t.Helper()
 	upd, _ := base64.StdEncoding.DecodeString(b64)
-	e, err := ydoc.Load(1, upd)
-	if err != nil {
+	e := ydoc.NewWithClientID(1)
+	if err := e.LoadScope(ydoc.ScopeShared, upd); err != nil {
 		t.Fatal(err)
 	}
 	js, _ := e.Materialize()

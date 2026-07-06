@@ -1,6 +1,7 @@
 # Architecture: local-first at 1,000,000 tasks
 
-Status: **accepted, implementation in progress** (Phase 0–1 done; see §8)
+Status: **accepted, implementation in progress** (Phase 0–1 + the three-scope split
+of Phases 4–6 done; record-layer write path + Postgres tier remain — see §8)
 Scope: the offline data + sync core across four tiers — web (`sqlite.wasm`/OPFS),
 desktop (Wails) and mobile (gomobile) on native SQLite, and the server on Postgres —
 all behind one storage port (§5.1) speaking one field-level op wire-format.
@@ -117,10 +118,12 @@ per-user — never shared with teammates, but they must sync across the same use
 own devices (web ↔ desktop ↔ mobile).* The server routes a user-scope delta only
 to sessions belonging to that user; it never enters the tenant broadcast.
 
-> **This also fixes a current correctness bug.** Settings today live in the shared
-> `settingsRoot` map of the tenant ygo document (`core/ydoc/ydoc.go`), so changing a
-> setting *propagates to teammates* — the opposite of the requirement. The user
-> scope corrects this, not just scales it.
+> **This also fixed a correctness bug (now resolved).** Settings previously lived in
+> the shared `settingsRoot` map of the tenant ygo document, so changing a setting
+> *propagated to teammates* — the opposite of the requirement. Settings now live in a
+> separate per-user scope (`core/ydoc` settings doc → server room `u:<userId>`), so a
+> setting change never reaches another user. Verified by `TestSettingsAreUserPrivate`
+> (ydstore, end-to-end through the server) and `TestSettingsScopeIsolation` (ydoc).
 
 ---
 
@@ -492,12 +495,19 @@ Each phase is independently shippable and leaves the app working.
   `sqlite.wasm` + OPFS VFS in a dedicated Worker, behind the `RecordStore` port;
   single-owner Web Lock across tabs. Prove 1M in-browser (heap bounded, query/FTS
   latency) first. Shares SQL/schema/wire-format with the Go engine; own no VFS.
-- **Phase 4 — Text layer rescope.** Move notes from the workspace doc into per-task
-  ygo documents, loaded on open; wire cursors/awareness per task.
-- **Phase 5 — Scoped sync + push-over-WS.** Server routes tenant vs user scope;
-  record deltas pushed on the WebSocket; per-task doc rooms on open.
-- **Phase 6 — User scope for settings + personal ordering.** Per-user prefs stream
-  routed only to the user's own sessions; migrate settings off the tenant stream.
+- **Phase 4 — Text layer rescope.** ✅ Notes moved out of the workspace doc into
+  **per-task ygo documents** (`core/ydoc` `note:<taskId>` scopes), loaded/synced on
+  open (`backend.openTaskNote` → Go `Store.SyncNote`; `TaskDetailModal` drives
+  open/close). Presence/cursors are already per-task. All four tiers.
+- **Phase 5 — Scoped sync.** ✅ Every sync primitive is per-scope; the server routes
+  `shared → t:<tenant>`, `note:<id> → t:<tenant>:note:<id>` (per-task room, on open),
+  and `settings → u:<userId>` (`server/ysync` `roomKey`). Web loops scopes in
+  `backend.wasmServerSync`; native in `ydstore.Sync`/`SyncNote`. *(Pushing record
+  deltas over the WS — vs the nudge-then-pull that ships today — stays with Phase 7.)*
+- **Phase 6 — User scope for settings.** ✅ Settings are their own per-user scope,
+  keyed by the token's `UserID`, so they sync across a user's own devices and never
+  enter the tenant broadcast — verified end-to-end (`TestSettingsAreUserPrivate`).
+  Personal ordering can ride the same user scope next.
 - **Phase 7 — Postgres server tier (§5.4).** Move the sync server off per-tenant ygo
   files onto the Go record engine backed by Postgres: `ops` log + `note_docs` +
   account tables; scope-routed push/pull; optional materialized projection + server

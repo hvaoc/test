@@ -4,18 +4,28 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/reearth/ygo/crdt"
 )
 
 // snap builds a whole-state snapshot JSON with the given tasks (each a
 // map[string]any). Other collections are empty.
 func snap(tasks ...map[string]any) string {
+	return snapWith(nil, tasks...)
+}
+
+// snapWith is snap plus a settings map.
+func snapWith(settings map[string]any, tasks ...map[string]any) string {
 	t := make([]map[string]any, 0, len(tasks))
 	for _, x := range tasks {
 		t = append(t, x)
 	}
+	if settings == nil {
+		settings = map[string]any{}
+	}
 	b, _ := json.Marshal(map[string]any{
 		"areas": []any{}, "projects": []any{}, "headings": []any{},
-		"tasks": t, "customViews": []any{}, "tags": []any{}, "settings": map[string]any{},
+		"tasks": t, "customViews": []any{}, "tags": []any{}, "settings": settings,
 	})
 	return string(b)
 }
@@ -26,6 +36,17 @@ func task(id, title, notes string, tags ...string) map[string]any {
 		ts[i] = x
 	}
 	return map[string]any{"id": id, "title": title, "notes": notes, "checklist": []any{}, "tags": ts}
+}
+
+// loadReplica builds a replica with a fixed device id and copies every scope's
+// full state from `from` (the offline-first join: pull all scopes).
+func loadReplica(id uint64, from *Engine) *Engine {
+	e := NewWithClientID(id)
+	for _, sc := range from.Scopes() {
+		blob, _ := from.EncodeAll(sc)
+		_ = e.LoadScope(sc, blob)
+	}
+	return e
 }
 
 // materializeTasks parses an engine's snapshot and returns tasks keyed by id.
@@ -48,35 +69,42 @@ func materializeTasks(t *testing.T, e *Engine) map[string]map[string]any {
 	return m
 }
 
-// exchange fully syncs two replicas both directions (offline-first: swap full
-// updates). Convergence must not depend on order, so we do it twice.
+// exchange fully syncs two replicas both directions across every scope either one
+// has. Convergence must not depend on order, so we swap full updates per scope.
 func exchange(t *testing.T, a, b *Engine) {
 	t.Helper()
-	ua, ub := a.EncodeAll(), b.EncodeAll()
-	if err := b.ApplyUpdate(ua); err != nil {
-		t.Fatalf("b.apply(a): %v", err)
+	seen := map[string]bool{}
+	var scopes []string
+	for _, s := range append(a.Scopes(), b.Scopes()...) {
+		if !seen[s] {
+			seen[s] = true
+			scopes = append(scopes, s)
+		}
 	}
-	if err := a.ApplyUpdate(ub); err != nil {
-		t.Fatalf("a.apply(b): %v", err)
+	for _, sc := range scopes {
+		ua, _ := a.EncodeAll(sc)
+		ub, _ := b.EncodeAll(sc)
+		if err := b.ApplyUpdate(sc, ua); err != nil {
+			t.Fatalf("b.apply(a, %s): %v", sc, err)
+		}
+		if err := a.ApplyUpdate(sc, ub); err != nil {
+			t.Fatalf("a.apply(b, %s): %v", sc, err)
+		}
 	}
 }
 
 func TestConvergence_ConcurrentFieldEdits(t *testing.T) {
-	// Shared base: one task.
 	base := New()
 	if err := base.ApplyLocalSnapshot(snap(task("t1", "Original", "note"))); err != nil {
 		t.Fatal(err)
 	}
-	seed := base.EncodeAll()
-
-	a, _ := Load(1, seed)
-	b, _ := Load(2, seed)
+	a := loadReplica(1, base)
+	b := loadReplica(2, base)
 
 	// Offline, concurrent edits to DIFFERENT fields of the same task.
 	if err := a.ApplyLocalSnapshot(snap(task("t1", "Edited by A", "note"))); err != nil {
 		t.Fatal(err)
 	}
-	// b keeps the title but changes notes.
 	if err := b.ApplyLocalSnapshot(snap(task("t1", "Original", "note by B"))); err != nil {
 		t.Fatal(err)
 	}
@@ -85,11 +113,9 @@ func TestConvergence_ConcurrentFieldEdits(t *testing.T) {
 
 	ma := materializeTasks(t, a)
 	mb := materializeTasks(t, b)
-	// Both replicas converge to identical state.
 	if ma["t1"]["title"] != mb["t1"]["title"] || ma["t1"]["notes"] != mb["t1"]["notes"] {
 		t.Fatalf("did not converge:\n A=%v\n B=%v", ma["t1"], mb["t1"])
 	}
-	// A's title edit and B's notes edit both survive (different registers → no loss).
 	if ma["t1"]["title"] != "Edited by A" {
 		t.Errorf("A's title edit lost: %v", ma["t1"]["title"])
 	}
@@ -99,18 +125,16 @@ func TestConvergence_ConcurrentFieldEdits(t *testing.T) {
 }
 
 // The headline requirement: two people editing the SAME note offline must both
-// keep their edits — never last-writer-wins clobber, never a user prompt.
+// keep their edits — never last-writer-wins clobber, never a user prompt. This now
+// happens in a PER-TASK note doc (its own scope).
 func TestNotesMerge_NoClobber(t *testing.T) {
 	base := New()
 	if err := base.ApplyLocalSnapshot(snap(task("t1", "T", "the cat sat"))); err != nil {
 		t.Fatal(err)
 	}
-	seed := base.EncodeAll()
+	a := loadReplica(1, base)
+	b := loadReplica(2, base)
 
-	a, _ := Load(1, seed)
-	b, _ := Load(2, seed)
-
-	// A inserts a word in the middle; B appends at the end. Fully offline.
 	if err := a.ApplyLocalSnapshot(snap(task("t1", "T", "the black cat sat"))); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +152,6 @@ func TestNotesMerge_NoClobber(t *testing.T) {
 	if notesA != notesB {
 		t.Fatalf("replicas diverged: A=%q B=%q", notesA, notesB)
 	}
-	// Both edits must be present in the merged text.
 	if !strings.Contains(notesA, "black") {
 		t.Errorf("A's insert lost: %q", notesA)
 	}
@@ -138,16 +161,90 @@ func TestNotesMerge_NoClobber(t *testing.T) {
 	t.Logf("merged note: %q", notesA)
 }
 
+// The note lives in its OWN scope. Editing a note must not change the shared scope
+// (so a note edit never rides the always-on shared sync), and must land in note:<id>.
+func TestNoteScopeIsolation(t *testing.T) {
+	e := New()
+	if err := e.ApplyLocalSnapshot(snap(task("t1", "T", ""), task("t2", "T2", ""))); err != nil {
+		t.Fatal(err)
+	}
+	// No notes yet -> no note scopes exist (1M sparsity: no empty per-task docs).
+	for _, s := range e.Scopes() {
+		if strings.HasPrefix(s, "note:") {
+			t.Fatalf("unexpected note scope before any note written: %s", s)
+		}
+	}
+	sharedBefore, _ := e.StateVector(ScopeShared)
+
+	// Add notes to t1 only.
+	if err := e.ApplyLocalSnapshot(snap(task("t1", "T", "hello world"), task("t2", "T2", ""))); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly one note scope now exists, for t1.
+	got := map[string]bool{}
+	for _, s := range e.Scopes() {
+		got[s] = true
+	}
+	if !got[NoteScope("t1")] {
+		t.Fatalf("expected note scope for t1, scopes=%v", e.Scopes())
+	}
+	if got[NoteScope("t2")] {
+		t.Fatalf("t2 has no notes but got a note scope")
+	}
+	// The shared scope did NOT change from adding notes (title/fields unchanged).
+	sharedAfter, _ := e.StateVector(ScopeShared)
+	if !bytesEqual(sharedBefore, sharedAfter) {
+		t.Errorf("writing a note changed the shared scope state vector (it must not)")
+	}
+	// The note text is retrievable.
+	if materializeTasks(t, e)["t1"]["notes"] != "hello world" {
+		t.Errorf("note not materialized")
+	}
+}
+
+// Settings live in a per-USER scope. A settings change must not touch the shared
+// scope (the correctness fix: settings must never ride the tenant broadcast).
+func TestSettingsScopeIsolation(t *testing.T) {
+	e := New()
+	if err := e.ApplyLocalSnapshot(snap(task("t1", "T", ""))); err != nil {
+		t.Fatal(err)
+	}
+	sharedBefore, _ := e.StateVector(ScopeShared)
+	settingsBefore, _ := e.StateVector(ScopeSettings)
+
+	if err := e.ApplyLocalSnapshot(snapWith(map[string]any{"theme": "dark"}, task("t1", "T", ""))); err != nil {
+		t.Fatal(err)
+	}
+
+	sharedAfter, _ := e.StateVector(ScopeShared)
+	settingsAfter, _ := e.StateVector(ScopeSettings)
+	if !bytesEqual(sharedBefore, sharedAfter) {
+		t.Errorf("changing a setting changed the SHARED scope (settings must not sync to teammates)")
+	}
+	if bytesEqual(settingsBefore, settingsAfter) {
+		t.Errorf("changing a setting did not change the settings scope")
+	}
+	// Materialize reflects the setting.
+	var out struct {
+		Settings map[string]any `json:"settings"`
+	}
+	js, _ := e.Materialize()
+	_ = json.Unmarshal([]byte(js), &out)
+	if out.Settings["theme"] != "dark" {
+		t.Errorf("settings not materialized: %v", out.Settings)
+	}
+}
+
 // Regression: prepending to a note (old text is entirely a suffix of the new)
 // once indexed o[-1] in the suffix scan. Also covers pure-append and clear.
 func TestNotesDiff_EdgeShapes(t *testing.T) {
 	cases := []struct{ from, to string }{
-		{"draft", "URGENT draft"}, // prepend (old is a suffix of new)
-		{"draft", "draft today"},  // append (old is a prefix of new)
-		{"hello", ""},             // clear
-		{"", "hello"},             // fill
-		{"abc", "axc"},            // middle replace
-		{"same", "same"},          // no-op
+		{"draft", "URGENT draft"},
+		{"draft", "draft today"},
+		{"hello", ""},
+		{"", "hello"},
+		{"abc", "axc"},
+		{"same", "same"},
 	}
 	for _, c := range cases {
 		e := New()
@@ -168,9 +265,8 @@ func TestTags_ConcurrentAddConverge(t *testing.T) {
 	if err := base.ApplyLocalSnapshot(snap(task("t1", "T", "", "home"))); err != nil {
 		t.Fatal(err)
 	}
-	seed := base.EncodeAll()
-	a, _ := Load(1, seed)
-	b, _ := Load(2, seed)
+	a := loadReplica(1, base)
+	b := loadReplica(2, base)
 
 	if err := a.ApplyLocalSnapshot(snap(task("t1", "T", "", "home", "urgent"))); err != nil {
 		t.Fatal(err)
@@ -197,7 +293,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	e := New()
 	in := snap(
 		task("t1", "First", "hello", "home"),
-		task("t2", "Second", "", ),
+		task("t2", "Second", ""),
 	)
 	if err := e.ApplyLocalSnapshot(in); err != nil {
 		t.Fatal(err)
@@ -230,4 +326,65 @@ func TestDeleteEntity(t *testing.T) {
 	if _, ok := m["t1"]; !ok {
 		t.Errorf("t1 should remain")
 	}
+}
+
+// MigrateLegacy lifts settings + notes out of an old single-doc blob into their own
+// scopes, and clears them from shared — without losing data.
+func TestMigrateLegacy(t *testing.T) {
+	// Build an OLD-style single doc: settings + a note both in the shared doc.
+	legacy := New()
+	sm := legacy.shared.GetMap(settingsRoot)
+	yt := legacy.shared.GetText("note:t1")
+	idx := legacy.shared.GetMap(indexRoot)
+	fm := legacy.shared.GetMap(entityMapName("task", "t1"))
+	legacy.shared.Transact(func(txn *crdt.Transaction) {
+		idx.Set(txn, indexKey("task", "t1"), true)
+		fm.Set(txn, "title", "Task one")
+		sm.Set(txn, "theme", "dark")
+		yt.Insert(txn, 0, "legacy note body", nil)
+	})
+	oldBlob, _ := legacy.EncodeAll(ScopeShared)
+
+	// New replica loads the old blob as shared, then migrates.
+	e := NewWithClientID(9)
+	if err := e.LoadScope(ScopeShared, oldBlob); err != nil {
+		t.Fatal(err)
+	}
+	e.MigrateLegacy()
+
+	// Settings + note are now readable via the normal (scoped) paths.
+	m := materializeTasks(t, e)
+	if m["t1"]["notes"] != "legacy note body" {
+		t.Errorf("note not migrated: %v", m["t1"]["notes"])
+	}
+	var out struct {
+		Settings map[string]any `json:"settings"`
+	}
+	js, _ := e.Materialize()
+	_ = json.Unmarshal([]byte(js), &out)
+	if out.Settings["theme"] != "dark" {
+		t.Errorf("settings not migrated: %v", out.Settings)
+	}
+	// A note scope now exists for t1.
+	found := false
+	for _, s := range e.Scopes() {
+		if s == NoteScope("t1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected note scope after migration, scopes=%v", e.Scopes())
+	}
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

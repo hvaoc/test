@@ -76,17 +76,28 @@ func TestTwoDevicesSyncThroughServer(t *testing.T) {
 	if err := a.SaveSnapshot(snap(task("t1", "Roadmap", "q3 plan"))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Sync(); err != nil { // push
+	a.OpenNote("t1")                    // A opens the task, so its note scope syncs
+	if _, err := a.Sync(); err != nil { // push shared + note:t1
 		t.Fatal(err)
 	}
-	if _, err := b.Sync(); err != nil { // pull
+	if _, err := b.Sync(); err != nil { // pull shared (title only)
 		t.Fatal(err)
 	}
 	if tasksOf(t, b)["t1"]["title"] != "Roadmap" {
 		t.Fatalf("device B didn't receive the task: %v", tasksOf(t, b))
 	}
+	// The note does NOT ride the shared scope — B only gets it on open.
+	if n, _ := tasksOf(t, b)["t1"]["notes"].(string); n != "" {
+		t.Fatalf("note leaked into shared scope; B has %q before opening", n)
+	}
+	if _, err := b.SyncNote("t1"); err != nil { // B opens the task -> pulls the note
+		t.Fatal(err)
+	}
+	if n, _ := tasksOf(t, b)["t1"]["notes"].(string); n != "q3 plan" {
+		t.Fatalf("device B didn't receive the note on open: %q", n)
+	}
 
-	// Concurrent same-note edits, then sync both ways.
+	// Concurrent same-note edits, then sync both ways (both have the note open).
 	_ = a.SaveSnapshot(snap(task("t1", "Roadmap", "URGENT q3 plan")))
 	_ = b.SaveSnapshot(snap(task("t1", "Roadmap", "q3 plan v2")))
 	_, _ = a.Sync()
@@ -103,6 +114,59 @@ func TestTwoDevicesSyncThroughServer(t *testing.T) {
 		t.Fatalf("an edit was clobbered: %q", an)
 	}
 	t.Logf("both devices converged on: %q", an)
+}
+
+// Settings sync across the SAME user's devices, but never to a different user in
+// the same tenant. This is the per-user (private) scope + the correctness fix.
+func TestSettingsAreUserPrivate(t *testing.T) {
+	srv := httptest.NewServer(ysync.NewHub(ysync.DevAuth{}, ysync.NewMemPersistence()).Handler())
+	defer srv.Close()
+
+	// Two devices of the SAME user (alice), plus a teammate (bob) in the tenant.
+	web, _ := Open(t.TempDir())
+	phone, _ := Open(t.TempDir())
+	mate, _ := Open(t.TempDir())
+	web.SetServer(srv.URL, "acme:alice")
+	phone.SetServer(srv.URL, "acme:alice")
+	mate.SetServer(srv.URL, "acme:bob")
+
+	// Alice changes a setting on web and syncs.
+	settingsSnap := `{"areas":[],"projects":[],"headings":[],"tasks":[],"customViews":[],"tags":[],"settings":{"theme":"midnight"}}`
+	if err := web.SaveSnapshot(settingsSnap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := web.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice's phone syncs and gets the setting (same user room).
+	if _, err := phone.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingOf(t, phone, "theme"); got != "midnight" {
+		t.Fatalf("alice's setting didn't reach her other device: %v", got)
+	}
+
+	// Bob syncs and must NOT get alice's setting (different user room).
+	if _, err := mate.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingOf(t, mate, "theme"); got != nil {
+		t.Fatalf("settings leaked to a teammate (must never happen): %v", got)
+	}
+}
+
+func settingOf(t *testing.T, s *Store, key string) any {
+	t.Helper()
+	js, err := s.LoadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Settings map[string]any `json:"settings"`
+	}
+	_ = json.Unmarshal([]byte(js), &out)
+	return out.Settings[key]
 }
 
 func TestReset(t *testing.T) {

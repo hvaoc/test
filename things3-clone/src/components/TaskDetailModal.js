@@ -23,7 +23,7 @@ import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS, PRIORITY_MAP, PRIORITIES } from '../store/constants';
 import { relativeLabel } from '../utils/date';
 import { useTasks, newTask } from '../store/TasksContext';
-import { presenceIdentity } from '../store/backend';
+import { presenceIdentity, openTaskNote, closeTaskNote } from '../store/backend';
 import { selectSubtasks } from '../store/selectors';
 import RemoteCarets from './RemoteCarets';
 import WailsTitleBar, { useIsWails } from './WailsTitleBar';
@@ -55,6 +55,28 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
     return () => setPresence({ ...me, taskId: null, cursor: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me, taskId]);
+  // On-demand notes: a task's notes are their own sync scope, pulled only while
+  // the task is open. On open, sync this note and merge the latest text in; on
+  // close, stop syncing it. (docs/architecture-1m §2.2)
+  React.useEffect(() => {
+    if (!taskId) return undefined;
+    let cancelled = false;
+    openTaskNote(taskId).then((snap) => {
+      if (cancelled || !snap || !Array.isArray(snap.tasks)) return;
+      const synced = snap.tasks.find((t) => t.id === taskId);
+      if (synced && typeof synced.notes === 'string') {
+        // Only overwrite if the merged remote note differs from what we show.
+        const cur = state.tasks.find((t) => t.id === taskId);
+        if (cur && cur.notes !== synced.notes) updateTask(taskId, { notes: synced.notes });
+      }
+    });
+    return () => {
+      cancelled = true;
+      closeTaskNote(taskId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
+
   // Teammates currently on this same task (excluding ourselves).
   const taskPeers = Object.values(peers || {}).filter(
     (p) => p && p.taskId === taskId && (!me || p.userId !== me.userId)

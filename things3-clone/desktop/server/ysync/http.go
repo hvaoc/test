@@ -32,35 +32,39 @@ func (h *Hub) Handler() http.Handler {
 	return CORS(mux)
 }
 
-// authed resolves the bearer token to a principal + scope and invokes fn. The
-// scope is the tenant document the caller may touch — enforced here, so a handler
-// can never reach another tenant's data.
-func (h *Hub) authed(fn func(scope string, p Principal, w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
+// authed resolves the bearer token to a principal and invokes fn. Each handler
+// then derives its room key from the request's scope hint via h.roomKey, so a
+// handler can never reach another tenant's (or another user's) data.
+func (h *Hub) authed(fn func(p Principal, w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, err := h.auth.Resolve(bearer(r))
 		if err != nil {
 			writeErr(w, 401, "unauthorized")
 			return
 		}
-		fn(h.Scope(p, r), p, w, r)
+		fn(p, w, r)
 	}
 }
 
 type pushReq struct {
+	Scope  string `json:"scope"`  // "shared" | "settings" | "note:<taskId>" ("" = shared)
 	Update string `json:"update"` // base64 Yjs update
 }
 type pushResp struct {
 	Version int64 `json:"version"`
 }
 
-func (h *Hub) handlePush(scope string, p Principal, w http.ResponseWriter, r *http.Request) {
-	if !p.CanWrite() {
-		writeErr(w, 403, "read-only: your role in this tenant cannot make changes")
-		return
-	}
+func (h *Hub) handlePush(p Principal, w http.ResponseWriter, r *http.Request) {
 	var req pushReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "bad request")
+		return
+	}
+	scope, isPrivate := h.roomKey(p, r, req.Scope)
+	// Tenant write-role gates shared/notes; a user may always write their own
+	// private (settings) room, which is keyed by their own token's UserID.
+	if !isPrivate && !p.CanWrite() {
+		writeErr(w, 403, "read-only: your role in this tenant cannot make changes")
 		return
 	}
 	update, err := b64dec(req.Update)
@@ -77,7 +81,8 @@ func (h *Hub) handlePush(scope string, p Principal, w http.ResponseWriter, r *ht
 }
 
 type pullReq struct {
-	SV string `json:"sv"` // base64 client state vector ("" = full state)
+	Scope string `json:"scope"` // "shared" | "settings" | "note:<taskId>" ("" = shared)
+	SV    string `json:"sv"`    // base64 client state vector ("" = full state)
 }
 type pullResp struct {
 	Update  string `json:"update"` // base64 diff the client is missing
@@ -85,11 +90,12 @@ type pullResp struct {
 	Version int64  `json:"version"`
 }
 
-func (h *Hub) handlePull(scope string, _ Principal, w http.ResponseWriter, r *http.Request) {
+func (h *Hub) handlePull(p Principal, w http.ResponseWriter, r *http.Request) {
 	var req pullReq
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req) // empty body allowed -> full state
 	}
+	scope, _ := h.roomKey(p, r, req.Scope)
 	sv, err := b64dec(req.SV)
 	if err != nil {
 		writeErr(w, 400, "bad sv encoding")
@@ -124,7 +130,11 @@ func (h *Hub) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "unauthorized")
 		return
 	}
-	room, err := h.room(h.Scope(p, r))
+	// A stream subscribes to one scope's room (default: the tenant/shared room).
+	// The client opens extra streams (?scope=settings, ?scope=note:<id>) for live
+	// nudges on its private settings and any open task's notes.
+	scope, _ := h.roomKey(p, r, r.URL.Query().Get("scope"))
+	room, err := h.room(scope)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

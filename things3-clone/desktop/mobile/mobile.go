@@ -94,7 +94,8 @@ func SaveSnapshot(state string) error {
 	return store.SaveSnapshot(state)
 }
 
-// Sync runs one push/pull cycle and returns a JSON SyncResult.
+// Sync runs one push/pull cycle (shared + settings + open notes) and returns a
+// JSON SyncResult.
 func Sync() (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -102,6 +103,28 @@ func Sync() (string, error) {
 		return "", errNotOpen
 	}
 	return store.Sync()
+}
+
+// SyncNote syncs one task's note scope on demand (call when its detail view opens)
+// and returns the merged whole-state snapshot so the UI can refresh the note.
+func SyncNote(taskID string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if store == nil {
+		return "", errNotOpen
+	}
+	return store.SyncNote(taskID)
+}
+
+// CloseNote stops syncing a task's note scope (call when its detail view closes).
+func CloseNote(taskID string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if store == nil {
+		return errNotOpen
+	}
+	store.CloseNote(taskID)
+	return nil
 }
 
 var errNotOpen = errors.New("playdata: store not open (call Open first)")

@@ -474,31 +474,47 @@ async function serverSync(crdt) {
 
 // --- WASM-worker adapter: the Go engine compiled to WASM, in a Web Worker ---
 
-async function wasmServerSync() {
-  const base = _server.url.replace(/\/$/, '');
-  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
+// Task notes whose scope should sync on demand (while their detail view is open).
+const _openNotes = new Set();
 
-  // Offline-first state-vector exchange (docs/crdt-ygo.md §4). Pull first: send
-  // our state vector, receive exactly what we're missing plus the server's own
-  // state vector. Then push exactly what the server is missing.
-  const sv = await crdtClient.stateVector();
-  const pr = await fetch(base + '/v1/pull', { method: 'POST', headers, body: JSON.stringify({ sv }) });
+// One offline-first state-vector exchange for a single scope (docs/architecture-1m
+// §2.2). Pull first (send our sv, receive what we're missing + the server's sv),
+// then push exactly what the server is missing. `scope` routes to the right room.
+async function wasmSyncScope(base, headers, scope) {
+  const sv = await crdtClient.stateVector(scope);
+  const pr = await fetch(base + '/v1/pull', { method: 'POST', headers, body: JSON.stringify({ scope, sv }) });
   if (!pr.ok) throw new Error('pull failed: ' + pr.status);
   const pulled = await pr.json();
   let applied = 0;
   if (pulled.update) {
-    await crdtClient.applyUpdate(pulled.update);
+    await crdtClient.applyUpdate(scope, pulled.update);
     applied = 1;
   }
-
-  const diff = await crdtClient.encodeDiff(pulled.sv || '');
-  const push = await fetch(base + '/v1/push', { method: 'POST', headers, body: JSON.stringify({ update: diff }) });
+  const diff = await crdtClient.encodeDiff(scope, pulled.sv || '');
+  const push = await fetch(base + '/v1/push', { method: 'POST', headers, body: JSON.stringify({ scope, update: diff }) });
   if (!push.ok) throw new Error('push failed: ' + push.status);
   const pushed = await push.json();
+  return { applied, version: pushed.version };
+}
+
+async function wasmServerSync() {
+  const base = _server.url.replace(/\/$/, '');
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
+
+  // Always sync shared (tenant) + settings (this user's private scope), plus any
+  // task whose notes are currently open.
+  const scopes = ['shared', 'settings', ...[..._openNotes].map((id) => 'note:' + id)];
+  let applied = 0;
+  let version = 0;
+  for (const scope of scopes) {
+    const r = await wasmSyncScope(base, headers, scope);
+    applied += r.applied;
+    if (scope === 'shared') version = r.version;
+  }
 
   return {
     adapter: 'server',
-    pushed: pushed.version,
+    pushed: version,
     pulled: applied,
     applied,
     skipped: 0,
@@ -523,6 +539,54 @@ function wasmWebAdapter() {
       return { adapter: 'local' };
     },
   };
+}
+
+// Open a task's notes for on-demand sync (docs/architecture-1m §2.2): a task's
+// notes are their own sync scope, synced only while its detail view is open. This
+// registers the scope, syncs it once now, and returns the merged whole-state
+// snapshot (or null) so the caller can refresh the note text. Works on every
+// platform: Wails desktop + gomobile go through the Go store's SyncNote; web goes
+// through the wasm worker.
+export async function openTaskNote(taskId) {
+  if (!taskId) return null;
+  const app = wailsApp();
+  const native = app ? null : nativeModule();
+  try {
+    if (app && typeof app.SyncNote === 'function') {
+      const res = JSON.parse((await app.SyncNote(taskId)) || '{}');
+      return res.snapshot ? JSON.parse(res.snapshot) : null;
+    }
+    if (native && typeof native.syncNote === 'function') {
+      const snap = await native.syncNote(taskId);
+      return snap ? JSON.parse(snap) : null;
+    }
+    if (backend().name === 'wasm') {
+      _openNotes.add(taskId);
+      if (_server) {
+        const base = _server.url.replace(/\/$/, '');
+        const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + _server.token };
+        await wasmSyncScope(base, headers, 'note:' + taskId);
+      }
+      return JSON.parse(await crdtClient.materialize());
+    }
+  } catch {
+    /* best-effort: offline or transient — the note still works locally */
+  }
+  return null;
+}
+
+// Stop syncing a task's notes (call when its detail view closes).
+export function closeTaskNote(taskId) {
+  if (!taskId) return;
+  _openNotes.delete(taskId);
+  try {
+    const app = wailsApp();
+    const native = app ? null : nativeModule();
+    if (app && typeof app.CloseNote === 'function') app.CloseNote(taskId);
+    else if (native && typeof native.closeNote === 'function') native.closeNote(taskId);
+  } catch {
+    /* ignore */
+  }
 }
 
 // --- pure-JS adapter (fallback when WASM/Workers are unavailable) ---

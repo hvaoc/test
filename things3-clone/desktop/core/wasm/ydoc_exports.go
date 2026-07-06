@@ -1,17 +1,21 @@
 //go:build js && wasm
 
-// Phase 1 of the ygo migration: expose the shared ydoc engine (core/ydoc, our
-// wrapper over reearth/ygo) to the browser worker alongside the legacy __crdt*
-// exports. The worker persists an opaque Yjs snapshot blob instead of register
-// rows, so the boundary is deliberately tiny: JSON in/out for snapshots, base64
-// for binary Yjs updates / state vectors, and a decimal-string client id (a Yjs
-// ClientID is a uint64 and must never round-trip through a JS number).
+// ygo migration: expose the shared ydoc engine (core/ydoc, our wrapper over
+// reearth/ygo) to the browser worker as __ydoc* globals. Sync + persistence are now
+// PER-SCOPE (docs/architecture-1m.md §2.2): every sync primitive takes a scope
+// string ("shared", "settings", or "note:<taskId>"), and __ydocScopes enumerates the
+// scopes the worker must persist. The boundary stays tiny: JSON in/out for whole-
+// state snapshots, base64 for binary Yjs updates / state vectors, and a decimal-
+// string client id (a Yjs ClientID is a uint64 and must never round-trip through a
+// JS number).
 //
-// See docs/crdt-ygo.md. Built into the same crdt.wasm by desktop/build-wasm.sh.
+// See docs/crdt-ygo.md + docs/architecture-1m.md. Built into crdt.wasm by
+// desktop/build-wasm.sh.
 package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"syscall/js"
 
@@ -38,7 +42,8 @@ func unb64(s string) ([]byte, error) {
 func registerYdoc() {
 	g := js.Global()
 
-	// __ydocNew([clientID?]) -> clientID (decimal string)
+	// __ydocNew([clientID?]) -> device clientID (decimal string). Creates a fresh
+	// three-scope replica.
 	g.Set("__ydocNew", fn(func(args []js.Value) any {
 		if len(args) > 0 && args[0].Type() == js.TypeString && args[0].String() != "" {
 			id, err := strconv.ParseUint(args[0].String(), 10, 64)
@@ -52,25 +57,44 @@ func registerYdoc() {
 		return ok(strconv.FormatUint(yeng.ClientID(), 10))
 	}))
 
-	// __ydocLoad(clientID, base64Snapshot) -> clientID
-	g.Set("__ydocLoad", fn(func(args []js.Value) any {
-		id, err := strconv.ParseUint(args[0].String(), 10, 64)
-		if err != nil {
-			return fail(err)
+	// __ydocLoadScope(scope, base64Snapshot) -> "" — restore one scope's persisted blob.
+	g.Set("__ydocLoadScope", fn(func(args []js.Value) any {
+		e, bad := needY()
+		if bad != nil {
+			return bad
 		}
 		snap, err := unb64(args[1].String())
 		if err != nil {
 			return fail(err)
 		}
-		e, err := ydoc.Load(id, snap)
-		if err != nil {
+		if err := e.LoadScope(args[0].String(), snap); err != nil {
 			return fail(err)
 		}
-		yeng = e
-		return ok(strconv.FormatUint(yeng.ClientID(), 10))
+		return ok("")
 	}))
 
-	// __ydocApplyLocalSnapshot(stateJSON) -> ""
+	// __ydocMigrateLegacy() -> "" — one-time: lift settings + notes out of a legacy
+	// single-doc blob (loaded into the shared scope) into their own scopes.
+	g.Set("__ydocMigrateLegacy", fn(func(args []js.Value) any {
+		e, bad := needY()
+		if bad != nil {
+			return bad
+		}
+		e.MigrateLegacy()
+		return ok("")
+	}))
+
+	// __ydocScopes() -> JSON array of scope strings to persist.
+	g.Set("__ydocScopes", fn(func(args []js.Value) any {
+		e, bad := needY()
+		if bad != nil {
+			return bad
+		}
+		b, _ := json.Marshal(e.Scopes())
+		return ok(string(b))
+	}))
+
+	// __ydocApplyLocalSnapshot(stateJSON) -> "" — whole-state local write (routed to scopes).
 	g.Set("__ydocApplyLocalSnapshot", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
@@ -82,7 +106,7 @@ func registerYdoc() {
 		return ok("")
 	}))
 
-	// __ydocMaterialize() -> stateJSON
+	// __ydocMaterialize() -> stateJSON (whole-state read across scopes).
 	g.Set("__ydocMaterialize", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
@@ -95,58 +119,66 @@ func registerYdoc() {
 		return ok(s)
 	}))
 
-	// __ydocEncodeAll() -> base64 full-state update (persistence snapshot)
+	// __ydocEncodeAll(scope) -> base64 full-state update (persistence snapshot).
 	g.Set("__ydocEncodeAll", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
 			return bad
 		}
-		return ok(b64(e.EncodeAll()))
+		upd, err := e.EncodeAll(args[0].String())
+		if err != nil {
+			return fail(err)
+		}
+		return ok(b64(upd))
 	}))
 
-	// __ydocStateVector() -> base64 state vector
+	// __ydocStateVector(scope) -> base64 state vector.
 	g.Set("__ydocStateVector", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
 			return bad
 		}
-		return ok(b64(e.StateVector()))
+		sv, err := e.StateVector(args[0].String())
+		if err != nil {
+			return fail(err)
+		}
+		return ok(b64(sv))
 	}))
 
-	// __ydocEncodeDiff(base64SV) -> base64 update the holder of SV is missing
+	// __ydocEncodeDiff(scope, base64SV) -> base64 update the holder of SV is missing.
 	g.Set("__ydocEncodeDiff", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
 			return bad
 		}
-		sv, err := unb64(args[0].String())
+		sv, err := unb64(args[1].String())
 		if err != nil {
 			return fail(err)
 		}
-		diff, err := e.EncodeDiff(sv)
+		diff, err := e.EncodeDiff(args[0].String(), sv)
 		if err != nil {
 			return fail(err)
 		}
 		return ok(b64(diff))
 	}))
 
-	// __ydocApplyUpdate(base64Update) -> ""
+	// __ydocApplyUpdate(scope, base64Update) -> "".
 	g.Set("__ydocApplyUpdate", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
 			return bad
 		}
-		upd, err := unb64(args[0].String())
+		upd, err := unb64(args[1].String())
 		if err != nil {
 			return fail(err)
 		}
-		if err := e.ApplyUpdate(upd); err != nil {
+		if err := e.ApplyUpdate(args[0].String(), upd); err != nil {
 			return fail(err)
 		}
 		return ok("")
 	}))
 
-	// __ydocClientID() -> decimal string
+	// __ydocClientID() -> decimal string (device id).
 	g.Set("__ydocClientID", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {
@@ -155,7 +187,7 @@ func registerYdoc() {
 		return ok(strconv.FormatUint(e.ClientID(), 10))
 	}))
 
-	// __ydocHasData() -> bool
+	// __ydocHasData() -> bool.
 	g.Set("__ydocHasData", fn(func(args []js.Value) any {
 		e, bad := needY()
 		if bad != nil {

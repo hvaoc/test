@@ -2,7 +2,16 @@ package ysync
 
 import (
 	"net/http"
+	"strings"
 	"sync"
+)
+
+// Client-side scope hints (docs/architecture-1m.md §2.2). They travel on the
+// request (push/pull body, stream query) and are mapped to a room key by roomKey.
+const (
+	scopeShared     = "shared"
+	scopeSettings   = "settings"
+	scopeNotePrefix = "note:"
 )
 
 // ScopeFunc maps an authenticated principal (and request) to a sync-scope key —
@@ -29,6 +38,32 @@ func NewHub(auth Authenticator, store Persistence) *Hub {
 		store: store,
 		Scope: func(p Principal, _ *http.Request) string { return p.TenantID },
 		rooms: map[string]*Room{},
+	}
+}
+
+// roomKey maps a client's scope hint onto a room key, routing each of the three
+// scopes to the right audience:
+//
+//   - shared / "" -> the tenant document (h.Scope; the whole team). Unchanged key,
+//     so pre-scopes persisted data still loads.
+//   - settings     -> "u:<userId>" — the requesting user's PRIVATE room. Keyed by
+//     the authenticated token's UserID, so no other user can ever reach it: this is
+//     what keeps per-user settings from syncing to teammates.
+//   - note:<taskId> -> "t:<tenantId>:note:<taskId>" — one room per task's notes,
+//     shared among tenant members who open that task (on-demand).
+//
+// isPrivate reports whether the scope is the user's own room (settings), which any
+// authenticated user may write regardless of their tenant write-role.
+func (h *Hub) roomKey(p Principal, r *http.Request, clientScope string) (key string, isPrivate bool) {
+	switch {
+	case clientScope == "" || clientScope == scopeShared:
+		return h.Scope(p, r), false
+	case clientScope == scopeSettings:
+		return "u:" + p.UserID, true
+	case strings.HasPrefix(clientScope, scopeNotePrefix):
+		return "t:" + p.TenantID + ":" + clientScope, false
+	default:
+		return h.Scope(p, r), false
 	}
 }
 

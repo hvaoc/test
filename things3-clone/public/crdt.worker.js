@@ -71,18 +71,32 @@ async function idbDel(key) {
   });
 }
 
-// Persist the active workspace's ygo document.
+// Persist the active workspace's ygo documents — one blob PER SCOPE (shared,
+// settings, note:<taskId>...). See docs/architecture-1m.md §2.2.
 async function persist() {
   const clientid = unwrap(self.__ydocClientID()).result;
-  const snapshot = unwrap(self.__ydocEncodeAll()).result;
-  await idbPut(currentWs, { clientid, snapshot });
+  const scopeList = JSON.parse(unwrap(self.__ydocScopes()).result);
+  const scopes = {};
+  for (const sc of scopeList) scopes[sc] = unwrap(self.__ydocEncodeAll(sc)).result;
+  await idbPut(currentWs, { clientid, scopes });
 }
 
 // Load the active workspace's engine from IndexedDB, or migrate/start fresh.
 async function loadEngine() {
   const row = await idbGet(currentWs);
-  if (row) {
-    unwrap(self.__ydocLoad(row.clientid, row.snapshot || ''));
+  if (row && row.scopes) {
+    unwrap(self.__ydocNew(row.clientid));
+    for (const sc of Object.keys(row.scopes)) {
+      unwrap(self.__ydocLoadScope(sc, row.scopes[sc] || ''));
+    }
+    return;
+  }
+  if (row && row.snapshot) {
+    // Legacy single-doc blob: load as shared, split settings + notes out, re-persist.
+    unwrap(self.__ydocNew(row.clientid));
+    unwrap(self.__ydocLoadScope('shared', row.snapshot));
+    unwrap(self.__ydocMigrateLegacy());
+    await persist();
     return;
   }
   // Only 'local' can inherit anything from the old OPFS store.
@@ -124,7 +138,10 @@ async function migrateFromOpfs() {
     try { if (typeof pool.removeVfs === 'function') await pool.removeVfs(); } catch (_) { /* ignore */ }
 
     if (!out || !out.snapshot) return false;
-    unwrap(self.__ydocLoad(out.clientid, out.snapshot));
+    // The old OPFS blob is a legacy single doc: load as shared, split, re-persist.
+    unwrap(self.__ydocNew(out.clientid));
+    unwrap(self.__ydocLoadScope('shared', out.snapshot));
+    unwrap(self.__ydocMigrateLegacy());
     await persist();
     return true;
   } catch (_) {
@@ -170,17 +187,20 @@ async function handle(msg) {
       case 'materialize':
         result = unwrap(self.__ydocMaterialize()).result;
         break;
+      case 'scopes':
+        result = JSON.parse(unwrap(self.__ydocScopes()).result);
+        break;
       case 'stateVector':
-        result = unwrap(self.__ydocStateVector()).result;
+        result = unwrap(self.__ydocStateVector(String(args[0] || 'shared'))).result;
         break;
       case 'encodeDiff':
-        result = unwrap(self.__ydocEncodeDiff(String(args[0] || ''))).result;
+        result = unwrap(self.__ydocEncodeDiff(String(args[0] || 'shared'), String(args[1] || ''))).result;
         break;
       case 'encodeAll':
-        result = unwrap(self.__ydocEncodeAll()).result;
+        result = unwrap(self.__ydocEncodeAll(String(args[0] || 'shared'))).result;
         break;
       case 'applyUpdate':
-        unwrap(self.__ydocApplyUpdate(String(args[0] || '')));
+        unwrap(self.__ydocApplyUpdate(String(args[0] || 'shared'), String(args[1] || '')));
         await persist();
         result = true;
         break;
