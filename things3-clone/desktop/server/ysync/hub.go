@@ -33,20 +33,25 @@ type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
 
-	recMu   sync.Mutex
-	recLogs map[string]*recordLog // scope -> append-only op log
+	records RecordStore // structured-data op store (blob log by default; Postgres registers if set)
 }
 
-// NewHub builds a hub. Pass DevAuth{} + a Persistence impl for Phase 1.
+// NewHub builds a hub. Pass DevAuth{} + a Persistence impl for Phase 1. The record
+// store defaults to the append-only blob log over the same Persistence; call
+// SetRecordStore to swap in the materialized Postgres register store.
 func NewHub(auth Authenticator, store Persistence) *Hub {
 	return &Hub{
 		auth:    auth,
 		store:   store,
 		Scope:   func(p Principal, _ *http.Request) string { return p.TenantID },
 		rooms:   map[string]*Room{},
-		recLogs: map[string]*recordLog{},
+		records: newBlobRecordStore(store),
 	}
 }
+
+// SetRecordStore swaps the structured-data store (e.g. the materialized Postgres
+// register store, so the server holds a bounded, queryable full copy).
+func (h *Hub) SetRecordStore(rs RecordStore) { h.records = rs }
 
 // notifyIfPresent nudges a scope's live stream connections (if any) so they pull.
 // Used after a record push, reusing the ygo room's WS fan-out.

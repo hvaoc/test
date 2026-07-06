@@ -30,6 +30,7 @@ func main() {
 	flag.Parse()
 
 	var store ysync.Persistence
+	var pgStore *ysync.PostgresPersistence
 	authPath := ""
 	switch {
 	case *pgDSN != "":
@@ -38,6 +39,7 @@ func main() {
 			log.Fatalf("ysync: postgres: %v", err)
 		}
 		store = pg
+		pgStore = pg
 		if *data != "" {
 			authPath = filepath.Join(*data, "auth.json")
 		}
@@ -74,7 +76,28 @@ func main() {
 	// against the accounts store (a tenant-scoped sync token -> user+tenant+role).
 	mux := http.NewServeMux()
 	accounts.Mount(mux)
-	ysync.NewHub(accounts, store).Mount(mux)
+	hub := ysync.NewHub(accounts, store)
+	if pgStore != nil {
+		// Materialized record engine: the server keeps a bounded, queryable LWW-register
+		// copy of all structured data, and a first-time client pulls the full copy.
+		rs, err := ysync.NewPGRecordStore(pgStore.DB())
+		if err != nil {
+			log.Fatalf("ysync: postgres record store: %v", err)
+		}
+		hub.SetRecordStore(rs)
+		log.Printf("ysync: materialized record engine on Postgres (bounded, queryable full copy)")
+		// One-time: fold any legacy append-only record blobs into the register store.
+		var regCount int
+		_ = pgStore.DB().QueryRow(`SELECT count(*) FROM record_registers`).Scan(&regCount)
+		if regCount == 0 {
+			if migrated, err := ysync.MigrateBlobLog(pgStore, rs); err != nil {
+				log.Printf("ysync: blob->register migration: %v", err)
+			} else if migrated > 0 {
+				log.Printf("ysync: migrated %d legacy record blob(s) into the register store", migrated)
+			}
+		}
+	}
+	hub.Mount(mux)
 
 	log.Printf("ysync: listening on %s (real accounts: /v1/register, /v1/login)", *addr)
 	if err := http.ListenAndServe(*addr, ysync.CORS(mux)); err != nil {

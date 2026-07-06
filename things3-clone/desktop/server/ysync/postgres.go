@@ -65,5 +65,9 @@ func (p *PostgresPersistence) Save(scope string, snapshot []byte) error {
 	return err
 }
 
+// DB exposes the underlying pool so the materialized record store (pgRecordStore)
+// can share the same Postgres connection.
+func (p *PostgresPersistence) DB() *sql.DB { return p.db }
+
 // Close releases the connection pool.
 func (p *PostgresPersistence) Close() error { return p.db.Close() }
