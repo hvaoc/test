@@ -465,9 +465,14 @@ Each phase is independently shippable and leaves the app working.
   `QueryTasks / SearchTasks / GetTask / MoveTask / SetTaskField / ToggleComplete /
   CreateTask / DeleteTask` + operator filters (§3) + title FTS + op-log sync.
   Unit-tested; validated at 1M (§7). *No UI change yet.*
-- **Phase 2 — Frontend on the `RecordStore` port (§5.1).** Views/lists read via
-  paged queries + live deltas instead of the materialized whole-state; writes go
-  per-entity. Ordering via `rank` writes. Decide shared-vs-personal sidebar order.
+- **Phase 2 — Frontend on the `RecordStore` port (§5.1).** *In progress.* The web
+  adapter (`public/record.worker.js`) + client (`src/store/recordClient.js`) are
+  built and **verified end-to-end in the browser** (`public/record-demo.html`): an
+  interactive Today view whose every read is `queryTasks`/`searchTasks` and every
+  write is a per-entity op (`createTask`/`toggleComplete`/`moveTask`), round-tripping
+  through `sqlite.wasm`/OPFS with data persisting across reloads (Web Lock
+  single-owner reacquire, no handle contention). **Remaining:** wire a real screen.
+  See the integration seam below.
 - **Phase 3 — Web adapter (§5.3).** JS record adapter over the official
   `sqlite.wasm` + OPFS VFS in a dedicated Worker, behind the `RecordStore` port;
   single-owner Web Lock across tabs. Prove 1M in-browser (heap bounded, query/FTS
@@ -485,3 +490,30 @@ Each phase is independently shippable and leaves the app working.
 
 Migration between phases keeps the existing snapshot API working until a view is
 cut over, so there is never a big-bang switch.
+
+### Phase 2 integration seam (Today view)
+
+The web adapter is proven; wiring a real screen is next. The lowest-risk first cut
+is the **Today** list:
+
+- **Read seam:** `src/screens/ListScreen.js` builds `tasks` for the Today list at
+  `useSections` (≈ line 145) via `selectForList(state.tasks, 'today')` →
+  `selectToday` in `src/store/selectors.js`. Replace that one branch with a page
+  from `recordStore.queryTasks({...})`, delivered through an async hook
+  (`useRecordQuery`). Keep the other lists on the in-memory selectors until each is
+  cut over.
+- **Write seam:** the `TaskRow` checkbox calls `toggleTask(id)` and reorder calls
+  `reorderTasks(ids)` (`TasksContext.js`). For the Today view, route these to
+  `recordStore.toggleComplete(id, …)` and `recordStore.moveTask(id, before, after)`.
+- **Shape mapping (record ↔ app):** the app models completion as `status`
+  (`open`/`completed`/`canceled`/`trashed`) and order as a numeric `order`; the
+  record layer uses a `completed` boolean and a string `rank`. Map at the seam:
+  `status==='completed' ⇄ completed`, `canceled`/`trashed` ⇄ a presence tombstone or
+  a `status` field, and `order ⇄ rank`. The record schema should gain a `status`
+  column when the cut-over needs the non-binary states.
+- **"Today" filter** (`when ∈ {today,evening}` OR a concrete date ≤ today OR a
+  deadline ≤ today, open, top-level) is a relative-date predicate: compute today's
+  date on the client and pass it as `Query.Conditions` (`when` equality/`<=` +
+  `completed=0` + `parentId IS NULL`), rather than the in-memory `isDueToday`.
+- **Hydration:** on first run, `recordStore.hydrate(state.tasks)` imports current
+  state into the OPFS DB (set-based, ANALYZE'd) so the query view has data.

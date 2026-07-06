@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Record layer — Today view (query API)</title>
+<style>
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; max-width: 640px; }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .sub { color: #8a94a6; margin: 0 0 16px; font-size: 13px; }
+  #status { color: #7ec9a2; font-size: 12px; min-height: 16px; }
+  .bar { display: flex; gap: 8px; margin: 12px 0; }
+  input { flex: 1; background: #161a22; border: 1px solid #2a2f3a; color: #e6e6e6; padding: 8px 10px; border-radius: 8px; font: inherit; }
+  button { background: #202634; border: 1px solid #2a2f3a; color: #cbd5e6; border-radius: 8px; padding: 8px 10px; cursor: pointer; font: inherit; }
+  button:hover { background: #2a3140; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px solid #1c212b; }
+  .box { width: 18px; height: 18px; border: 1.5px solid #5b6472; border-radius: 5px; cursor: pointer; flex: 0 0 auto; }
+  .box.on { background: #4c8bf5; border-color: #4c8bf5; position: relative; }
+  .box.on::after { content: '✓'; color: #fff; font-size: 12px; position: absolute; left: 3px; top: -1px; }
+  .ttl { flex: 1; }
+  li.done .ttl { color: #6b7280; text-decoration: line-through; }
+  .when { color: #c9a54a; font-size: 11px; border: 1px solid #3a3320; border-radius: 6px; padding: 1px 6px; }
+  .mv { color: #8a94a6; padding: 2px 6px; }
+  .count { color: #8a94a6; font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h1>Today — rendered from the record layer</h1>
+  <p class="sub">Every read is <code>queryTasks</code>; every write is a per-entity op — all through <code>sqlite.wasm</code>/OPFS in a Worker. No in-memory task array.</p>
+  <div id="status">initialising…</div>
+  <div class="bar">
+    <input id="add" placeholder="New task title, then Enter…" />
+  </div>
+  <div class="bar">
+    <input id="search" placeholder="Search titles (FTS word-prefix)…" />
+    <button id="clear">clear</button>
+  </div>
+  <ul id="list"></ul>
+  <div class="count" id="count"></div>
+
+  <script>
+    const worker = new Worker('/record.worker.js');
+    let seq = 0; const pending = new Map();
+    const status = (t) => { document.getElementById('status').textContent = t; };
+    worker.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'ready') return onReady();
+      if (d.type === 'fatal') return status('FATAL: ' + d.error);
+      const p = pending.get(d.id); if (!p) return;
+      pending.delete(d.id);
+      d.ok ? p.resolve(d.result) : p.reject(new Error(d.error));
+    };
+    const call = (method, ...args) => new Promise((resolve, reject) => {
+      const id = ++seq; pending.set(id, { resolve, reject });
+      worker.postMessage({ id, method, args });
+    });
+
+    let searchTerm = '';
+
+    async function onReady() {
+      status('worker ready — sqlite.wasm + OPFS');
+      if (!(await call('hasData'))) {
+        const samples = [
+          { title: 'Write the Phase 2 hook', when: 'today' },
+          { title: 'Review the record adapter', when: 'today' },
+          { title: 'Reply to design thread', when: 'evening' },
+          { title: 'Book flights', when: 'today' },
+          { title: 'Water the plants', when: 'today' },
+        ];
+        for (const s of samples) await call('createTask', s);
+      }
+      render();
+    }
+
+    async function render() {
+      const rows = searchTerm
+        ? await call('searchTasks', searchTerm, { onlyOpen: false, limit: 200 })
+        : await call('queryTasks', { onlyOpen: false, limit: 200 });
+      const total = await call('countTasks', {});
+      const open = await call('countTasks', { onlyOpen: true });
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      rows.forEach((t, i) => {
+        const li = document.createElement('li');
+        if (t.completed) li.className = 'done';
+        li.innerHTML =
+          `<span class="box ${t.completed ? 'on' : ''}" data-id="${t.id}"></span>` +
+          `<span class="ttl">${escapeHtml(t.title)}</span>` +
+          (t.when ? `<span class="when">${t.when}</span>` : '') +
+          `<span class="mv up" data-id="${t.id}" data-i="${i}">↑</span>` +
+          `<span class="mv down" data-id="${t.id}" data-i="${i}">↓</span>`;
+        list.appendChild(li);
+      });
+      document.getElementById('count').textContent = `${rows.length} shown · ${open} open · ${total} total`;
+      list._rows = rows;
+    }
+
+    document.getElementById('list').addEventListener('click', async (e) => {
+      const t = e.target;
+      if (t.classList.contains('box')) {
+        const done = t.classList.contains('on');
+        await call('toggleComplete', t.dataset.id, !done);
+        render();
+      } else if (t.classList.contains('mv')) {
+        const rows = document.getElementById('list')._rows;
+        const i = +t.dataset.i;
+        const up = t.classList.contains('up');
+        const id = t.dataset.id;
+        if (up && i > 0) await call('moveTask', id, rows[i - 2] ? rows[i - 2].id : '', rows[i - 1].id);
+        else if (!up && i < rows.length - 1) await call('moveTask', id, rows[i + 1].id, rows[i + 2] ? rows[i + 2].id : '');
+        render();
+      }
+    });
+    document.getElementById('add').addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !e.target.value.trim()) return;
+      await call('createTask', { title: e.target.value.trim(), when: 'today' });
+      e.target.value = '';
+      render();
+    });
+    const searchEl = document.getElementById('search');
+    searchEl.addEventListener('input', () => { searchTerm = searchEl.value.trim(); render(); });
+    document.getElementById('clear').addEventListener('click', () => { searchEl.value = ''; searchTerm = ''; render(); });
+
+    function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  </script>
+</body>
+</html>
