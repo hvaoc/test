@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.recordnative'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.recordnative'
+  defaultConfig {
+    minSdkVersion 24
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // gomobile-bound Go record engine (classes.jar → mobile.Mobile; jniLibs → libgojni.so).
+  implementation files('libs/RecordMobile.jar')
+}
