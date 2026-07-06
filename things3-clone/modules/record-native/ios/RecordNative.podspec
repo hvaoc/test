@@ -15,5 +15,7 @@ Pod::Spec.new do |s|
   # The gomobile-bound Go record engine.
   s.vendored_frameworks = 'RecordMobile.xcframework'
 
-  s.source_files = '**/*.{h,m,swift}'
+  # ONLY our Swift sources — a recursive glob would sweep the xcframework's own
+  # headers (RecordMobile.h) into the pod umbrella and fail to import them.
+  s.source_files = '*.swift'
 end
