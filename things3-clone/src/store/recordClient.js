@@ -25,7 +25,7 @@ export function recordWorkerAvailable() {
 
 const multiTab = typeof BroadcastChannel !== 'undefined' && !!(typeof navigator !== 'undefined' && navigator.locks);
 
-// --- cross-tab change subscription -----------------------------------------
+// --- cross-tab change subscription (REMOTE changes from other tabs) ---------
 const _changeCbs = new Set();
 export function onRecordChanged(cb) {
   _changeCbs.add(cb);
@@ -33,6 +33,19 @@ export function onRecordChanged(cb) {
 }
 function fireChange() {
   for (const cb of _changeCbs) { try { cb(); } catch (_) { /* ignore */ } }
+}
+
+// --- local-write subscription (THIS tab changed the store) ------------------
+// Distinct from onRecordChanged: fired after a data-changing write made on this
+// tab, so query-backed views (useRecordList) re-run. TasksContext uses the remote
+// signal above (to avoid reloading on its own writes); the query mirror uses both.
+const _writeCbs = new Set();
+export function onRecordWrite(cb) {
+  _writeCbs.add(cb);
+  return () => _writeCbs.delete(cb);
+}
+function fireWrite() {
+  for (const cb of _writeCbs) { try { cb(); } catch (_) { /* ignore */ } }
 }
 
 // Which methods can change data → notify other tabs. applyLocalSnapshot/applyRemote
@@ -171,10 +184,17 @@ async function call(method, args = []) {
   await initCoordinator();
   if (_role === 'leader') {
     const result = await workerCall(method, args);
-    if (multiTab && didChange(method, result)) { try { _bc.postMessage({ type: 'changed' }); } catch (_) { /* ignore */ } }
+    if (didChange(method, result)) {
+      if (multiTab) { try { _bc.postMessage({ type: 'changed' }); } catch (_) { /* ignore */ } } // other tabs
+      fireWrite(); // this tab's query-backed views (useRecordList)
+    }
     return result;
   }
-  return followerCall(method, args);
+  const result = await followerCall(method, args);
+  // A follower's write is applied+broadcast by the leader; fire the local write
+  // signal here too so this tab's own query views refresh immediately.
+  if (didChange(method, result)) fireWrite();
+  return result;
 }
 
 // The RecordStore port. Mirrors desktop/core/record's public API.

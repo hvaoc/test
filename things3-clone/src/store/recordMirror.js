@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
-import { recordStore as recordStoreWeb, recordWorkerAvailable } from './recordClient';
+import { recordStore as recordStoreWeb, recordWorkerAvailable, onRecordChanged, onRecordWrite } from './recordClient';
 import { recordStoreNative, recordNativeAvailable } from './recordNative';
 
 // One RecordStore port, two adapters: the web Worker + sqlite.wasm on web (and the
@@ -22,10 +22,20 @@ export function recordAvailable() {
   return usingNative || (Platform.OS === 'web' && recordWorkerAvailable());
 }
 
-// Generation counter — bumped after each mirror so mounted queries re-run.
+// Generation counter — bumped whenever the record store changes so mounted queries
+// (useRecordList) re-run. Native drives this via mirrorTasks; on the web coordinator
+// the save path no longer goes through mirrorTasks, so we also bump on the record
+// store's own write signal (this tab's writes) and its cross-tab change signal.
 let _gen = 0;
 const _subs = new Set();
 function bump() { _gen += 1; _subs.forEach((fn) => fn(_gen)); }
+
+if (!recordNativeAvailable() && Platform.OS === 'web') {
+  try {
+    onRecordWrite(bump);   // this tab wrote (e.g. moving a task Today -> Inbox)
+    onRecordChanged(bump); // another tab wrote (cross-tab)
+  } catch (_) { /* ignore */ }
+}
 
 const PRIORITY = { high: 3, medium: 2, low: 1 };
 
