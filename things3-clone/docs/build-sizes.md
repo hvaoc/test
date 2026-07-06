@@ -37,14 +37,22 @@ which packs the Go runtime + `modernc.org/sqlite` + `ygo` + `core/record`:
 | Asset | Size | Role |
 |---|---:|---|
 | main JS bundle | 2.9 MB (**0.7 MB gzipped**) | the app |
-| `crdt.wasm` | 5.1 MB | **legacy** ygo whole-doc engine — droppable once the transitional blob path is removed |
-| `sqlite3.wasm` | 896 KB | record-layer engine (sqlite.wasm) |
+| `crdt.wasm` | 5.1 MB | **active** ygo whole-workspace CRDT engine — web's persistence + sync path (`crdt.worker.js`) |
+| `sqlite3.wasm` | 896 KB | record-layer engine (sqlite.wasm) — additive query/search mirror |
 | `sqlite3.js` | 384 KB | sqlite.wasm JS glue |
 | `record.worker.js` | 20 KB | the RecordStore worker |
 
 **Over-the-wire is what matters:** the app JS is ~0.7 MB gzipped, and the wasm
-assets (~1.3 MB) load lazily in the worker. Removing the legacy `crdt.wasm` (5.1 MB)
-is the biggest easy win once the ygo blob path is retired.
+assets (~1.3 MB) load lazily in their workers.
+
+> **`crdt.wasm` is not removable today.** It is the live web CRDT engine that backs
+> `loadSnapshot`/`saveSnapshot`/`sync` (`backend.js` → `wasmWebAdapter` → `crdtClient`
+> → `crdt.worker.js`). The sqlite.wasm record layer is an *additive* read-only query
+> mirror, **not** a replacement, and the pure-JS fallback speaks a different (op-log)
+> wire protocol, so it isn't an interchangeable replica. `crdt.wasm` only becomes
+> droppable once the web path is migrated off the whole-workspace ygo doc onto the
+> record layer + per-task text docs — the same migration mobile/desktop are staged for
+> (see `docs/architecture-1m.md`). Until then, cutting it breaks web persistence + sync.
 
 ## iOS
 
@@ -118,8 +126,9 @@ mobile `.app`/APK.
   per-device delivery (AAB on Android, thinning on iOS) keeps what users actually
   download reasonable (~42 MB on a modern Android phone). Desktop pays it once as a
   22 MB static binary.
-- **Web is the lean tier** (~0.7 MB gz app + ~1.3 MB wasm on demand) — and dropping
-  the legacy `crdt.wasm` removes 5 MB.
+- **Web is the lean tier** (~0.7 MB gz app + ~1.3 MB wasm on demand). `crdt.wasm`
+  (5 MB) is the one big line item, but it's the **active** web CRDT engine, not dead
+  weight — it comes off only after the web path migrates onto the record layer.
 - Debug artifacts (universal APK, simulator `.app`) are **not** representative of what
   ships; always quote AAB/device-thinned sizes for user-facing numbers.
 
