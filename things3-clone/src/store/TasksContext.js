@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 import { uid } from '../utils/id';
 import { relabel, orderedItems } from './ordering';
+import { mirrorTasks, recordAvailable } from './recordMirror';
 import { STATUS } from './constants';
 import { buildSampleData } from './sampleData';
 import { setTimeZone } from '../utils/date';
@@ -567,6 +568,17 @@ export function TasksProvider({ children }) {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [state]);
+
+  // Phase 2: keep the web record store (sqlite.wasm/OPFS) mirrored from the current
+  // tasks, so query-backed views (useRecordList) stay in sync. Web-only + guarded;
+  // a failure just leaves those views on their in-memory fallback.
+  useEffect(() => {
+    if (!state.loaded || !recordAvailable()) return undefined;
+    const t = setTimeout(() => {
+      mirrorTasks(state.tasks);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [state.loaded, state.tasks]);
 
   // Stable action creators.
   const actions = useMemo(

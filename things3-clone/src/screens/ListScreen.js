@@ -22,6 +22,7 @@ import {
   byOrder,
 } from '../store/selectors';
 import { relativeLabel, monthTitle, longLabel, todayKey, addDays, formatDayKey } from '../utils/date';
+import { useRecordList } from '../store/recordMirror';
 import TaskRow from '../components/TaskRow';
 import SidebarToggle from '../components/SidebarToggle';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -50,6 +51,10 @@ const MINIMAL_ITEMS = 10;
 // { key, title, subtitle?, color?, data: task[] }.
 function useSections(state, route) {
   const { listId, projectId, areaId } = route.params || {};
+  // Phase 2: the Today list reads from the record store's query API
+  // (sqlite.wasm/OPFS) when available; null until it answers → fall back to the
+  // in-memory selector. Rendering still uses the full task objects from state.
+  const recordToday = useRecordList(listId === 'today' ? 'today' : null, { todayKey: todayKey() });
   return useMemo(() => {
     // ---- Project view: group by heading ----
     if (projectId) {
@@ -146,8 +151,15 @@ function useSections(state, route) {
 
     // ---- Today: split into Today + This Evening ----
     if (listId === 'today') {
-      const evening = tasks.filter((t) => t.when === WHEN.EVENING);
-      const day = tasks.filter((t) => t.when !== WHEN.EVENING);
+      // Prefer the record-store query when it has answered: map its ordered ids
+      // back to full task objects for rendering; else use the in-memory selector.
+      let todayTasks = tasks;
+      if (recordToday) {
+        const byId = new Map(state.tasks.map((t) => [t.id, t]));
+        todayTasks = recordToday.map((r) => byId.get(r.id)).filter(Boolean);
+      }
+      const evening = todayTasks.filter((t) => t.when === WHEN.EVENING);
+      const day = todayTasks.filter((t) => t.when !== WHEN.EVENING);
       const out = [{ key: 'today', title: null, data: day }];
       if (evening.length) {
         out.push({ key: 'evening', title: 'This Evening', icon: 'moon', data: evening });
@@ -185,7 +197,7 @@ function useSections(state, route) {
     }
 
     return [{ key: listId, title: null, data: tasks }];
-  }, [state, route.params]);
+  }, [state, route.params, recordToday]);
 }
 
 // Group tasks by their When (scheduled date) field for the date views — the same

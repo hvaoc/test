@@ -465,14 +465,18 @@ Each phase is independently shippable and leaves the app working.
   `QueryTasks / SearchTasks / GetTask / MoveTask / SetTaskField / ToggleComplete /
   CreateTask / DeleteTask` + operator filters (§3) + title FTS + op-log sync.
   Unit-tested; validated at 1M (§7). *No UI change yet.*
-- **Phase 2 — Frontend on the `RecordStore` port (§5.1).** *In progress.* The web
-  adapter (`public/record.worker.js`) + client (`src/store/recordClient.js`) are
-  built and **verified end-to-end in the browser** (`public/record-demo.html`): an
-  interactive Today view whose every read is `queryTasks`/`searchTasks` and every
-  write is a per-entity op (`createTask`/`toggleComplete`/`moveTask`), round-tripping
-  through `sqlite.wasm`/OPFS with data persisting across reloads (Web Lock
-  single-owner reacquire, no handle contention). **Remaining:** wire a real screen.
-  See the integration seam below.
+- **Phase 2 — Frontend on the `RecordStore` port (§5.1).** *In progress — first
+  real screen wired.* The web adapter (`public/record.worker.js`) + client
+  (`src/store/recordClient.js`) are built, and the **live app's Today list now reads
+  from the record store's query API** (`src/store/recordMirror.js` → `useRecordList`
+  in `src/screens/ListScreen.js`). `TasksProvider` keeps the record store mirrored
+  from current tasks; the Today branch renders from `queryList('today')` and falls
+  back to the in-memory selector if the store isn't ready. Verified in the running
+  app: a task created via the real composer is mirrored into `sqlite.wasm`/OPFS and
+  returned by `queryList('today')`, which drives the rendered list. **Remaining:**
+  per-entity writes to drop the mirror's transitional lag; port the other smart
+  lists' filters into `queryList`; and the native (Wails/gomobile) adapter that
+  binds `core/record` so desktop/mobile use the same port. See the seam below.
 - **Phase 3 — Web adapter (§5.3).** JS record adapter over the official
   `sqlite.wasm` + OPFS VFS in a dedicated Worker, behind the `RecordStore` port;
   single-owner Web Lock across tabs. Prove 1M in-browser (heap bounded, query/FTS

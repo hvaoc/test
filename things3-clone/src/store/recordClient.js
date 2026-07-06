@@ -71,6 +71,7 @@ export const recordStore = {
   hasData: () => call('hasData'),
   // Reads (paged, indexed) — return list-view rows, not the whole workspace.
   queryTasks: (q) => call('queryTasks', [q]),
+  queryList: (listId, params) => call('queryList', [listId, params]),
   searchTasks: (text, q) => call('searchTasks', [text, q]),
   countTasks: (q) => call('countTasks', [q]),
   getTask: (id) => call('getTask', [id]),

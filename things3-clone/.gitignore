@@ -11,3 +11,6 @@ dist-web/
 # local sync-server data (created by cmd/server / cmd/ysync-server -data)
 desktop/sync-data.json
 desktop/ysync-data/
+
+# built loadtest binary
+/desktop/loadtest

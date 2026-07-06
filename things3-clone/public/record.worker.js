@@ -76,9 +76,9 @@ function migrate() {
   run(`CREATE TABLE IF NOT EXISTS presence (kind TEXT, id TEXT, present INTEGER, hlc TEXT, PRIMARY KEY(kind,id))`);
   run(`CREATE TABLE IF NOT EXISTS oplog (seq INTEGER PRIMARY KEY AUTOINCREMENT, optype TEXT, kind TEXT, id TEXT, field TEXT DEFAULT '', elem TEXT DEFAULT '', value TEXT DEFAULT '', present INTEGER DEFAULT 0, hlc TEXT, synced INTEGER DEFAULT 0)`);
   run(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
-  run(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT DEFAULT '', projectId TEXT DEFAULT '', whenDate TEXT DEFAULT '', deadline TEXT DEFAULT '', priority INTEGER DEFAULT 0, completed INTEGER DEFAULT 0, rank TEXT DEFAULT '', notesPreview TEXT DEFAULT '')`);
+  run(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT DEFAULT '', projectId TEXT DEFAULT '', whenDate TEXT DEFAULT '', deadline TEXT DEFAULT '', priority INTEGER DEFAULT 0, completed INTEGER DEFAULT 0, status TEXT DEFAULT 'open', parentId TEXT DEFAULT '', ord REAL DEFAULT 0, rank TEXT DEFAULT '', notesPreview TEXT DEFAULT '')`);
   run('CREATE INDEX IF NOT EXISTS tasks_proj_comp ON tasks(projectId, completed, rank)');
-  run('CREATE INDEX IF NOT EXISTS tasks_when ON tasks(completed, whenDate, rank)');
+  run('CREATE INDEX IF NOT EXISTS tasks_status_ord ON tasks(status, ord)');
   run('CREATE INDEX IF NOT EXISTS tasks_rank ON tasks(rank)');
   run(`CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(id UNINDEXED, title)`);
   node = metaGet('node') || ('web-' + Math.random().toString(16).slice(2, 10));
@@ -142,13 +142,19 @@ function reproject(id, ftsDirty) {
   for (const r of all("SELECT field,value FROM fields WHERE kind='task' AND id=?", [id])) f[r.field] = r.value;
   const title = decode(f.title) || '';
   const notes = decode(f.notes) || '';
-  run(`INSERT INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,rank,notesPreview)
-       VALUES(?,?,?,?,?,?,?,?,?)
+  // The app models completion as `status` (open/completed/canceled/trashed); keep a
+  // derived `completed` flag too. Order mirrors the app's numeric `order`.
+  const status = decode(f.status) || (decode(f.completed) ? 'completed' : 'open');
+  const ord = Number(decode(f.order));
+  run(`INSERT INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,status,parentId,ord,rank,notesPreview)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET title=excluded.title, projectId=excluded.projectId,
          whenDate=excluded.whenDate, deadline=excluded.deadline, priority=excluded.priority,
-         completed=excluded.completed, rank=excluded.rank, notesPreview=excluded.notesPreview`,
+         completed=excluded.completed, status=excluded.status, parentId=excluded.parentId,
+         ord=excluded.ord, rank=excluded.rank, notesPreview=excluded.notesPreview`,
     [id, title, decode(f.projectId) || '', decode(f.when) || '', decode(f.deadline) || '',
-      decode(f.priority) || 0, decode(f.completed) ? 1 : 0, decode(f.rank) || '', notes.slice(0, 120)]);
+      decode(f.priority) || 0, status === 'completed' ? 1 : 0, status, decode(f.parentId) || '',
+      Number.isFinite(ord) ? ord : 0, decode(f.rank) || '', notes.slice(0, 120)]);
   if (!ftsDirty) return;
   run('DELETE FROM tasks_fts WHERE id=?', [id]);
   run('INSERT INTO tasks_fts(id,title) VALUES(?,?)', [id, title]);
@@ -174,6 +180,8 @@ function createTask(t) {
     fieldOp(id, 'title', t.title || ''), fieldOp(id, 'projectId', t.projectId || ''),
     fieldOp(id, 'when', t.when || ''), fieldOp(id, 'deadline', t.deadline || ''),
     fieldOp(id, 'priority', t.priority || 0), fieldOp(id, 'completed', !!t.completed),
+    fieldOp(id, 'status', t.status || 'open'), fieldOp(id, 'parentId', t.parentId || ''),
+    fieldOp(id, 'order', t.order != null ? t.order : 0),
     fieldOp(id, 'notes', t.notes || ''), fieldOp(id, 'rank', rank),
   ];
   for (const tag of t.tags || []) ops.push({ type: 'set', kind: 'task', id, field: 'tags', elem: canon(tag), present: true });
@@ -245,6 +253,22 @@ function countTasks(q) {
   const { clause, args } = whereOf(q || {}, '');
   return (one('SELECT COUNT(*) AS n FROM tasks' + clause, args) || { n: 0 }).n;
 }
+
+// queryList runs a smart-list query in SQL (mirrors src/store/selectors.js). Starts
+// with 'today'; other lists fall back to the in-memory selector until ported.
+function queryList(listId, params) {
+  params = params || {};
+  if (listId === 'today') {
+    const today = params.todayKey || '';
+    return all(`SELECT ${COLS} FROM tasks
+      WHERE status='open' AND (parentId IS NULL OR parentId='')
+        AND ( whenDate IN ('today','evening')
+              OR (whenDate LIKE '____-__-__' AND whenDate <= ?)
+              OR (deadline LIKE '____-__-__' AND deadline <= ?) )
+      ORDER BY ord, id`, [today, today]).map(toRow);
+  }
+  throw new Error('record: queryList unsupported list ' + listId);
+}
 function getTask(id) {
   const p = one("SELECT present FROM presence WHERE kind='task' AND id=?", [id]);
   if (!p || p.present === 0) return null;
@@ -266,6 +290,8 @@ function hydrate(tasks) {
         fieldOp(t.id, 'title', t.title || ''), fieldOp(t.id, 'projectId', t.projectId || ''),
         fieldOp(t.id, 'when', t.when || ''), fieldOp(t.id, 'deadline', t.deadline || ''),
         fieldOp(t.id, 'priority', t.priority || 0), fieldOp(t.id, 'completed', !!t.completed),
+        fieldOp(t.id, 'status', t.status || 'open'), fieldOp(t.id, 'parentId', t.parentId || ''),
+        fieldOp(t.id, 'order', t.order != null ? t.order : 0),
         fieldOp(t.id, 'notes', t.notes || ''), fieldOp(t.id, 'rank', rank),
       ]) { op.hlc = stamp(); applyOp(op, true); }
       for (const tag of t.tags || []) { const op = { type: 'set', kind: 'task', id: t.id, field: 'tags', elem: canon(tag), present: true, hlc: stamp() }; applyOp(op, true); }
@@ -310,6 +336,7 @@ const handlers = {
   hydrate: (tasks) => hydrate(tasks),
   hasData: () => countTasks({}) > 0,
   queryTasks: (q) => queryTasks(q),
+  queryList: (listId, params) => queryList(listId, params),
   searchTasks: (text, q) => searchTasks(text, q),
   countTasks: (q) => countTasks(q),
   getTask: (id) => getTask(id),
