@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,11 +34,12 @@ import (
 
 // Store owns the SQLite handle + HLC clock and serialises writes.
 type Store struct {
-	mu   sync.Mutex
-	db   *sql.DB
-	node string
-	clk  *clock
-	now  func() int64
+	mu      sync.Mutex
+	db      *sql.DB
+	node    string
+	clk     *clock
+	rankCtr uint64 // monotonic append-order counter (persisted in meta)
+	now     func() int64
 }
 
 // Open creates/opens the database at path (":memory:" for tests).
@@ -54,7 +56,24 @@ func Open(path string) (*Store, error) {
 	}
 	s.node = s.ensureNode()
 	s.clk = &clock{node: s.node, last: s.loadClock(), now: func() int64 { return s.now() }}
+	s.rankCtr = s.loadRankCtr()
 	return s, nil
+}
+
+// nextRank returns the next append-order key (monotonic). Caller holds s.mu; the
+// bumped counter is persisted by saveClockTx in the same transaction.
+func (s *Store) nextRank() string {
+	s.rankCtr++
+	return Pad62(s.rankCtr)
+}
+
+func (s *Store) loadRankCtr() uint64 {
+	var v string
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='rankctr'`).Scan(&v); err == nil {
+		n, _ := strconv.ParseUint(v, 10, 64)
+		return n
+	}
+	return 0
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -98,6 +117,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   rank TEXT NOT NULL DEFAULT '',
   notesPreview TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS tasks_rank ON tasks(rank);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(projectId, rank);
 CREATE INDEX IF NOT EXISTS tasks_when ON tasks(whenDate) WHERE completed = 0;
 CREATE INDEX IF NOT EXISTS tasks_completed ON tasks(completed, rank);
@@ -184,9 +204,12 @@ func applyOpTx(tx *sql.Tx, op Op, local bool) (bool, error) {
 	return applied, nil
 }
 
-// reprojectTaskTx rebuilds the tasks + tasks_fts read-model rows for one task from
-// the CRDT source of truth. Called after every write that touches a task.
-func reprojectTaskTx(tx *sql.Tx, id string) error {
+// reprojectTaskTx rebuilds the tasks read-model row for one task from the CRDT
+// source of truth. Called after every write that touches a task. The FTS row is
+// rewritten only when ftsDirty (title/notes changed or the task was created/
+// deleted) — most edits (complete, priority, date, reorder) don't touch searchable
+// text, so they skip the FTS delete/insert entirely and stay O(log n).
+func reprojectTaskTx(tx *sql.Tx, id string, ftsDirty bool) error {
 	var present int
 	err := tx.QueryRow(`SELECT present FROM presence WHERE kind='task' AND id=?`, id).Scan(&present)
 	if err == sql.ErrNoRows || (err == nil && present == 0) {
@@ -225,11 +248,29 @@ func reprojectTaskTx(tx *sql.Tx, id string) error {
 		asString(f["rank"]), preview(notes)); e != nil {
 		return e
 	}
+	if !ftsDirty {
+		return nil
+	}
 	if _, e := tx.Exec(`DELETE FROM tasks_fts WHERE id=?`, id); e != nil {
 		return e
 	}
 	_, e := tx.Exec(`INSERT INTO tasks_fts(id,title,notes) VALUES(?,?,?)`, id, asString(f["title"]), notes)
 	return e
+}
+
+// opAffectsFTS reports whether one op changes searchable text (title/notes) or a
+// task's existence — the only cases that require rewriting its FTS row.
+func opAffectsFTS(op Op) bool {
+	return op.Type == "presence" || (op.Type == "field" && (op.Field == "title" || op.Field == "notes"))
+}
+
+func opsAffectFTS(ops []Op) bool {
+	for _, op := range ops {
+		if opAffectsFTS(op) {
+			return true
+		}
+	}
+	return false
 }
 
 func preview(s string) string {
@@ -282,9 +323,7 @@ func (s *Store) CreateTask(t TaskInput) (string, error) {
 		t.ID = "task-" + randID()
 	}
 	if t.Rank == "" {
-		var maxRank string
-		_ = s.db.QueryRow(`SELECT COALESCE(MAX(rank),'') FROM tasks`).Scan(&maxRank)
-		t.Rank = RankAfter(maxRank)
+		t.Rank = s.nextRank()
 	}
 	return t.ID, s.writeOps(t.fieldOps(), t.ID)
 }
@@ -300,8 +339,6 @@ func (s *Store) Seed(tasks []TaskInput) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var lastRank string
-	_ = tx.QueryRow(`SELECT COALESCE(MAX(rank),'') FROM tasks`).Scan(&lastRank)
 	touched := map[string]bool{}
 	for i := range tasks {
 		t := tasks[i]
@@ -309,8 +346,7 @@ func (s *Store) Seed(tasks []TaskInput) error {
 			t.ID = fmt.Sprintf("task-%s-%d", randID(), i)
 		}
 		if t.Rank == "" {
-			lastRank = RankAfter(lastRank)
-			t.Rank = lastRank
+			t.Rank = s.nextRank()
 		}
 		for _, op := range t.fieldOps() {
 			op.HLC = s.clk.local()
@@ -321,7 +357,7 @@ func (s *Store) Seed(tasks []TaskInput) error {
 		touched[t.ID] = true
 	}
 	for id := range touched {
-		if err := reprojectTaskTx(tx, id); err != nil {
+		if err := reprojectTaskTx(tx, id, true); err != nil { // seed populates FTS
 			return err
 		}
 	}
@@ -329,6 +365,111 @@ func (s *Store) Seed(tasks []TaskInput) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// BulkLoad imports many tasks fast: direct batched inserts into the CRDT tables +
+// read-model, WITHOUT the per-op read/merge or oplog. It is an IMPORT/initial-seed
+// path (e.g. hydrating from a server's full state), not a sync-write path — imported
+// rows are authoritative locally and do not queue for push. Commits every `batch`
+// rows so no single transaction grows unbounded. Empty ranks are appended.
+func (s *Store) BulkLoad(tasks []TaskInput, batch int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if batch <= 0 {
+		batch = 20000
+	}
+	for start := 0; start < len(tasks); start += batch {
+		end := min(start+batch, len(tasks))
+		if err := s.bulkBatch(tasks[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback() //nolint:errcheck
+		}
+	}()
+
+	fStmt, err := tx.Prepare(`INSERT OR REPLACE INTO fields(kind,id,field,value,hlc) VALUES('task',?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer fStmt.Close()
+	pStmt, err := tx.Prepare(`INSERT OR REPLACE INTO presence(kind,id,present,hlc) VALUES('task',?,1,?)`)
+	if err != nil {
+		return err
+	}
+	defer pStmt.Close()
+	tStmt, err := tx.Prepare(`INSERT OR REPLACE INTO tasks(id,title,projectId,whenDate,deadline,priority,completed,rank,notesPreview)
+		VALUES(?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer tStmt.Close()
+	ftsStmt, err := tx.Prepare(`INSERT INTO tasks_fts(id,title,notes) VALUES(?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer ftsStmt.Close()
+
+	for i := range tasks {
+		t := tasks[i]
+		if t.ID == "" {
+			t.ID = "task-" + randID()
+		}
+		if t.Rank == "" {
+			t.Rank = s.nextRank()
+		}
+		h := s.clk.local().String()
+		scalars := [][2]string{
+			{"title", canonAny(t.Title)}, {"projectId", canonAny(t.ProjectID)},
+			{"when", canonAny(t.When)}, {"deadline", canonAny(t.Deadline)},
+			{"priority", canonAny(t.Priority)}, {"completed", canonAny(t.Completed)},
+			{"notes", canonAny(t.Notes)}, {"rank", canonAny(t.Rank)},
+		}
+		if _, err = pStmt.Exec(t.ID, h); err != nil {
+			return err
+		}
+		for _, kv := range scalars {
+			if _, err = fStmt.Exec(t.ID, kv[0], kv[1], h); err != nil {
+				return err
+			}
+		}
+		for _, tag := range t.Tags {
+			if _, err = tx.Exec(`INSERT OR REPLACE INTO setelems(kind,id,field,elem,present,hlc) VALUES('task',?,'tags',?,1,?)`,
+				t.ID, canonAny(tag), h); err != nil {
+				return err
+			}
+		}
+		if _, err = tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(t.Completed), t.Rank, preview(t.Notes)); err != nil {
+			return err
+		}
+		if _, err = ftsStmt.Exec(t.ID, t.Title, t.Notes); err != nil {
+			return err
+		}
+	}
+	if err = s.saveClockTx(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Checkpoint flushes the WAL into the main database (TRUNCATE), reclaiming WAL
+// space. Call after a large BulkLoad import to bound disk use and get an accurate
+// on-disk size.
+func (s *Store) Checkpoint() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
 }
 
 // SetTaskField sets one scalar field (title, when, priority, …).
@@ -388,7 +529,7 @@ func (s *Store) writeOps(ops []Op, taskID string) error {
 		}
 	}
 	if taskID != "" {
-		if err := reprojectTaskTx(tx, taskID); err != nil {
+		if err := reprojectTaskTx(tx, taskID, opsAffectFTS(ops)); err != nil {
 			return err
 		}
 	}
@@ -461,7 +602,7 @@ func (q Query) where() (string, []any) {
 // bounded by Limit, never the dataset.
 func (s *Store) QueryTasks(q Query) ([]TaskRow, error) {
 	where, args := q.where()
-	sqlStr := `SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM tasks` + where + ` ORDER BY rank`
+	sqlStr := `SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM tasks` + where + ` ORDER BY rank, id`
 	if q.Limit > 0 {
 		sqlStr += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
 	}
@@ -475,7 +616,7 @@ func (s *Store) SearchTasks(text string, q Query) ([]TaskRow, error) {
 	// tasks_fts MATCH gives ids; join back to the read-model for columns + filters.
 	inner := `SELECT id FROM tasks_fts WHERE tasks_fts MATCH ?`
 	full := `SELECT t.id,t.title,t.projectId,t.whenDate,t.deadline,t.priority,t.completed,t.rank
-	         FROM tasks t JOIN (` + inner + `) m ON m.id=t.id` + where + ` ORDER BY t.rank`
+	         FROM tasks t JOIN (` + inner + `) m ON m.id=t.id` + where + ` ORDER BY t.rank, t.id`
 	if q.Limit > 0 {
 		full += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
 	}
@@ -638,8 +779,8 @@ func (s *Store) ApplyRemote(ops []Op) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback() //nolint:errcheck
-	touched := map[string]bool{}
+	defer tx.Rollback()          //nolint:errcheck
+	touched := map[string]bool{} // task id -> ftsDirty
 	for _, op := range ops {
 		s.clk.witness(op.HLC)
 		if op.Node() == s.node {
@@ -650,11 +791,11 @@ func (s *Store) ApplyRemote(ops []Op) error {
 			return err
 		}
 		if applied && op.Kind == "task" {
-			touched[op.ID] = true
+			touched[op.ID] = touched[op.ID] || opAffectsFTS(op)
 		}
 	}
-	for id := range touched {
-		if err := reprojectTaskTx(tx, id); err != nil {
+	for id, ftsDirty := range touched {
+		if err := reprojectTaskTx(tx, id, ftsDirty); err != nil {
 			return err
 		}
 	}
@@ -691,7 +832,10 @@ func (s *Store) loadClock() HLC {
 }
 
 func (s *Store) saveClockTx(tx *sql.Tx) error {
-	_, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES('hlc',?)`, s.clk.current().String())
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES('hlc',?)`, s.clk.current().String()); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES('rankctr',?)`, strconv.FormatUint(s.rankCtr, 10))
 	return err
 }
 

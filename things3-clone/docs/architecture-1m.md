@@ -244,9 +244,44 @@ drive this document:
   250k. The app is unusable well before it runs out of memory.
 - Both walls are consequences of "the workspace is one CRDT unit." The record
   layer (§3) makes a 1-field edit O(1) and memory bounded by the visible page, not
-  the dataset. Phase 1 re-runs this harness against the record layer to prove it.
+  the dataset.
 
-Reproduce: `cd desktop && go run ./cmd/loadtest -n 10000,100000,250000,500000`.
+**Measured — record layer (`core/record`, same workload, on-disk SQLite):**
+
+| tasks | heap | dbsize | edit | query | search |
+|---:|---:|---:|---:|---:|---:|
+| 10k | 1.9 MB | 15 MB | 0.7 ms | 0.3 ms | 0.2 ms |
+| 100k | 1.9 MB | 150 MB | 0.7 ms | 0.3 ms | 0.2 ms |
+| 500k | 1.9 MB | 761 MB | 0.8 ms | 0.3 ms | 0.2 ms |
+| **1M** | **2.0 MB** | **1.5 GB** | **0.8 ms** | **0.4 ms** | **0.3 ms** |
+
+**Every interactive metric is flat from 10k to 1M.** Head-to-head at the counts
+that matter:
+
+| | ygo whole-doc | record layer |
+|---|---|---|
+| heap @ 100k | 734 MB | **1.9 MB** |
+| heap @ 1M | ~7.3 GB (web OOM) | **2.0 MB** |
+| 1-field edit @ 100k | 746 ms | **0.7 ms** |
+| 1-field edit @ 1M | (unreachable) | **0.8 ms** |
+| full-text search @ 1M | (unreachable) | **0.3 ms** (FTS5, rare term) |
+
+Heap is bounded because rows live on disk and only the visible page is read; edits
+are O(1) because a write touches one entity's rows, not the document; search is a
+sub-millisecond FTS5 index lookup. `dbsize` grows linearly (~1.5 KB/task); `seed`
+(~98 s for a 1M one-shot bulk import) is a cold-start import cost, not an
+interactive path — real use adds tasks incrementally.
+
+This validates the two-layer design: **1M tasks, fully interactive, offline, with
+full-text search — on the platform (web) the current model can't get a third of the
+way to.**
+
+The load test also earned its keep by catching two real bugs before they shipped:
+an **O(N²) ordering blow-up** (a midpoint-toward-infinity append grew rank strings
+unboundedly — now a fixed-width base-62 counter) and an **O(n) FTS rewrite on every
+edit** (now skipped unless the searchable text changed).
+
+Reproduce: `cd desktop && go run ./cmd/loadtest -engine both -n 10000,100000,500000`.
 
 ---
 

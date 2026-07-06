@@ -25,29 +25,145 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"things3-clone-desktop/core/record"
 	"things3-clone-desktop/core/ydoc"
 )
 
 func main() {
 	nflag := flag.String("n", "10000,100000", "comma-separated task counts to measure")
 	notesLen := flag.Int("notes", 40, "approx characters of notes per task")
+	engine := flag.String("engine", "ydoc", "which engine to measure: ydoc | record | both")
 	flag.Parse()
 
 	counts := parseCounts(*nflag)
-	fmt.Printf("loadtest — live core/ydoc engine, notes≈%d chars/task\n\n", *notesLen)
-	fmt.Printf("%10s %10s %11s %10s %10s %10s %10s\n",
-		"tasks", "heap", "snapshot", "load", "material", "fulldiff", "editdiff")
-	fmt.Printf("%10s %10s %11s %10s %10s %10s %10s\n",
-		"-----", "----", "--------", "----", "--------", "--------", "--------")
 
-	for _, n := range counts {
-		measure(n, *notesLen)
+	if *engine == "ydoc" || *engine == "both" {
+		fmt.Printf("== core/ydoc (whole-document, current) — notes≈%d chars/task ==\n\n", *notesLen)
+		fmt.Printf("%10s %10s %11s %10s %10s %10s %10s\n",
+			"tasks", "heap", "snapshot", "load", "material", "fulldiff", "editdiff")
+		fmt.Printf("%10s %10s %11s %10s %10s %10s %10s\n",
+			"-----", "----", "--------", "----", "--------", "--------", "--------")
+		for _, n := range counts {
+			measure(n, *notesLen)
+		}
+		fmt.Println()
 	}
+	if *engine == "record" || *engine == "both" {
+		fmt.Printf("== core/record (query-oriented, proposed) — notes≈%d chars/task ==\n\n", *notesLen)
+		fmt.Printf("%10s %10s %10s %10s %10s %10s %10s\n",
+			"tasks", "heap", "dbsize", "seed", "edit", "query", "search")
+		fmt.Printf("%10s %10s %10s %10s %10s %10s %10s\n",
+			"-----", "----", "------", "----", "----", "-----", "------")
+		for _, n := range counts {
+			measureRecord(n, *notesLen)
+		}
+		fmt.Println()
+	}
+}
+
+// measureRecord drives the query-oriented record layer: bulk-seed N tasks to an
+// on-disk SQLite db, then measure resident heap (should stay bounded — data is on
+// disk), a single O(1) edit, a paged project query, and an FTS search.
+func measureRecord(n, notesLen int) {
+	dir, err := os.MkdirTemp("", "loadtest-rec")
+	if err != nil {
+		fmt.Printf("%10d  ERROR tmpdir: %v\n", n, err)
+		return
+	}
+	defer os.RemoveAll(dir)
+	dbPath := filepath.Join(dir, "rec.db")
+
+	st, err := record.Open(dbPath)
+	if err != nil {
+		fmt.Printf("%10d  ERROR open: %v\n", n, err)
+		return
+	}
+	defer st.Close()
+
+	projects := max(1, n/200)
+	tasks := buildTaskInputs(n, notesLen, projects)
+	midID := tasks[n/2].ID
+
+	t0 := time.Now()
+	if err := st.BulkLoad(tasks, 4000); err != nil {
+		fmt.Printf("%10d  ERROR seed: %v\n", n, err)
+		return
+	}
+	_ = st.Checkpoint() // flush WAL so dbsize reflects real on-disk data
+	seedDur := time.Since(t0)
+
+	tasks = nil
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	heap := ms.HeapAlloc
+
+	t1 := time.Now()
+	if err := st.ToggleComplete(midID, true); err != nil {
+		fmt.Printf("%10d  ERROR edit: %v\n", n, err)
+		return
+	}
+	editDur := time.Since(t1)
+
+	t2 := time.Now()
+	if _, err := st.QueryTasks(record.Query{ProjectID: "proj-0", Limit: 50}); err != nil {
+		fmt.Printf("%10d  ERROR query: %v\n", n, err)
+		return
+	}
+	queryDur := time.Since(t2)
+
+	// Search a rare token (a specific task's number) — realistic: matches ~1 row,
+	// unlike "lorem" which every task contains (worst-case match-everything).
+	t3 := time.Now()
+	if _, err := st.SearchTasks(strconv.Itoa(n/2+1), record.Query{Limit: 50}); err != nil {
+		fmt.Printf("%10d  ERROR search: %v\n", n, err)
+		return
+	}
+	searchDur := time.Since(t3)
+
+	fmt.Printf("%10d %10s %10s %10s %10s %10s %10s\n",
+		n, human(heap), humanBytes(dbSize(dir)),
+		ms3(seedDur), ms3(editDur), ms3(queryDur), ms3(searchDur))
+}
+
+func buildTaskInputs(n, notesLen, projects int) []record.TaskInput {
+	notes := strings.Repeat("lorem ipsum dolor ", 1+notesLen/18)
+	if len(notes) > notesLen {
+		notes = notes[:notesLen]
+	}
+	out := make([]record.TaskInput, n)
+	for i := 0; i < n; i++ {
+		out[i] = record.TaskInput{
+			ID:        "task-" + strconv.Itoa(i),
+			Title:     "Task number " + strconv.Itoa(i) + " do the thing",
+			ProjectID: "proj-" + strconv.Itoa(i%projects),
+			When:      "2026-07-05",
+			Priority:  i % 4,
+			Completed: i%3 == 0,
+			Notes:     notes,
+			Tags:      []string{"work"},
+		}
+	}
+	return out
+}
+
+// dbSize sums the sqlite db + WAL/SHM sidecar files in dir.
+func dbSize(dir string) int {
+	total := 0
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			total += int(info.Size())
+		}
+	}
+	return total
 }
 
 func measure(n, notesLen int) {

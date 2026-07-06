@@ -1,40 +1,56 @@
-// Fractional string ranks for ordering (docs/architecture-1m.md §3).
+// Fractional ordering keys (docs/architecture-1m.md §3).
 //
-// Position is a lexicographic string key, not a float. To move an item between two
-// neighbours you compute a key strictly between their keys; unlike the float
-// midpoint the current app uses, string keys subdivide INDEFINITELY, so a list can
-// be reordered a million times in the same gap without ever exhausting precision or
-// needing a global relabel. The key is a plain record field, so it syncs as an
-// ordinary LWW delta.
+// Position is a lexicographic string key, not a float, so it subdivides
+// indefinitely and never needs a global relabel. Two operations:
 //
-// Keys are drawn from a base-62 digit alphabet whose bytewise order matches its
-// alphabet order — the same order SQLite's default TEXT collation and Go string
-// compare use. RankBetween(a, b) returns a key k with a < k < b bytewise. Empty a
-// means "before b" (start); empty b means "after a" (end / +infinity).
+//   - APPEND (the hot path: adding to a list end) uses a fixed-width base-62
+//     counter, Pad62. Monotonic and constant-length, so N sequential appends cost
+//     O(N) storage total, not O(N²). (A midpoint-toward-infinity would converge on
+//     the top digit and then grow the key ~1 char every few appends — O(N²); the
+//     load test caught exactly that.)
+//   - INSERT / REORDER between two existing neighbours uses RankBetween, the
+//     midpoint of the two keys. Bounded, and the key stays a plain LWW field.
+//
+// Both draw from a base-62 alphabet whose bytewise order matches its alphabet
+// order — the order SQLite's default TEXT collation and Go string compare use.
 package record
 
 import "strings"
 
 const digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+// rankWidth is the fixed width of an append key. 62^11 ≈ 5.2e19 > math.MaxUint64,
+// so every uint64 counter value fits without truncation, and all append keys sort
+// correctly against each other by plain bytewise comparison.
+const rankWidth = 11
+
 func digitVal(b byte) int { return strings.IndexByte(digits, b) }
 
+// Pad62 renders n as a fixed-width, zero-left-padded base-62 string. Larger n →
+// lexicographically greater key, so an incrementing counter yields append order.
+func Pad62(n uint64) string {
+	buf := make([]byte, rankWidth)
+	for i := rankWidth - 1; i >= 0; i-- {
+		buf[i] = digits[n%62]
+		n /= 62
+	}
+	return string(buf)
+}
+
 // RankBetween returns a key strictly between a and b under bytewise comparison.
-// Callers pass a < b (or an empty bound); the result is stable and deterministic.
+// Callers pass a < b (an empty bound means start/end). Used for inserts and
+// reorders between two existing neighbours.
 func RankBetween(a, b string) string {
 	var sb strings.Builder
 	for i := 0; ; i++ {
-		// a's digit at i, or the lowest value (0) once a is exhausted.
 		va := 0
 		if i < len(a) {
 			va = digitVal(a[i])
 		}
-		// b's digit at i. Empty/exhausted b is the supremum (one past the top).
-		vb := len(digits)
+		vb := len(digits) // empty/exhausted b is the supremum (one past the top)
 		if b != "" && i < len(b) {
 			vb = digitVal(b[i])
 		}
-
 		if va == vb {
 			sb.WriteByte(digits[va]) // shared prefix — copy and descend
 			continue
@@ -44,13 +60,9 @@ func RankBetween(a, b string) string {
 			sb.WriteByte(digits[mid]) // room between the digits — done
 			return sb.String()
 		}
-		// Digits are adjacent (mid == va): keep a's digit and descend into the gap
-		// above it, with the upper bound now open (+infinity) below this position.
+		// Adjacent digits: keep a's digit and descend into the gap above it, with
+		// the upper bound now open (+infinity) below this position.
 		sb.WriteByte(digits[va])
 		b = ""
 	}
 }
-
-// RankAfter returns a key that sorts after last — appending to a list's end. Pass
-// "" for an empty list.
-func RankAfter(last string) string { return RankBetween(last, "") }
