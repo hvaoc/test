@@ -216,11 +216,32 @@ For a task app that is the right trade. We are choosing it with eyes open.
 
 ## 7. Prove-the-wall (validation gate)
 
-Before/while building, a load test generates 100k / 500k / 1M synthetic tasks and
-measures, on web-WASM and native: heap, startup decode/materialize time, and
-per-keystroke search latency for (a) today's whole-doc model and (b) the query-
-oriented record layer. This pins the current ceiling and proves the new engine
-against real numbers. It commits us to nothing and is the cheapest thing here.
+`cmd/loadtest` drives the live `core/ydoc` engine at increasing task counts and
+measures heap, snapshot size, load/materialize time, and — critically — the cost of
+a **single-field edit** under the current whole-state bridge.
+
+**Measured baseline (current whole-doc ygo model, notes≈40 chars/task):**
+
+| tasks | heap | snapshot | load | materialize | 1-field edit |
+|---:|---:|---:|---:|---:|---:|
+| 10k | 74 MB | 3.6 MB | 103 ms | 59 ms | 74 ms |
+| 100k | 734 MB | 38 MB | 1.17 s | 707 ms | **746 ms** |
+| 250k | 1.8 GB | 96 MB | 2.85 s | 1.96 s | **1.99 s** |
+| 500k | 3.6 GB | 194 MB | 5.9 s | 4.5 s | **4.1 s** |
+
+The curve is dead-linear at **~7.3 KB resident heap per task**. Conclusions that
+drive this document:
+
+- **Web (wasm32, ≤4 GB address space) OOMs at ~400–500k tasks.** 1M ≈ 7.3 GB is
+  structurally impossible on web today.
+- **The interactive wall comes far earlier than the memory wall:** a single-field
+  edit re-reads the whole document, so every save is ~0.75 s at 100k and ~2 s at
+  250k. The app is unusable well before it runs out of memory.
+- Both walls are consequences of "the workspace is one CRDT unit." The record
+  layer (§3) makes a 1-field edit O(1) and memory bounded by the visible page, not
+  the dataset. Phase 1 re-runs this harness against the record layer to prove it.
+
+Reproduce: `cd desktop && go run ./cmd/loadtest -n 10000,100000,250000,500000`.
 
 ---
 
