@@ -3,7 +3,9 @@ module things3-clone-desktop
 go 1.25.0
 
 require (
+	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/lib/pq v1.12.3
 	github.com/reearth/ygo v1.30.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/crypto v0.53.0
@@ -37,6 +39,7 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	golang.org/x/mobile v0.0.0-20260611195102-4dd8f1dbf5d2 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect

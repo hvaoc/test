@@ -23,6 +23,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8090", "listen address")
 	data := flag.String("data", "", "directory for persistence (empty = in-memory, lost on restart)")
+	pgDSN := flag.String("postgres", "", "Postgres DSN for sync persistence (e.g. postgres://user:pass@host:5432/db?sslmode=disable); when set, sync data lives in Postgres and -data (if given) holds only the accounts file")
 	smtp := flag.String("smtp", "localhost:1025", "SMTP host:port for invite emails (dev: MailPit); empty = log only")
 	mailFrom := flag.String("mail-from", "PlayTasks <no-reply@playtasks.local>", "From address for emails")
 	appURL := flag.String("app-url", "http://localhost:8081", "base URL of the web app, used in invite links")
@@ -30,10 +31,21 @@ func main() {
 
 	var store ysync.Persistence
 	authPath := ""
-	if *data == "" {
+	switch {
+	case *pgDSN != "":
+		pg, err := ysync.NewPostgresPersistence(*pgDSN)
+		if err != nil {
+			log.Fatalf("ysync: postgres: %v", err)
+		}
+		store = pg
+		if *data != "" {
+			authPath = filepath.Join(*data, "auth.json")
+		}
+		log.Printf("ysync: Postgres persistence for sync data; accounts at %q", authPath)
+	case *data == "":
 		store = ysync.NewMemPersistence()
 		log.Printf("ysync: in-memory persistence (accounts + data lost on restart)")
-	} else {
+	default:
 		fp, err := ysync.NewFilePersistence(*data)
 		if err != nil {
 			log.Fatalf("ysync: persistence: %v", err)
