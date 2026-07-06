@@ -1,8 +1,9 @@
 # Architecture: local-first at 1,000,000 tasks
 
-Status: **accepted, implementation in progress**
-Scope: the offline data + sync core shared by web (WASM), desktop (Wails), and
-mobile (gomobile).
+Status: **accepted, implementation in progress** (Phase 0–1 done; see §8)
+Scope: the offline data + sync core across four tiers — web (`sqlite.wasm`/OPFS),
+desktop (Wails) and mobile (gomobile) on native SQLite, and the server on Postgres —
+all behind one storage port (§5.1) speaking one field-level op wire-format.
 
 This document is the source of truth for the re-architecture. Every decision here
 is justified against a hard target: **a single workspace with 1,000,000 tasks,
@@ -204,29 +205,143 @@ peek/drop for crash-safety) is the record-layer transport. Changes:
 
 ---
 
-## 5. Per-platform storage — one logical model
+## 5. Storage: one port, per-tier adapters
 
-| Platform | Record layer store | Text layer | Notes |
-|---|---|---|---|
-| Desktop (Wails) | native SQLite via Go core (`modernc.org/sqlite`) + FTS5 | ygo per-task | no memory concern at 1M |
-| Mobile (gomobile) | native SQLite via the same Go core + FTS5 | ygo per-task | same code as desktop |
-| Web (WASM) | **SQLite-WASM (OPFS) with a single-owner Web Lock** | ygo per-task | decided — matches native for shared code + full FTS5; the read-model is disposable/rebuildable so single-context is safe |
+### 5.1 The storage port
 
-The record-layer engine + sync live in the **shared Go core** so all three
-platforms run one logical model (the project's "Do Not Repeat" rule). ygo stays for
-the text layer. We stay in Go; never y.js.
+Everything above the data layer — views, lists, search, the UI — codes against a
+single **`RecordStore` port**, never a concrete engine. It never knows whether it
+is talking to SQLite, `sqlite.wasm`, or Postgres.
 
-> **Web storage, decided.** The recent move of the *whole-doc* blob to IndexedDB
-> fixed the OPFS access-handle crash and is the transitional home for today's blob.
-> The 1M **record layer** on web uses **SQLite-WASM (OPFS) with a single-owner Web
-> Lock** — chosen over IndexedDB+indexes to match native (one shared query/FTS path)
-> and get real FTS5 on web. This does *not* reintroduce the crash: the OPFS-SQLite
-> here is a **disposable, rebuildable replica** (not the source of truth), and a Web
-> Lock (or SharedWorker) elects exactly one owner tab to hold the handles while other
-> tabs proxy to it — so no two contexts ever contend for a handle, and corruption is
-> recoverable by rebuilding from the op-log/server. The three conditions that made
-> the original crash fatal (authoritative blob · exclusive handle · no coordination)
-> are all removed.
+```
+        app / UI / views  (engine-agnostic)
+                 │
+        RecordStore  (port: QueryTasks, SearchTasks, GetTask, CreateTask,
+                 │    SetTaskField, ToggleComplete, MoveTask, AddTag/RemoveTag,
+                 │    DeleteTask, ApplyRemote, PendingOps, MarkSynced …)
+     ┌───────────┼───────────────────────────┐
+ native adapter        web adapter              server adapter
+ Go + modernc SQLite   JS + sqlite.wasm/OPFS    Go + Postgres
+ (desktop, mobile)     (browser worker)         (cloud, multi-tenant)
+```
+
+All adapters speak the **same field-level op wire-format** (LWW + HLC), so they
+interoperate regardless of the engine underneath. The UI seam already exists today
+(`crdtClient` → worker RPC); Phase 2 widens it to the full query API.
+
+### 5.2 The adapters
+
+| Tier | Record engine | Storage | Runs in | Role |
+|---|---|---|---|---|
+| Desktop (Wails) | Go (`core/record`) | native SQLite (`modernc.org/sqlite`) + FTS5 | app process | offline UI + local queries |
+| Mobile (gomobile) | Go (`core/record`, same code) | native SQLite + FTS5 | app process | offline UI + local queries |
+| Web | **JS record adapter** | **official `sqlite.wasm` + OPFS VFS** | **dedicated Worker** | offline UI + local queries |
+| Server | Go (`core/record` semantics) | **Postgres** | cloud | durable multi-tenant hub, auth, onboarding, server-only queries |
+
+The **text layer** (per-task ygo notes doc) is the same everywhere: loaded on open,
+synced by state-vector; blobs persisted per adapter (SQLite/OPFS on clients,
+Postgres on the server).
+
+### 5.3 Web adapter — decided
+
+The web record layer uses the **official `sqlite.wasm` with its built-in OPFS VFS**,
+driven by **JavaScript in a dedicated Worker**, behind the `RecordStore` port.
+
+- **Why not compile the Go engine to WASM?** That path (Go + `modernc` → WASM) would
+  force us to **write and own a custom OPFS VFS** to persist/page from disk — the
+  exact SQLite/VFS/OPFS plumbing we explicitly do *not* want to own. `sqlite.wasm`
+  ships that VFS, maintained by the SQLite team; we consume it as a blackbox.
+- **Why JS drives it:** `sqlite.wasm` is C compiled to WASM with a **JS API**. A
+  Go-WASM module is a separate module with its own memory and can't call it except
+  through an awkward per-query JS bounce — so nobody does that. Driving it from JS is
+  the intended, first-class path.
+- **Cost we accept:** the record layer's SQL-driving glue is written **twice** — Go
+  on native, JS on web. But the SQL statements, the schema, the CRDT semantics, and
+  the op wire-format are **shared by design**; only the thin glue (+ ~30 lines of
+  HLC) is duplicated. Native (Go) and web (JS) remain protocol-compatible.
+- **Memory stays bounded at 1M** because the OPFS VFS keeps the database as an
+  on-disk OPFS *file* and pages it in on demand — SQLite never loads the whole DB
+  into WASM memory, so the ~4 GB WASM ceiling is a non-issue. Indexed queries and
+  title FTS touch a handful of pages regardless of table size.
+- **All query execution runs in the Worker**, never the UI thread. The UI posts a
+  request and renders the rows that return.
+- **Single-owner across tabs.** A Web Lock (or SharedWorker) elects one tab to own
+  the OPFS handles; other tabs proxy to it. The replica is disposable/rebuildable
+  from the op-log + server, so contention or corruption is recoverable, never fatal.
+  This removes the three conditions that made the earlier `createSyncAccessHandle`
+  crash fatal (authoritative blob · exclusive handle · no coordination).
+
+> IndexedDB remains **only** the transitional home for today's whole-document ygo
+> blob (it fixed that crash). It is not the record-layer store.
+
+### 5.4 The server tier — record engine on Postgres
+
+The server is **another replica of the record layer**, backed by Postgres instead
+of SQLite. Because the record layer is storage-agnostic (just LWW registers + HLC +
+an op-log), the server reuses the **same CRDT semantics, op wire-format, and query
+shapes** — its SQL is written in the Postgres dialect (`ON CONFLICT`, `tsvector`,
+`BIGSERIAL`), but the design is identical.
+
+```
+  Native client ──ops──┐
+                       ├──►  Sync server (Go record engine)  ──►  Postgres
+  Web client   ──ops──┘        multi-tenant · durable · authoritative
+```
+
+**What Postgres does:**
+1. **Durable, multi-tenant op-log + optional materialized state.** Every pushed op
+   lands here (append-only, per tenant/scope). This is the source of truth for
+   *durability* and for *onboarding* — a new device pulls a snapshot + recent ops
+   from here instead of replaying all history.
+2. **The account system** — users, tenants, memberships, invites, roles, sessions,
+   billing (the `auth` store's production home).
+3. **Server-only queries a client structurally can't run** (a client holds only its
+   synced subset): analytics, admin, cross-user reporting, integrations/webhooks,
+   and server-side full-text (Postgres `tsvector`) over a whole tenant.
+4. **Holds the notes ygo blobs** (text layer) per tenant, synced by state-vector.
+
+**What Postgres does NOT do:**
+- It **is never in the offline path.** Offline, the app reads/writes only the local
+  SQLite/OPFS replica and queues ops; Postgres is touched only when online, to sync.
+  Rendering a list never waits on Postgres.
+- It **does not run the UI's queries.** "Show me today's tasks" hits the *local*
+  engine; Postgres answers *sync* and *server-only* queries.
+
+**Minimal Postgres sync schema** (the server can be far leaner than a client — the
+materialized projection and server FTS are add-ons, built only when server-side
+queries are needed):
+
+```sql
+-- append-only op-log, the durable sync spine
+CREATE TABLE ops (
+  seq        BIGSERIAL PRIMARY KEY,          -- global order for pull cursors
+  tenant_id  TEXT NOT NULL,
+  scope      TEXT NOT NULL,                  -- 'tenant:<id>' | 'user:<id>' (see §2.2)
+  optype     TEXT NOT NULL,                  -- 'field' | 'set' | 'presence'
+  kind       TEXT NOT NULL, entity_id TEXT NOT NULL,
+  field      TEXT, elem TEXT, value TEXT, present BOOLEAN,
+  hlc        TEXT NOT NULL,                  -- wall.ctr.node
+  actor      TEXT NOT NULL                   -- user id, for authz/audit
+);
+CREATE INDEX ops_pull ON ops (tenant_id, scope, seq);
+
+-- per-task notes document (text layer), one Yjs blob per task
+CREATE TABLE note_docs (
+  tenant_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  state     BYTEA NOT NULL,                  -- Yjs full-state update
+  PRIMARY KEY (tenant_id, task_id)
+);
+
+-- accounts / teams (the auth store's production tables) — sketch
+CREATE TABLE users        (id TEXT PRIMARY KEY, email TEXT UNIQUE, pass_hash TEXT, verified BOOLEAN, created TIMESTAMPTZ);
+CREATE TABLE tenants      (id TEXT PRIMARY KEY, name TEXT, created TIMESTAMPTZ);
+CREATE TABLE memberships  (tenant_id TEXT, user_id TEXT, role TEXT, PRIMARY KEY (tenant_id, user_id));
+```
+
+Push = append rows to `ops` (+ fan out); pull = `SELECT … FROM ops WHERE tenant_id=?
+AND scope=? AND seq > ?`. Routing by `scope` gives the tenant-vs-user fan-out of
+§2.2. An optional materialized `tasks` projection (same columns as the client
+read-model, in Postgres) backs server-side queries and fast new-device snapshots.
 
 ---
 
@@ -312,23 +427,27 @@ Each phase is independently shippable and leaves the app working.
 
 - **Phase 0 — Load-test harness (§7).** Synthetic data generator + measurement.
   Establishes the ceiling and the baseline. *No product change.*
-- **Phase 1 — Query-oriented record layer (Go core).** Add `QueryTasks /
-  SearchTasks / GetTask / Move / SetField / ToggleComplete / Create / Delete` +
-  the FTS5/index read-model to `core.Store`, alongside the existing snapshot API.
-  Unit-tested against the CRDT semantics. *No UI change yet.*
-- **Phase 2 — Frontend on queries.** Views/lists read via paged queries + live
-  deltas instead of the materialized whole-state; writes go per-entity. Ordering
-  via `rank` writes. Decide shared-vs-personal sidebar order.
-- **Phase 3 — Web storage for the record layer.** SQLite-WASM (OPFS) behind a
-  single-owner Web Lock, so the record layer runs in the worker on all platforms
-  with one shared query/FTS path. Other tabs proxy to the owner; the replica is
-  rebuildable, so contention/corruption is never fatal.
+- **Phase 1 — Query-oriented record layer (Go core).** ✅ `core/record`:
+  `QueryTasks / SearchTasks / GetTask / MoveTask / SetTaskField / ToggleComplete /
+  CreateTask / DeleteTask` + operator filters (§3) + title FTS + op-log sync.
+  Unit-tested; validated at 1M (§7). *No UI change yet.*
+- **Phase 2 — Frontend on the `RecordStore` port (§5.1).** Views/lists read via
+  paged queries + live deltas instead of the materialized whole-state; writes go
+  per-entity. Ordering via `rank` writes. Decide shared-vs-personal sidebar order.
+- **Phase 3 — Web adapter (§5.3).** JS record adapter over the official
+  `sqlite.wasm` + OPFS VFS in a dedicated Worker, behind the `RecordStore` port;
+  single-owner Web Lock across tabs. Prove 1M in-browser (heap bounded, query/FTS
+  latency) first. Shares SQL/schema/wire-format with the Go engine; own no VFS.
 - **Phase 4 — Text layer rescope.** Move notes from the workspace doc into per-task
   ygo documents, loaded on open; wire cursors/awareness per task.
 - **Phase 5 — Scoped sync + push-over-WS.** Server routes tenant vs user scope;
   record deltas pushed on the WebSocket; per-task doc rooms on open.
 - **Phase 6 — User scope for settings + personal ordering.** Per-user prefs stream
   routed only to the user's own sessions; migrate settings off the tenant stream.
+- **Phase 7 — Postgres server tier (§5.4).** Move the sync server off per-tenant ygo
+  files onto the Go record engine backed by Postgres: `ops` log + `note_docs` +
+  account tables; scope-routed push/pull; optional materialized projection + server
+  FTS for server-only queries. Migrate the `auth` store to Postgres.
 
 Migration between phases keeps the existing snapshot API working until a view is
 cut over, so there is never a big-bang switch.
