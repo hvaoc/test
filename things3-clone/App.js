@@ -14,6 +14,21 @@ import RootNavigator from './src/navigation/RootNavigator';
 import WailsTitleBar, { useIsWails } from './src/components/WailsTitleBar';
 import { stepZoom, applyStoredZoom } from './src/utils/zoom';
 
+// Register the offline app-shell service worker (web only). It caches the shell
+// (HTML, JS bundle, WASM engines, workers, fonts) so subsequent visits load and run
+// with no network — the app's data is already local (OPFS). The sync server is a
+// different origin and is never intercepted.
+if (
+  Platform.OS === 'web' &&
+  typeof window !== 'undefined' &&
+  typeof navigator !== 'undefined' &&
+  'serviceWorker' in navigator
+) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  });
+}
+
 export default function App() {
   // On the Wails macOS desktop build, add a draggable title strip that clears
   // the native traffic-light buttons. No-op on web / iOS / Android.
