@@ -74,7 +74,7 @@ const initialState = {
 
 function newTask(partial = {}) {
   return {
-    id: uid('task'),
+    id: uid('t'),
     title: '',
     notes: '',
     checklist: [],
