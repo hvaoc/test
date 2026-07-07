@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tombstone GC — record sync engine</title>
+<style>
+  :root {
+    --bg:#0f1420; --panel:#151b29; --panel-2:#1b2334; --ink:#e7ebf3; --muted:#8c95ab;
+    --line:#28324a; --sync:#5aa6ff; --del:#efa24a; --bad:#f2565c; --ok:#46c46a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, #17203a 0%, transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans);
+    line-height:1.6; font-size:16px;
+    padding:0 20px 96px;
+  }
+  .wrap { max-width:840px; margin:0 auto; }
+  header.doc { padding:64px 0 28px; border-bottom:1px solid var(--line); margin-bottom:40px; }
+  .eyebrow { font:600 12px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--sync); margin:0 0 16px; }
+  h1 { font-size:34px; line-height:1.15; margin:0 0 14px; letter-spacing:-.02em; text-wrap:balance; font-weight:700; }
+  h1 .accent { color:var(--del); }
+  .lede { font-size:18px; color:#c3cad9; margin:0; max-width:60ch; }
+  h2 { font-size:22px; margin:52px 0 6px; letter-spacing:-.01em; text-wrap:balance; }
+  h2 .num { font:600 13px/1 var(--mono); color:var(--muted); margin-right:12px; vertical-align:2px; }
+  .sub { color:var(--muted); margin:0 0 22px; max-width:64ch; }
+  p { max-width:66ch; }
+  strong { color:#fff; font-weight:600; }
+  code { font-family:var(--mono); font-size:.88em; background:var(--panel-2); border:1px solid var(--line);
+    padding:1px 6px; border-radius:5px; color:#d7def0; }
+  .fig { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:8px 8px 4px; margin:20px 0 8px; overflow-x:auto; }
+  .fig svg { display:block; width:100%; height:auto; min-width:640px; }
+  .cap { color:var(--muted); font-size:14px; margin:4px 2px 30px; }
+  .cap b { color:#cfd6e6; font-weight:600; }
+  .legend { display:flex; flex-wrap:wrap; gap:18px 26px; margin:8px 0 4px; padding:16px 18px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+  .legend span { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:#c3cad9; }
+  .swatch { width:26px; height:0; border-top-width:3px; border-top-style:solid; border-radius:2px; }
+  .dot { width:11px; height:11px; border-radius:50%; }
+  .rules { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:22px 0; }
+  @media (max-width:640px){ .rules{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px 22px; }
+  .card h3 { margin:0 0 12px; font-size:15px; display:flex; align-items:center; gap:9px; }
+  .card.server h3 .dot{ background:var(--sync); } .card.client h3 .dot{ background:var(--ok); }
+  .card ul { margin:0; padding-left:18px; }
+  .card li { margin:8px 0; color:#c9d0e0; font-size:14.5px; }
+  .card code { font-size:.82em; }
+  .callout { border-left:3px solid var(--del); background:linear-gradient(90deg,#221a12,transparent);
+    padding:14px 18px; border-radius:0 10px 10px 0; margin:22px 0; }
+  .callout.ok { border-left-color:var(--ok); background:linear-gradient(90deg,#0f2417,transparent); }
+  .callout b { color:#fff; }
+  footer { color:var(--muted); font-size:13px; margin-top:56px; padding-top:20px; border-top:1px solid var(--line); }
+  .k { font-family:var(--mono); font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <p class="eyebrow">Record sync engine · design note</p>
+  <h1>Deleting is easy. <span class="accent">Forgetting</span> a delete is the hard part.</h1>
+  <p class="lede">How the structured-data op-log handles deletes across devices — why a naïve
+  “clean up deleted rows” corrupts stragglers, and the retention-window fix that keeps it correct.</p>
+</header>
+
+<p><strong>The cast.</strong> Two of one user’s devices and the server, which stores the
+tenant’s <span class="k">record_registers</span> (one row per field, highest-HLC wins).
+Deleting task <code>t1</code> isn’t a SQL&nbsp;<code>DELETE</code> — it’s a CRDT op
+<code>presence(t1)=false</code>. That surviving “not present” row is the <strong>tombstone</strong>:
+the only thing that carries the fact “this was deleted” to devices that haven’t heard yet.</p>
+
+<div class="legend" aria-hidden="true">
+  <span><i class="swatch" style="border-top-color:var(--sync)"></i> sync / pull</span>
+  <span><i class="swatch" style="border-top-color:var(--del)"></i> delete op (tombstone)</span>
+  <span><i class="dot" style="background:var(--bad)"></i> divergence / bug</span>
+  <span><i class="dot" style="background:var(--ok)"></i> converged</span>
+  <span class="k" style="color:var(--muted)">cursor = “I’ve applied ops up to seq N”</span>
+</div>
+
+<!-- ============================ DIAGRAM 1 ============================ -->
+<h2><span class="num">01</span>The happy path — a delete reaches everyone</h2>
+<p class="sub">All devices online. The delete is pushed, stored as a tombstone, and pulled by the
+other device before anything is cleaned up.</p>
+
+<div class="fig">
+<svg viewBox="0 0 780 430" role="img" aria-label="Sequence: laptop deletes, server stores tombstone, phone pulls and applies the delete, all converge.">
+  <defs>
+    <marker id="aSync" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#5aa6ff"/></marker>
+    <marker id="aDel" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#efa24a"/></marker>
+  </defs>
+  <!-- headers -->
+  <g font-family="-apple-system, Segoe UI, sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="70" y="12" width="140" height="34" rx="9" fill="#1b2334" stroke="#33405c"/><text x="140" y="34" fill="#e7ebf3">Laptop</text>
+    <rect x="320" y="12" width="140" height="34" rx="9" fill="#12203a" stroke="#2f558a"/><text x="390" y="34" fill="#bcd6ff">Server · Postgres</text>
+    <rect x="570" y="12" width="140" height="34" rx="9" fill="#1b2334" stroke="#33405c"/><text x="640" y="34" fill="#e7ebf3">Phone</text>
+  </g>
+  <!-- lifelines -->
+  <g stroke="#2a3450" stroke-width="1.5" stroke-dasharray="2 5">
+    <line x1="140" y1="46" x2="140" y2="410"/><line x1="390" y1="46" x2="390" y2="410"/><line x1="640" y1="46" x2="640" y2="410"/>
+  </g>
+  <g font-family="ui-monospace, Menlo, monospace" font-size="11.5" fill="#8c95ab" text-anchor="middle">
+    <text x="140" y="66">t1 present · cursor 2</text>
+    <text x="640" y="66">t1 present · cursor 2</text>
+  </g>
+
+  <!-- msg 1: laptop deletes -> server -->
+  <g>
+    <line x1="140" y1="112" x2="384" y2="112" stroke="#efa24a" stroke-width="2" marker-end="url(#aDel)"/>
+    <text x="262" y="104" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#f0b86a">delete t1</text>
+    <text x="262" y="127" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#9aa3b8">push presence(t1)=false @hlc 200</text>
+  </g>
+  <!-- server tombstone box -->
+  <g>
+    <rect x="300" y="146" width="180" height="40" rx="8" fill="#241d12" stroke="#6b4d22"/>
+    <text x="390" y="163" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f0b86a">tombstone stored</text>
+    <text x="390" y="178" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#c9a978">seq 3 · present=false</text>
+  </g>
+  <!-- msg 2: phone pulls -->
+  <g>
+    <line x1="640" y1="222" x2="396" y2="222" stroke="#5aa6ff" stroke-width="2" marker-end="url(#aSync)"/>
+    <text x="520" y="214" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#8fc0ff">pull (cursor 2)</text>
+  </g>
+  <!-- msg 3: server responds with tombstone -->
+  <g>
+    <line x1="390" y1="258" x2="634" y2="258" stroke="#5aa6ff" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aSync)"/>
+    <text x="512" y="250" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#8fc0ff">ops where seq &gt; 2</text>
+    <text x="512" y="273" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#9aa3b8">[ seq 3 · delete t1 ]</text>
+  </g>
+  <!-- phone applies -->
+  <g>
+    <rect x="552" y="292" width="176" height="36" rx="8" fill="#101c14" stroke="#2f6b3d"/>
+    <text x="640" y="315" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" fill="#7ed897">applies delete → t1 gone</text>
+  </g>
+  <!-- converged banner -->
+  <g>
+    <rect x="150" y="360" width="480" height="40" rx="10" fill="#0f2417" stroke="#2f6b3d"/>
+    <circle cx="182" cy="380" r="6" fill="#46c46a"/>
+    <text x="200" y="385" font-family="-apple-system,sans-serif" font-size="14" font-weight="600" fill="#8fe6a6">Converged — both devices agree t1 is deleted.</text>
+  </g>
+</svg>
+</div>
+<p class="cap"><b>Why it works:</b> the tombstone is still on the server when the phone pulls,
+so the “deleted” fact reaches it. Nothing is cleaned up too soon.</p>
+
+<!-- ============================ DIAGRAM 2 ============================ -->
+<h2><span class="num">02</span>The bug — garbage-collect the tombstone too soon</h2>
+<p class="sub">The phone is offline when the delete happens. A cleanup job removes the tombstone
+before the phone ever reads it. The delete is lost to that device — forever.</p>
+
+<div class="fig">
+<svg viewBox="0 0 780 470" role="img" aria-label="Sequence showing the phone offline during a delete, the server purging the tombstone, and the phone reconnecting but never learning of the delete, causing divergence.">
+  <defs>
+    <marker id="aSync2" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#5aa6ff"/></marker>
+    <marker id="aDel2" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#efa24a"/></marker>
+    <marker id="aBad2" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#f2565c"/></marker>
+  </defs>
+  <g font-family="-apple-system, Segoe UI, sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="70" y="12" width="140" height="34" rx="9" fill="#1b2334" stroke="#33405c"/><text x="140" y="34" fill="#e7ebf3">Laptop</text>
+    <rect x="320" y="12" width="140" height="34" rx="9" fill="#12203a" stroke="#2f558a"/><text x="390" y="34" fill="#bcd6ff">Server · Postgres</text>
+    <rect x="570" y="12" width="140" height="34" rx="9" fill="#1b2334" stroke="#33405c"/><text x="640" y="34" fill="#e7ebf3">Phone</text>
+  </g>
+  <g stroke="#2a3450" stroke-width="1.5" stroke-dasharray="2 5">
+    <line x1="140" y1="46" x2="140" y2="450"/><line x1="390" y1="46" x2="390" y2="450"/><line x1="640" y1="46" x2="640" y2="450"/>
+  </g>
+
+  <!-- phone offline band -->
+  <rect x="600" y="70" width="80" height="196" rx="7" fill="#241216" stroke="#7a2e33" opacity="0.55"/>
+  <text x="640" y="60" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f2565c">offline · cursor 2</text>
+
+  <!-- laptop delete -->
+  <g>
+    <line x1="140" y1="108" x2="384" y2="108" stroke="#efa24a" stroke-width="2" marker-end="url(#aDel2)"/>
+    <text x="262" y="100" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#f0b86a">delete t1</text>
+    <text x="262" y="123" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#9aa3b8">push presence(t1)=false · seq 3</text>
+  </g>
+  <g>
+    <rect x="300" y="140" width="180" height="34" rx="8" fill="#241d12" stroke="#6b4d22"/>
+    <text x="390" y="162" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f0b86a">tombstone: seq 3, present=false</text>
+  </g>
+
+  <!-- GC purge (the mistake) -->
+  <g>
+    <rect x="286" y="196" width="208" height="46" rx="9" fill="#2a1013" stroke="#c0343b"/>
+    <text x="390" y="215" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12.5" font-weight="700" fill="#ff8087">✗ cleanup purges the tombstone</text>
+    <text x="390" y="232" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#e79aa0">DELETE … WHERE present=false  — too early</text>
+  </g>
+
+  <!-- phone reconnects & pulls -->
+  <g>
+    <line x1="640" y1="300" x2="396" y2="300" stroke="#5aa6ff" stroke-width="2" marker-end="url(#aSync2)"/>
+    <text x="520" y="292" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#8fc0ff">reconnect → pull (cursor 2)</text>
+  </g>
+  <g>
+    <line x1="390" y1="336" x2="634" y2="336" stroke="#f2565c" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aBad2)"/>
+    <text x="512" y="328" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#f28a8f">seq &gt; 2 → ( nothing )</text>
+    <text x="512" y="351" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#c98c90">tombstone is gone — no news of the delete</text>
+  </g>
+
+  <!-- divergence banner -->
+  <g>
+    <rect x="90" y="392" width="600" height="58" rx="11" fill="#1f1013" stroke="#c0343b"/>
+    <circle cx="122" cy="421" r="7" fill="#f2565c"/>
+    <text x="140" y="415" font-family="-apple-system,sans-serif" font-size="14" font-weight="700" fill="#ff9298">Permanent divergence</text>
+    <text x="140" y="435" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#d7a9ac">Laptop: t1 deleted   ·   Phone: still shows “t1”   ·   they never reconcile</text>
+  </g>
+</svg>
+</div>
+<p class="cap"><b>Root cause:</b> the tombstone is the <i>carrier</i> of the deletion. Delete it before
+a lagging device reads it, and that device is stranded showing a ghost task.</p>
+
+<!-- ============================ DIAGRAM 3 ============================ -->
+<h2><span class="num">03</span>The fix — retention window + a “how long have I been gone?” check</h2>
+<p class="sub">Keep tombstones for a retention window (say 35 days). Each client remembers when it
+last synced. On reconnect it picks its lane: caught up recently → incremental; gone too long → full reload.</p>
+
+<div class="fig">
+<svg viewBox="0 0 780 560" role="img" aria-label="Sequence with two branches: a phone reconnecting within the window pulls the retained tombstone; a phone gone longer than the window does a full reload from cursor zero. Both converge.">
+  <defs>
+    <marker id="aSync3" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#5aa6ff"/></marker>
+    <marker id="aOk3" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L7.5,3 L0,6 Z" fill="#46c46a"/></marker>
+  </defs>
+  <g font-family="-apple-system, Segoe UI, sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="320" y="12" width="140" height="34" rx="9" fill="#12203a" stroke="#2f558a"/><text x="390" y="34" fill="#bcd6ff">Server · Postgres</text>
+    <rect x="570" y="12" width="140" height="34" rx="9" fill="#1b2334" stroke="#33405c"/><text x="640" y="34" fill="#e7ebf3">Phone (reconnecting)</text>
+  </g>
+  <g stroke="#2a3450" stroke-width="1.5" stroke-dasharray="2 5">
+    <line x1="390" y1="46" x2="390" y2="540"/><line x1="640" y1="46" x2="640" y2="540"/>
+  </g>
+
+  <!-- server retention note -->
+  <rect x="286" y="60" width="208" height="34" rx="8" fill="#12203a" stroke="#2f558a"/>
+  <text x="390" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9c6ef">retains tombstones 35 days, then purges</text>
+
+  <!-- client self-check -->
+  <rect x="516" y="60" width="248" height="34" rx="8" fill="#1b2334" stroke="#3a4763"/>
+  <text x="640" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#c9d0e0">on reconnect: check now − last_sync</text>
+
+  <!-- BRANCH A -->
+  <text x="640" y="128" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#8fe6a6">Branch A · gone ≤ 30 days</text>
+  <line x1="516" y1="140" x2="764" y2="140" stroke="#2a3450" stroke-width="1"/>
+  <g>
+    <line x1="640" y1="176" x2="396" y2="176" stroke="#5aa6ff" stroke-width="2" marker-end="url(#aSync3)"/>
+    <text x="520" y="168" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#8fc0ff">incremental pull (cursor 2)</text>
+  </g>
+  <g>
+    <line x1="390" y1="212" x2="634" y2="212" stroke="#5aa6ff" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aSync3)"/>
+    <text x="512" y="204" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#9aa3b8">tombstone still retained → [ delete t1 ]</text>
+  </g>
+  <g>
+    <rect x="516" y="232" width="248" height="34" rx="8" fill="#0f2417" stroke="#2f6b3d"/>
+    <text x="640" y="254" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" fill="#7ed897">applies delete → converged ✓</text>
+  </g>
+
+  <!-- BRANCH B -->
+  <text x="640" y="322" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f0b86a">Branch B · gone &gt; 30 days</text>
+  <line x1="516" y1="334" x2="764" y2="334" stroke="#2a3450" stroke-width="1"/>
+  <g>
+    <rect x="500" y="350" width="280" height="34" rx="8" fill="#241d12" stroke="#6b4d22"/>
+    <text x="640" y="372" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f0b86a">stale &gt; window → don’t trust my cursor</text>
+  </g>
+  <g>
+    <line x1="640" y1="418" x2="396" y2="418" stroke="#46c46a" stroke-width="2" marker-end="url(#aOk3)"/>
+    <text x="520" y="410" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#8fe6a6">push pending, then full pull (cursor 0)</text>
+  </g>
+  <g>
+    <line x1="390" y1="454" x2="634" y2="454" stroke="#46c46a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aOk3)"/>
+    <text x="512" y="446" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#9aa3b8">every live register (the full current copy)</text>
+  </g>
+  <g>
+    <rect x="500" y="474" width="280" height="34" rx="8" fill="#0f2417" stroke="#2f6b3d"/>
+    <text x="640" y="496" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" fill="#7ed897">wipe + rebuild → t1 absent → converged ✓</text>
+  </g>
+</svg>
+</div>
+<p class="cap"><b>Why both lanes are safe:</b> if you synced within the window, any delete you missed
+is <i>younger</i> than your gap, so it’s still retained — you pull it. If your gap is longer, you don’t
+trust your cursor at all: you rebuild from scratch, and the deleted task simply isn’t in the copy.</p>
+
+<div class="callout ok">
+  <b>The one subtlety:</b> track <i>“last time I successfully synced”</i> — the last time you reached the
+  server — not the age of your newest op. A workspace nobody touched for 40 days is still <b>fresh</b> if you
+  synced yesterday and got nothing new.
+</div>
+
+<h2><span class="num">04</span>The whole mechanism, on two index cards</h2>
+<div class="rules">
+  <div class="card server">
+    <h3><span class="dot"></span> Server</h3>
+    <ul>
+      <li>Store deletes as tombstones (<code>present=false</code>) with a <code>deleted_at</code> timestamp.</li>
+      <li>Background job: <code>DELETE … WHERE present=false AND deleted_at &lt; now() − 35 days</code>, plus a sweep of orphaned field rows.</li>
+      <li>No per-client tracking, no watermark. Just purge by age.</li>
+      <li>Retention window is deliberately <b>longer</b> than the client threshold (35&nbsp;&gt;&nbsp;30) — slack for skew &amp; sync latency.</li>
+    </ul>
+  </div>
+  <div class="card client">
+    <h3><span class="dot"></span> Client</h3>
+    <ul>
+      <li>Keep one value: <code>last_sync_at</code>, set to <i>now</i> on every successful pull (even an empty one).</li>
+      <li>On reconnect: <code>now − last_sync_at ≤ 30d</code> → normal incremental pull.</li>
+      <li>Otherwise → <b>push pending edits first</b> (don’t lose offline work), then wipe local &amp; full-pull from cursor&nbsp;0.</li>
+      <li>Optional hardening: measure the gap in <i>server</i> time (returned in the pull) so a wrong device clock can’t fool it.</li>
+    </ul>
+  </div>
+</div>
+
+<p>This trades the textbook “track every client’s version vector” for “one timestamp on each side and
+a full reload for anyone who’s been gone too long” — which is what most production sync systems actually
+ship. The op-log stays bounded, deletes never strand a straggler, and the server never has to know who’s
+listening.</p>
+
+<footer>
+  Record sync engine · tombstone garbage collection. Structured data (tasks / projects / areas) syncs as a
+  field-level op-log; notes &amp; settings ride the ygo/Yjs state-vector layer, which retains its delete set and
+  doesn’t face this trade. See <span class="k">docs/architecture-1m.md</span> §3–5.
+</footer>
+
+</div>
+</body>
+</html>
