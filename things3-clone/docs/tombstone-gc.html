@@ -56,6 +56,16 @@
     padding:14px 18px; border-radius:0 10px 10px 0; margin:22px 0; }
   .callout.ok { border-left-color:var(--ok); background:linear-gradient(90deg,#0f2417,transparent); }
   .callout b { color:#fff; }
+  .code { margin:22px 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#0b0f17; }
+  .code-h { display:flex; justify-content:space-between; align-items:center; padding:11px 16px;
+    background:#131a28; border-bottom:1px solid var(--line); font-size:13px; color:#cfd6e6; font-weight:600; }
+  .code-h .lang { font:600 11px/1 var(--mono); letter-spacing:.12em; color:var(--muted);
+    border:1px solid var(--line); border-radius:5px; padding:5px 8px; }
+  .code pre { margin:0; padding:18px 20px; overflow-x:auto; font-family:var(--mono);
+    font-size:13px; line-height:1.75; color:#d7def0; tab-size:2; }
+  .code .cm { color:#6d7a90; font-style:italic; }
+  .code .kw { color:#7aa2ff; }
+  .code .st { color:#e0a56a; }
   footer { color:var(--muted); font-size:13px; margin-top:56px; padding-top:20px; border-top:1px solid var(--line); }
   .k { font-family:var(--mono); font-size:12.5px; }
 </style>
@@ -315,6 +325,60 @@ trust your cursor at all: you rebuild from scratch, and the deleted task simply 
 a full reload for anyone who’s been gone too long” — which is what most production sync systems actually
 ship. The op-log stays bounded, deletes never strand a straggler, and the server never has to know who’s
 listening.</p>
+
+<h2><span class="num">05</span>The logic, in code</h2>
+<p class="sub">Two moving parts: the server forgets old tombstones on a timer; the client decides,
+on each reconnect, whether its cursor is still trustworthy.</p>
+
+<div class="code">
+  <div class="code-h"><span>Server · GC job (runs hourly)</span><span class="lang">SQL</span></div>
+<pre><span class="cm">-- stamp the SERVER clock when a row becomes a tombstone (not the op's HLC)</span>
+<span class="kw">ALTER TABLE</span> record_registers <span class="kw">ADD COLUMN</span> deleted_at timestamptz;
+<span class="cm">--   on push:  present = false  →  deleted_at = now()</span>
+
+<span class="cm">-- GC job — retention MUST exceed the client threshold (35 &gt; 30) for slack.</span>
+<span class="cm">-- 1 · forget tombstones older than the window</span>
+<span class="kw">DELETE FROM</span> record_registers
+ <span class="kw">WHERE</span> present = false
+   <span class="kw">AND</span> deleted_at &lt; now() - <span class="kw">interval</span> <span class="st">'35 days'</span>;
+
+<span class="cm">-- 2 · sweep field/tag rows orphaned by a purged entity (no presence row left)</span>
+<span class="kw">DELETE FROM</span> record_registers r
+ <span class="kw">WHERE</span> r.field &lt;&gt; <span class="st">''</span>
+   <span class="kw">AND NOT EXISTS</span> (
+     <span class="kw">SELECT</span> 1 <span class="kw">FROM</span> record_registers p
+      <span class="kw">WHERE</span> p.scope = r.scope <span class="kw">AND</span> p.kind = r.kind
+        <span class="kw">AND</span> p.entity = r.entity <span class="kw">AND</span> p.field = <span class="st">''</span>);</pre>
+</div>
+
+<div class="code">
+  <div class="code-h"><span>Client · on reconnect</span><span class="lang">JS</span></div>
+<pre><span class="kw">const</span> THRESHOLD = 30 * 864e5;              <span class="cm">// 30 days  (&lt; server's 35-day retention)</span>
+
+<span class="kw">async function</span> sync() {
+  <span class="kw">const</span> gap = Date.now() - lastSyncAt;     <span class="cm">// time since we last reached the server</span>
+  <span class="kw">await</span> (gap &gt; THRESHOLD ? fullReload() : incrementalPull());
+  lastSyncAt = Date.now();                 <span class="cm">// stamp EVERY successful sync (even empty)</span>
+}
+
+<span class="kw">async function</span> incrementalPull() {
+  <span class="kw">await</span> pushPending();                     <span class="cm">// send our local ops first</span>
+  <span class="kw">const</span> { ops, cursor } = <span class="kw">await</span> pull({ cursor });
+  <span class="kw">await</span> applyRemote(ops);                  <span class="cm">// LWW-merge — includes any tombstones</span>
+  setCursor(cursor);
+}
+
+<span class="kw">async function</span> fullReload() {              <span class="cm">// gone too long: don't trust the cursor</span>
+  <span class="kw">await</span> pushPending();                     <span class="cm">// 1 · don't lose offline edits</span>
+  <span class="kw">const</span> full = <span class="kw">await</span> pull({ cursor: 0 });  <span class="cm">// 2 · fetch the whole current copy</span>
+  <span class="kw">await</span> wipeLocalRecords();                <span class="cm">// 3 · drop stale local state</span>
+  <span class="kw">await</span> applyRemote(full.ops);             <span class="cm">// 4 · rebuild — deleted rows simply absent</span>
+  setCursor(full.cursor);
+}</pre>
+</div>
+<p class="cap"><b>Not wired yet.</b> This is the design. The live <span class="k">record_registers</span> table
+has no <span class="k">deleted_at</span> column and keeps tombstones indefinitely — adding this GC job +
+the client’s <span class="k">last_sync_at</span> check is the remaining work.</p>
 
 <footer>
   Record sync engine · tombstone garbage collection. Structured data (tasks / projects / areas) syncs as a
