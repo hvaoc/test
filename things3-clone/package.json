@@ -11,7 +11,12 @@
     "desktop": "bash desktop/build.sh darwin/arm64",
     "desktop:intel": "bash desktop/build.sh darwin/amd64",
     "desktop:universal": "bash desktop/build.sh darwin/universal",
-    "desktop:run": "open 'desktop/build/bin/things3-clone.app'"
+    "desktop:run": "open 'desktop/build/bin/things3-clone.app'",
+    "sim:ios": "bash scripts/run-ios.sh",
+    "emu:android": "bash scripts/run-android.sh",
+    "e2e:ios": "bash scripts/e2e-ios.sh",
+    "e2e:android": "bash scripts/e2e-android.sh",
+    "e2e:web": "bash scripts/e2e-web.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -39,7 +44,9 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "@react-native/metro-config": "^0.81.5"
+    "@react-native/metro-config": "^0.81.5",
+    "@types/react": "~19.1.10",
+    "typescript": "~5.9.2"
   },
   "private": true
 }

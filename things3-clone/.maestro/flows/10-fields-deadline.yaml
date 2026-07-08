@@ -1,0 +1,21 @@
+# Task fields · "set a Deadline via the detail calendar sheet"
+# Pick the 15th of the visible (current) month; the "deadline-remove" control renders
+# ONLY when a deadline is set, so its testID appearing proves the deadline persisted.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-deadline" }
+- assertNotVisible: { id: "deadline-remove" }
+- tapOn:
+    id: "cal-day-.*-15"
+- tapOn: { id: "detail-deadline" }
+- assertVisible: { id: "deadline-remove" }
+- tapOn: { id: "deadline-remove" }
+- tapOn: { id: "detail-title" }
+- inputText: "Submit taxes"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Submit taxes"
+- tapOn: { id: "list-back" }

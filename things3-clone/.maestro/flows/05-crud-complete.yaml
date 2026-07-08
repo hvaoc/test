@@ -1,0 +1,30 @@
+# Task CRUD · "complete a task -> moves to Logbook, then reopen"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Task to complete"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Task to complete"
+# complete via the detail checkbox (unambiguous with accumulated data)
+- tapOn: "Task to complete"
+- tapOn: { id: "detail-checkbox" }
+- tapOn: { id: "detail-back" }
+- assertNotVisible: "Task to complete"
+- tapOn: { id: "list-back" }
+# now in the Logbook
+- tapOn: { id: "sidebar-logbook" }
+- assertVisible: "Task to complete"
+# reopen it
+- tapOn: "Task to complete"
+- tapOn: { id: "detail-checkbox" }
+- tapOn: { id: "detail-back" }
+- assertNotVisible: "Task to complete"
+- tapOn: { id: "list-back" }
+# back in the Inbox
+- tapOn: { id: "sidebar-inbox" }
+- assertVisible: "Task to complete"
+- tapOn: { id: "list-back" }

@@ -1,0 +1,243 @@
+{
+  "iters": 50,
+  "platform": "record-engine (Go core/record, SQLite)",
+  "represents": [
+    "desktop",
+    "ios",
+    "android"
+  ],
+  "results": [
+    {
+      "group": "Smart Lists",
+      "name": "Today list",
+      "write": false,
+      "p50": 0.1,
+      "p95": 0.254,
+      "max": 0.451,
+      "min": 0.095,
+      "status": "pass"
+    },
+    {
+      "group": "Smart Lists",
+      "name": "Anytime/Inbox list (open, ranked)",
+      "write": false,
+      "p50": 0.366,
+      "p95": 0.753,
+      "max": 2.365,
+      "min": 0.334,
+      "status": "pass"
+    },
+    {
+      "group": "Smart Lists",
+      "name": "Logbook list (completed)",
+      "write": false,
+      "p50": 0.28,
+      "p95": 1.078,
+      "max": 3.455,
+      "min": 0.266,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "priority \u003e= 2 (open)",
+      "write": false,
+      "p50": 0.469,
+      "p95": 0.892,
+      "max": 1.653,
+      "min": 0.438,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "when = today",
+      "write": false,
+      "p50": 0.018,
+      "p95": 0.021,
+      "max": 0.027,
+      "min": 0.018,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "deadline \u003c= today",
+      "write": false,
+      "p50": 0.337,
+      "p95": 1.011,
+      "max": 2.96,
+      "min": 0.32,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "projectId IN [5]",
+      "write": false,
+      "p50": 0.039,
+      "p95": 0.047,
+      "max": 0.083,
+      "min": 0.037,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "projectId = one",
+      "write": false,
+      "p50": 0.019,
+      "p95": 0.021,
+      "max": 0.025,
+      "min": 0.018,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "priority IN [2,3] AND open",
+      "write": false,
+      "p50": 0.492,
+      "p95": 1.2,
+      "max": 2.273,
+      "min": 0.448,
+      "status": "pass"
+    },
+    {
+      "group": "Custom Views \u0026 Filters",
+      "name": "priority != 0",
+      "write": false,
+      "p50": 0.42,
+      "p95": 0.87,
+      "max": 3.548,
+      "min": 0.391,
+      "status": "pass"
+    },
+    {
+      "group": "Search",
+      "name": "full-text search",
+      "write": false,
+      "p50": 0.044,
+      "p95": 0.181,
+      "max": 0.567,
+      "min": 0.042,
+      "status": "pass"
+    },
+    {
+      "group": "Search",
+      "name": "search + open filter",
+      "write": false,
+      "p50": 0.043,
+      "p95": 0.059,
+      "max": 0.061,
+      "min": 0.042,
+      "status": "pass"
+    },
+    {
+      "group": "Counts (badges)",
+      "name": "count open",
+      "write": false,
+      "p50": 0.056,
+      "p95": 0.059,
+      "max": 0.077,
+      "min": 0.056,
+      "status": "pass"
+    },
+    {
+      "group": "Counts (badges)",
+      "name": "count priority \u003e= 2",
+      "write": false,
+      "p50": 0.011,
+      "p95": 0.017,
+      "max": 0.077,
+      "min": 0.01,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "open task (read all fields)",
+      "write": false,
+      "p50": 0.04,
+      "p95": 0.131,
+      "max": 0.852,
+      "min": 0.037,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "edit title",
+      "write": true,
+      "p50": 0.353,
+      "p95": 1.479,
+      "max": 5.059,
+      "min": 0.297,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "set when=today",
+      "write": true,
+      "p50": 0.225,
+      "p95": 0.543,
+      "max": 1.21,
+      "min": 0.193,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "set priority",
+      "write": true,
+      "p50": 0.207,
+      "p95": 0.451,
+      "max": 3.101,
+      "min": 0.172,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "complete / reopen",
+      "write": true,
+      "p50": 0.216,
+      "p95": 0.536,
+      "max": 3.406,
+      "min": 0.187,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "add tag",
+      "write": true,
+      "p50": 0.251,
+      "p95": 1.127,
+      "max": 5.839,
+      "min": 0.194,
+      "status": "pass"
+    },
+    {
+      "group": "Task CRUD \u0026 Fields",
+      "name": "create task",
+      "write": true,
+      "p50": 0.71,
+      "p95": 2.849,
+      "max": 4.04,
+      "min": 0.516,
+      "status": "pass"
+    },
+    {
+      "group": "Reorder / Move",
+      "name": "reorder task (rank between)",
+      "write": true,
+      "p50": 0.267,
+      "p95": 0.519,
+      "max": 3.188,
+      "min": 0.208,
+      "status": "pass"
+    },
+    {
+      "group": "Delete",
+      "name": "delete task (→ trash)",
+      "write": true,
+      "p50": 0.212,
+      "p95": 0.597,
+      "max": 2.536,
+      "min": 0.187,
+      "status": "pass"
+    }
+  ],
+  "setupLoadMs": 59.902,
+  "size": 1000
+}

@@ -62,8 +62,8 @@ export default function NewListSheet({ visible, onClose, navigation, initialArea
   return (
     <BottomSheet visible={visible} onClose={close} title="New List">
       <View style={styles.segment}>
-        <SegBtn label="Project" active={mode === 'project'} onPress={() => setMode('project')} />
-        <SegBtn label="Area" active={mode === 'area'} onPress={() => setMode('area')} />
+        <SegBtn testID="newlist-mode-project" label="Project" active={mode === 'project'} onPress={() => setMode('project')} />
+        <SegBtn testID="newlist-mode-area" label="Area" active={mode === 'area'} onPress={() => setMode('area')} />
       </View>
 
       <View style={styles.inputRow}>
@@ -79,6 +79,7 @@ export default function NewListSheet({ visible, onClose, navigation, initialArea
           )}
         </Pressable>
         <TextInput
+          testID="newlist-name"
           style={styles.input}
           autoFocus
           placeholder={mode === 'project' ? 'Project name' : 'Area name'}
@@ -175,6 +176,7 @@ export default function NewListSheet({ visible, onClose, navigation, initialArea
       )}
 
       <Pressable
+        testID="newlist-create"
         style={[styles.createBtn, !name.trim() && styles.createBtnDisabled]}
         onPress={create}
         disabled={!name.trim()}
@@ -185,9 +187,9 @@ export default function NewListSheet({ visible, onClose, navigation, initialArea
   );
 }
 
-function SegBtn({ label, active, onPress }) {
+function SegBtn({ label, active, onPress, testID }) {
   return (
-    <Pressable style={[styles.segBtn, active && styles.segBtnActive]} onPress={onPress}>
+    <Pressable testID={testID} style={[styles.segBtn, active && styles.segBtnActive]} onPress={onPress}>
       <Text style={[styles.segText, active && styles.segTextActive]}>{label}</Text>
     </Pressable>
   );

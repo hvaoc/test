@@ -1,0 +1,28 @@
+# Custom view · "a saved text filter lists only matching tasks"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Applepie recipe"
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Bananabread plan"
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-new-view" }
+- tapOn: { id: "qb-name" }
+- inputText: "Apple Only"
+- tapOn: { id: "qb-text" }
+- inputText: "Applepie"
+- swipe: { direction: UP }
+- swipe: { direction: UP }
+- tapOn: { id: "qb-save" }
+- assertVisible: "Apple Only"
+- tapOn: "Apple Only"
+- assertVisible: "Applepie recipe"
+- assertNotVisible: "Bananabread plan"
+- tapOn: { id: "list-back" }

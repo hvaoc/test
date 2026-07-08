@@ -16,8 +16,8 @@ type Room struct {
 	mu       sync.Mutex
 	doc      *crdt.Doc
 	ver      int64
-	conns    map[int64]*conn            // live realtime connections
-	presence map[int64]json.RawMessage  // last awareness state per connection
+	conns    map[int64]*conn           // live realtime connections
+	presence map[int64]json.RawMessage // last awareness state per connection
 	nextConn int64
 }
 

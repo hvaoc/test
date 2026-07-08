@@ -17,7 +17,7 @@ export default function DeadlineSheet({ visible, onClose, value, onChange }) {
     <BottomSheet visible={visible} onClose={onClose} title="Deadline">
       <MiniCalendar selected={value} onSelect={choose} />
       {value ? (
-        <Pressable style={styles.clear} onPress={() => choose(null)}>
+        <Pressable testID="deadline-remove" style={styles.clear} onPress={() => choose(null)}>
           <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
           <Text style={styles.clearText}>Remove Deadline</Text>
         </Pressable>

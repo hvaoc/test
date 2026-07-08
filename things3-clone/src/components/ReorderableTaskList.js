@@ -107,7 +107,15 @@ function repositionBlock(positions, blockKeys, at) {
 // Shared per-row logic: where does this row sit right now?
 function useRowTop(itemKey, ctx) {
   const { positions, heights, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
-  const top = useSharedValue(0);
+  // Seed the row at its correct slot rather than 0. When a parent is expanded,
+  // its child rows mount fresh; a 0-initialised top would place them at the very
+  // top of the list for one frame — and since they already carry their nesting
+  // indent, they'd flash in to the *right* of the top row before the reaction
+  // below snaps them down. positions.value is synced synchronously by the parent
+  // when the item set changes, so it's already correct at mount time here.
+  const top = useSharedValue(
+    topForIndex(orderedKeys(positions.value), heights.value, positions.value[itemKey] ?? 0)
+  );
   useAnimatedReaction(
     () => ({
       pos: positions.value[itemKey],
@@ -151,10 +159,10 @@ function makePan(showHandle) {
 }
 
 // The explicit drag grip shown on non-mobile surfaces (hover-revealed on web).
-function Handle({ gesture, style, visible }) {
+function Handle({ gesture, style, visible, testID }) {
   return (
     <GestureDetector gesture={gesture}>
-      <View style={[styles.handle, style, { opacity: visible ? 1 : 0 }]}>
+      <View testID={testID} style={[styles.handle, style, { opacity: visible ? 1 : 0 }]}>
         <MaterialCommunityIcons name="drag-vertical" size={20} color={colors.separatorStrong} />
       </View>
     </GestureDetector>
@@ -185,6 +193,7 @@ function AddTaskRow({ itemKey, headingId, onAddTask, ctx }) {
   return (
     <Animated.View style={style}>
       <Pressable
+        testID="add-task-inline"
         style={styles.addTask}
         onLayout={measure(heights, itemKey)}
         onPress={() => setAdding(true)}
@@ -749,6 +758,16 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
       if (newIndex !== positions.value[itemKey]) {
         positions.value = reposition(positions.value, positions.value[itemKey], newIndex);
       }
+      // Live target depth for the drop indicator: indent steps the finger has moved
+      // right from this row's own depth, clamped to one deeper than the row now above
+      // it. Dragging left reduces it (back to sibling / top level).
+      const ordered = orderedKeys(positions.value);
+      const myPos = positions.value[itemKey];
+      const aboveKey = myPos > 0 ? ordered[myPos - 1] : null;
+      const aboveDepth = aboveKey != null ? (ctx.depths.value[aboveKey] ?? 0) : -1;
+      const startDepth = ctx.depths.value[itemKey] ?? 0;
+      ctx.dragDepth.value =
+        aboveDepth < 0 ? 0 : Math.max(0, Math.min(aboveDepth + 1, startDepth + Math.round(e.translationX / NEST_SHIFT)));
     })
     .onEnd(() => {
       top.value = withTiming(
@@ -791,10 +810,13 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
       zIndex: isActive || activeBlockSet.value[itemKey] ? 10 : 0,
       // When a ghost is present it stands in for the dragged row, so hide the
       // original (it's clipped to the pane anyway). Native/phone keeps the row.
-      opacity: hasGhost && isActive && !onSidebar ? 0 : 1,
+      // Phone (no cross-pane ghost): the dragged row itself floats — free on BOTH
+      // axes and semi-transparent so the drop target shows through behind it. Ghost
+      // surfaces (iPad/desktop) keep hiding the original while the ghost carries it.
+      opacity: isActive && !onSidebar ? (hasGhost ? 0 : 0.6) : 1,
       transform: [
-        { translateX: nestShift },
-        { scale: withTiming(isActive && !onSidebar ? 1.02 : 1, EASE) },
+        { translateX: isActive && !onSidebar && !hasGhost ? ctx.dragDX.value : nestShift },
+        { scale: withTiming(isActive && !onSidebar ? 1.03 : 1, EASE) },
       ],
     };
   });
@@ -860,7 +882,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
   return ctx.showHandle ? (
     <Animated.View style={style}>
       <View style={styles.rowHandled} onLayout={measure(heights, itemKey)} {...hoverProps}>
-        <Handle gesture={pan} style={styles.taskHandle} visible={handleVisible} />
+        <Handle gesture={pan} style={styles.taskHandle} visible={handleVisible} testID={`drag-handle-${task.id}`} />
         <View style={styles.rowBody}>
           <TaskRow task={task} showProject={showProject} inProject={inProject} showSubtasks={showSubtasks} depth={depth} hasChildren={hasChildren} expanded={expanded} onToggleExpand={onToggleExpand} onOpenTask={onOpenTask} onPress={handlePress} />
         </View>
@@ -988,13 +1010,16 @@ function DropIndicator({ ctx, overSidebar }) {
     const top = topForIndex(keys, heights.value, positions.value[act]);
     return { opacity: 1, top, height: heights.value[act] ?? FALLBACK_H };
   });
+  // Indent the drop line to the live target depth so it slides in/out as you drag
+  // horizontally — showing whether the task will land as a sibling or a child.
+  const lineStyle = useAnimatedStyle(() => ({ marginLeft: (ctx.dragDepth.value || 0) * NEST_SHIFT }));
   return (
     <Animated.View pointerEvents="none" style={[styles.dropSlot, style]}>
       <View style={styles.dropPlaceholder} />
-      <View style={styles.dropLineRow}>
+      <Animated.View style={[styles.dropLineRow, lineStyle]}>
         <View style={styles.dropDot} />
         <View style={styles.dropLine} />
-      </View>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -1046,6 +1071,10 @@ export default function ReorderableTaskList({
     // nesting: dragging a row rightward drops it as a child of the row above.
     dragDX: useSharedValue(0),
     dragKey: useSharedValue(null),
+    // Per-key rendered depth, and the live target depth of the dragged row (updated
+    // from the horizontal drag) so the drop indicator can preview sibling-vs-child.
+    depths: useSharedValue(Object.fromEntries(items.map((it) => [it.key, it.depth || 0]))),
+    dragDepth: useSharedValue(0),
     showHandle,
     inProject,
   };
@@ -1063,6 +1092,7 @@ export default function ReorderableTaskList({
   if (prevKeys.current !== keysKey) {
     positions.value = Object.fromEntries(items.map((it, i) => [it.key, i]));
     kinds.value = Object.fromEntries(items.map((it) => [it.key, it.kind]));
+    ctx.depths.value = Object.fromEntries(items.map((it) => [it.key, it.depth || 0]));
     prevKeys.current = keysKey;
   }
 
@@ -1070,7 +1100,7 @@ export default function ReorderableTaskList({
     const map = positions.value;
     const arr = new Array(items.length);
     for (const key in map) arr[map[key]] = key;
-    onCommitKeys(arr.filter(Boolean), { draggedKey: ctx.dragKey.value, dx: ctx.dragDX.value });
+    onCommitKeys(arr.filter(Boolean), { draggedKey: ctx.dragKey.value, dx: ctx.dragDX.value, depth: ctx.dragDepth.value });
   };
 
   const containerStyle = useAnimatedStyle(() => ({

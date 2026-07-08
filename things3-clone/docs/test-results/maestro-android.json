@@ -1,0 +1,134 @@
+{
+  "platform": "android",
+  "setup": {
+    "durationMs": 3000
+  },
+  "cases": [
+    {
+      "file": "smart-lists",
+      "title": "sidebar lists all built-in smart lists",
+      "status": "pass",
+      "durationMs": 8000
+    },
+    {
+      "file": "smart-lists",
+      "title": "clicking each smart list navigates and shows its header",
+      "status": "pass",
+      "durationMs": 25000
+    },
+    {
+      "file": "task-crud",
+      "title": "create a task in Inbox",
+      "status": "pass",
+      "durationMs": 24000
+    },
+    {
+      "file": "task-crud",
+      "title": "edit a task title",
+      "status": "pass",
+      "durationMs": 35000
+    },
+    {
+      "file": "task-crud",
+      "title": "complete a task → moves to Logbook, then reopen",
+      "status": "pass",
+      "durationMs": 47000
+    },
+    {
+      "file": "task-crud",
+      "title": "delete a task → moves to Trash",
+      "status": "pass",
+      "durationMs": 32000
+    },
+    {
+      "file": "task-fields",
+      "title": "When = Today puts the task in the Today list",
+      "status": "pass",
+      "durationMs": 32000
+    },
+    {
+      "file": "task-fields",
+      "title": "When = Someday puts the task in the Someday list",
+      "status": "pass",
+      "durationMs": 31000
+    },
+    {
+      "file": "task-fields",
+      "title": "Priority = High is set via the composer and persists on the row",
+      "status": "pass",
+      "durationMs": 37000
+    },
+    {
+      "file": "task-fields",
+      "title": "set a Deadline via the detail calendar sheet",
+      "status": "pass",
+      "durationMs": 33000
+    },
+    {
+      "file": "task-fields",
+      "title": "add Notes to a task and see them persist",
+      "status": "pass",
+      "durationMs": 34000
+    },
+    {
+      "file": "search",
+      "title": "typing a query lists only matching tasks",
+      "status": "pass",
+      "durationMs": 42000
+    },
+    {
+      "file": "search",
+      "title": "a non-matching query shows no results",
+      "status": "pass",
+      "durationMs": 18000
+    },
+    {
+      "file": "settings",
+      "title": "toggling \"Completed tasks\" shows/hides completed tasks",
+      "status": "pass",
+      "durationMs": 47000
+    },
+    {
+      "file": "organization",
+      "title": "create an Area (appears in the sidebar)",
+      "status": "pass",
+      "durationMs": 18000
+    },
+    {
+      "file": "organization",
+      "title": "create a Project (appears in the sidebar and opens)",
+      "status": "pass",
+      "durationMs": 23000
+    },
+    {
+      "file": "organization",
+      "title": "add a Heading (section) to a project",
+      "status": "na",
+      "reason": "No mobile UI: 'Add section' is a wide-layout-only affordance (isWide gate in ListScreen); not reachable on a phone."
+    },
+    {
+      "file": "organization",
+      "title": "add a task to a project via the inline composer",
+      "status": "pass",
+      "durationMs": 38000
+    },
+    {
+      "file": "organization",
+      "title": "move a task into a project via the detail Project field",
+      "status": "pass",
+      "durationMs": 87000
+    },
+    {
+      "file": "organization",
+      "title": "add a Tag to a task and see the badge on its row",
+      "status": "pass",
+      "durationMs": 83000
+    },
+    {
+      "file": "custom-view",
+      "title": "a saved text filter lists only matching tasks",
+      "status": "fail",
+      "durationMs": 118000
+    }
+  ]
+}

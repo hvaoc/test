@@ -3,11 +3,13 @@
 
 export function ClearSyncServer():Promise<void>;
 
-export function ResetStore():Promise<void>;
+export function CloseNote(arg1:string):Promise<void>;
 
 export function GetWindowMode():Promise<string>;
 
 export function LoadSnapshot():Promise<string>;
+
+export function ResetStore():Promise<void>;
 
 export function SaveSnapshot(arg1:string):Promise<void>;
 
@@ -16,3 +18,5 @@ export function SetSyncServer(arg1:string,arg2:string):Promise<void>;
 export function SetWindowMode(arg1:string):Promise<void>;
 
 export function Sync():Promise<string>;
+
+export function SyncNote(arg1:string):Promise<string>;

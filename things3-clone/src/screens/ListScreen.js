@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Platform,
   Modal,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +28,7 @@ import TaskRow from '../components/TaskRow';
 import SidebarToggle from '../components/SidebarToggle';
 import TaskDetailModal from '../components/TaskDetailModal';
 import FloatingAddButton from '../components/FloatingAddButton';
+import QuickAddComposer from '../components/QuickAddComposer';
 import ProjectHeader from '../components/ProjectHeader';
 import AreaHeader from '../components/AreaHeader';
 import ReorderableTaskList, { HANDLE_W } from '../components/ReorderableTaskList';
@@ -46,6 +48,34 @@ import { chevronState, chevronRotate } from '../utils/sections';
 
 // Expanded-minimal shows this many items before a "show N more" row.
 const MINIMAL_ITEMS = 10;
+// Horizontal drag distance (px) per indent level when nesting a task by dragging.
+const NEST_STEP = 24;
+
+// A dragged row moves on its own — its subtask rows don't follow in the raw key
+// order, so a naive commit would re-parent them to whatever ends up above them
+// (leaving the subtree behind). Rebuild the order so the dragged task's ENTIRE
+// descendant block — taken from the original nesting in `orderedDepths`
+// ([{ key, depth }] in render order) — immediately follows it, preserving the
+// subtree as-is. Returns the reordered keys and the set of descendant keys, so
+// the caller can shift their depth by the same delta the parent moved.
+function carrySubtree(keys, draggedKey, orderedDepths) {
+  if (!draggedKey) return { keys, descendants: new Set() };
+  const idx = orderedDepths.findIndex((t) => t.key === draggedKey);
+  if (idx < 0) return { keys, descendants: new Set() };
+  const baseDepth = orderedDepths[idx].depth;
+  const block = [];
+  for (let i = idx + 1; i < orderedDepths.length; i++) {
+    if (orderedDepths[i].depth > baseDepth) block.push(orderedDepths[i].key);
+    else break; // first row back at/above the dragged depth ends the subtree
+  }
+  if (block.length === 0) return { keys, descendants: new Set() };
+  const descendants = new Set(block);
+  const without = keys.filter((k) => !descendants.has(k));
+  const at = without.indexOf(draggedKey);
+  if (at < 0) return { keys, descendants };
+  const out = [...without.slice(0, at + 1), ...block, ...without.slice(at + 1)];
+  return { keys: out, descendants };
+}
 
 // Builds the grouped sections shown in a given context. Each section is
 // { key, title, subtitle?, color?, data: task[] }.
@@ -388,6 +418,23 @@ export default function ListScreen({
     setSetting,
   } = useTasks();
   const [openTaskId, setOpenTaskId] = useState(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // Opening a task's detail dismisses the quick-add composer — it's now a non-modal
+  // overlay, so without this it would stay open behind the full-screen detail.
+  useLayoutEffect(() => {
+    if (openTaskId) setQuickAddOpen(false);
+  }, [openTaskId]);
+  const scrollRef = useRef(null);
+  // How much of the screen the open quick-add composer covers (measured by the composer);
+  // seeded with a ~half-screen estimate for the first frame before measurement arrives.
+  const [composerCovered, setComposerCovered] = useState(Math.round(Dimensions.get('window').height * 0.5));
+  // New tasks append to the bottom, so on quick-add (open / add / close) scroll the list
+  // to the end to reveal the latest task. NOTE: the reorderable list sets its height via a
+  // reanimated animated style, so the ScrollView's JS-side contentSize (what scrollToEnd
+  // relies on) is stale — scrollToEnd no-ops. Instead we push a large offset and let the
+  // NATIVE scroll view clamp it to the real content bottom. No-op on non-ScrollView surfaces.
+  const scrollListToEnd = () =>
+    setTimeout(() => scrollRef.current?.scrollTo?.({ y: 1e6, animated: true }), 120);
   const [editSectionId, setEditSectionId] = useState(null);
   // Projects can be viewed as the manual heading list, or grouped by date.
   const [projectView, setProjectView] = useState('list');
@@ -549,7 +596,8 @@ export default function ListScreen({
   const totalTasks = sections.reduce((n, s) => n + s.data.length, 0);
   const isEmpty = totalTasks === 0;
 
-  const handleAdd = () => {
+  // The defaults a new task in this list inherits (its schedule / container).
+  const addDefaults = () => {
     const defaults = {};
     if (listId === 'today') defaults.when = WHEN.TODAY;
     if (listId === 'someday') defaults.when = WHEN.SOMEDAY;
@@ -558,14 +606,81 @@ export default function ListScreen({
       defaults.areaId = project?.areaId || null;
     }
     // Areas hold no tasks of their own — nothing to file directly into an area.
+    return defaults;
+  };
 
-    const task = newTask(defaults);
+  const handleAdd = () => {
+    // On phones the FAB opens the low-friction quick-add composer (bottom sheet)
+    // rather than the full-screen detail editor. Wide layouts keep the detail editor.
+    if (!isWide) {
+      setQuickAddOpen(true);
+      scrollListToEnd();
+      return;
+    }
+    const task = newTask(addDefaults());
     addTask(task);
+    setOpenTaskId(task.id);
+  };
+
+  // Create a task from the quick-add composer, merging its picked fields over the
+  // list defaults. The composer stays open for the next entry (handled in-component).
+  const handleQuickAdd = (fields) => {
+    const defaults = addDefaults();
+    const task = newTask({
+      title: fields.title,
+      // Container comes from the composer's picker (seeded from this list).
+      projectId: fields.projectId || null,
+      areaId: fields.areaId || null,
+      headingId: fields.headingId || null,
+      when: fields.when || defaults.when || null,
+      startMinutes: fields.startMinutes ?? null,
+      durationMinutes: fields.durationMinutes ?? null,
+      timezone: fields.timezone ?? null,
+      deadline: fields.deadline || null,
+      priority: fields.priority || null,
+      tags: fields.tags || [],
+    });
+    addTask(task);
+    scrollListToEnd();
+  };
+
+  // Promote the quick-add entry to the full-screen editor: create the task from
+  // whatever's been entered so far (title may be blank), then open it in the
+  // detail editor and close the composer.
+  const handleQuickAddExpand = (fields) => {
+    const defaults = addDefaults();
+    const task = newTask({
+      title: fields.title || '',
+      projectId: fields.projectId || null,
+      areaId: fields.areaId || null,
+      headingId: fields.headingId || null,
+      when: fields.when || defaults.when || null,
+      startMinutes: fields.startMinutes ?? null,
+      durationMinutes: fields.durationMinutes ?? null,
+      timezone: fields.timezone ?? null,
+      deadline: fields.deadline || null,
+      priority: fields.priority || null,
+      tags: fields.tags || [],
+    });
+    addTask(task);
+    setQuickAddOpen(false);
     setOpenTaskId(task.id);
   };
 
   const headerColor = smart?.color || project?.color || area?.color || colors.text;
   const headerTitle = title || smart?.title || project?.name || area?.name || 'List';
+
+  // Mobile quick-add composer, rendered alongside the FAB on each phone list surface.
+  const quickAdd = (
+    <QuickAddComposer
+      visible={quickAddOpen}
+      onClose={() => { setQuickAddOpen(false); scrollListToEnd(); }}
+      onCoveredHeight={setComposerCovered}
+      onAdd={handleQuickAdd}
+      onExpand={handleQuickAddExpand}
+      defaultContainer={{ projectId: projectId || null, areaId: project?.areaId || null, headingId: null }}
+    />
+  );
 
   // Drag-to-reorder is allowed in contexts whose selector sorts by `order`, so
   // a committed reorder persists across reloads: Inbox, Today, Anytime, Someday,
@@ -577,9 +692,13 @@ export default function ListScreen({
   // The nav bar now sits fixed above the scroll (so sticky section headers can
   // pin to the very top), and the container owns the top safe-area inset — so
   // the scroll content only needs a small top gap.
+  // While the quick-add composer is open it overlays the bottom of the screen (composer
+  // + keyboard) without resizing the list. Pad the content by exactly the covered area
+  // (measured by the composer) plus a small gap, so scrolling to the end lands the last
+  // item just ABOVE the composer.
   const contentPad = {
     paddingTop: spacing.sm,
-    paddingBottom: insets.bottom + 100,
+    paddingBottom: quickAddOpen ? Math.max(0, composerCovered - 12) : insets.bottom + 100,
   };
 
   // Project date view: the project's to-dos regrouped by their When date. Sourced
@@ -800,16 +919,20 @@ export default function ListScreen({
   const depthByKey = new Map(
     projectItems.filter((i) => i.kind === 'task').map((i) => [i.key, i.depth || 0])
   );
-  const NEST_THRESHOLD = 18; // drag this far right to nest under the row above
   const commitProjectLayout = (rawKeys, meta = {}) => {
+    const { draggedKey, dx = 0, depth: metaDepth = null } = meta;
     // Fold each section's hidden (three-state) tasks back in as top-level rows
     // after their shown ones, so every task gets a fresh, non-colliding order.
-    const keys = reinsertHidden(rawKeys);
-    const { draggedKey, dx = 0 } = meta;
+    // Then carry the dragged task's whole subtree along with it.
+    const orderedDepths = projectItems
+      .filter((i) => i.kind === 'task')
+      .map((i) => ({ key: i.key, depth: i.depth || 0 }));
+    const { keys, descendants } = carrySubtree(reinsertHidden(rawKeys), draggedKey, orderedDepths);
     let currentHeading = null;
     const tasks = [];
     const headings = [];
     const stack = []; // stack[d] = last task id seen at depth d
+    let draggedDelta = 0; // how far the dragged task changed depth (applied to its subtree)
     keys.forEach((k) => {
       if (k.startsWith('add:') || k.startsWith('sec:')) return;
       if (k.startsWith('h:')) {
@@ -822,12 +945,14 @@ export default function ListScreen({
       const aboveDepth = stack.length - 1;
       let depth = depthByKey.get(k) || 0;
       if (k === draggedKey) {
-        // Dropped at the top of a section → top level. Dragged rightward onto the
-        // row above → become its child. Otherwise keep its level (capped so it
-        // can't skip past a valid parent).
-        if (aboveDepth < 0) depth = 0;
-        else if (dx > NEST_THRESHOLD) depth = aboveDepth + 1;
-        else depth = Math.min(depth, aboveDepth + 1);
+        // Horizontal drag sets the target indent in BOTH directions: drag right to
+        // nest (child), drag left to un-nest (back to sibling / top level). Clamp so a
+        // task is at most one level deeper than the row above it.
+        depth = aboveDepth < 0 ? 0 : Math.max(0, Math.min(aboveDepth + 1, metaDepth != null ? metaDepth : depth + Math.round(dx / NEST_STEP)));
+        draggedDelta = depth - (depthByKey.get(k) || 0);
+      } else if (descendants.has(k)) {
+        // Subtree rows keep their internal nesting, shifted by the parent's move.
+        depth = Math.max(0, (depthByKey.get(k) || 0) + draggedDelta);
       }
       const parentId = depth > 0 ? stack[depth - 1] || null : null;
       tasks.push({ id: k, parentId, headingId: parentId ? null : currentHeading });
@@ -903,7 +1028,7 @@ export default function ListScreen({
           <SidebarToggle onPress={onToggleSidebar} color={colors.accent} style={styles.back} />
         )
       ) : (
-        <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
+        <Pressable testID="list-back" hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
           <Ionicons name="chevron-back" size={26} color={colors.accent} />
         </Pressable>
       )}
@@ -913,7 +1038,7 @@ export default function ListScreen({
         </Pressable>
       )}
       {project && (
-        <Pressable style={styles.displayBtn} onPress={() => setDisplayOpen(true)}>
+        <Pressable testID="list-display" style={styles.displayBtn} onPress={() => setDisplayOpen(true)}>
           <Ionicons name="options-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.displayText}>Display</Text>
           {hasFilter && <View style={styles.displayDot} />}
@@ -975,7 +1100,7 @@ export default function ListScreen({
       {smart && (
         <Ionicons name={smart.icon} size={26} color={headerColor} style={{ marginRight: 8 }} />
       )}
-      <Text style={[styles.screenTitle, smart && { color: headerColor }]}>
+      <Text testID="list-title" style={[styles.screenTitle, smart && { color: headerColor }]}>
         {headerTitle}
       </Text>
     </View>
@@ -1072,6 +1197,7 @@ export default function ListScreen({
         {listId !== 'logbook' && listId !== 'trash' && !areaId && (
           <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
         )}
+        {quickAdd}
         <TaskDetailModal
           visible={!!openTaskId}
           taskId={openTaskId}
@@ -1174,6 +1300,7 @@ export default function ListScreen({
         {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
           <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
         )}
+        {quickAdd}
         <TaskDetailModal
           visible={!!openTaskId}
           taskId={openTaskId}
@@ -1188,6 +1315,7 @@ export default function ListScreen({
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {navBar}
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={contentPad}
         keyboardShouldPersistTaps="handled"
         onScroll={onScroll}
@@ -1290,7 +1418,6 @@ export default function ListScreen({
                 section={section}
                 listId={listId}
                 onOpenTask={setOpenTaskId}
-                onCommitKeys={reorderTasks}
               />
             ) : (
               <Section
@@ -1362,6 +1489,7 @@ export default function ListScreen({
       {listId !== 'logbook' && listId !== 'trash' && !areaId && !(project && isWide) && (
         <FloatingAddButton onPress={handleAdd} bottom={insets.bottom + 20} />
       )}
+      {quickAdd}
 
       <TaskDetailModal
         visible={!!openTaskId}
@@ -1398,8 +1526,67 @@ export default function ListScreen({
 // A smart-list section whose tasks can be dragged to reorder (Inbox, Today,
 // Anytime, Someday, Areas). Renders the same header as Section, then a
 // ReorderableTaskList; reordering commits this section's ids via onCommitKeys.
-function ReorderableSection({ section, listId, onOpenTask, onCommitKeys }) {
+function ReorderableSection({ section, listId, onOpenTask }) {
+  const { state, setProjectLayout } = useTasks();
   const showProject = section.showProject ?? (!!listId && listId !== 'logbook');
+  // Which parents are collapsed (subtasks shown nested + expanded by default, like
+  // Todoist — tap the disclosure to collapse).
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggleExpand = (id) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  // Build the draggable rows: each top-level task, then its subtasks nested beneath
+  // it (recursively), each carrying a depth so the row indents and can be re-parented.
+  const items = [];
+  const emit = (t, depth) => {
+    const kids = selectSubtasks(state.tasks, t.id);
+    const isExpanded = !collapsed.has(t.id);
+    items.push({ key: t.id, kind: 'task', task: t, depth, hasChildren: kids.length > 0, expanded: isExpanded });
+    if (kids.length > 0 && isExpanded) kids.forEach((k) => emit(k, depth + 1));
+  };
+  section.data.forEach((t) => emit(t, 0));
+
+  // Drop-as-child: on commit, a task keeps its rendered depth unless it was dragged
+  // right past the threshold onto the row above (→ becomes that row's child) — the same
+  // rule projects use. parentId falls out of the depth stack.
+  const depthByKey = new Map(items.map((i) => [i.key, i.depth || 0]));
+  const taskById = new Map(state.tasks.map((t) => [t.id, t]));
+  const commit = (rawKeys, meta = {}) => {
+    const { draggedKey, dx = 0, depth: metaDepth = null } = meta;
+    // Carry the dragged task's whole subtree along with it (its rows don't move
+    // in the raw order on their own).
+    const orderedDepths = items.map((i) => ({ key: i.key, depth: i.depth || 0 }));
+    const { keys, descendants } = carrySubtree(rawKeys, draggedKey, orderedDepths);
+    const stack = [];
+    const tasks = [];
+    let draggedDelta = 0;
+    keys.forEach((k) => {
+      const aboveDepth = stack.length - 1;
+      let depth = depthByKey.get(k) || 0;
+      if (k === draggedKey) {
+        // Right → nest (child), left → un-nest (sibling), same slot; clamp to one
+        // level deeper than the row above.
+        depth = aboveDepth < 0 ? 0 : Math.max(0, Math.min(aboveDepth + 1, metaDepth != null ? metaDepth : depth + Math.round(dx / NEST_STEP)));
+        draggedDelta = depth - (depthByKey.get(k) || 0);
+      } else if (descendants.has(k)) {
+        // Subtree rows keep their internal nesting, shifted by the parent's move.
+        depth = Math.max(0, (depthByKey.get(k) || 0) + draggedDelta);
+      }
+      const parentId = depth > 0 ? stack[depth - 1] || null : null;
+      // A subtask belongs to no heading; a top-level task keeps whatever heading it had
+      // (so project tasks shown in Anytime/Someday aren't torn out of their section).
+      const headingId = parentId ? null : taskById.get(k)?.headingId ?? null;
+      tasks.push({ id: k, parentId, headingId });
+      stack[depth] = k;
+      stack.length = depth + 1;
+    });
+    setProjectLayout({ tasks, headings: [] });
+  };
+
   return (
     <View style={styles.section}>
       {section.title ? (
@@ -1419,10 +1606,12 @@ function ReorderableSection({ section, listId, onOpenTask, onCommitKeys }) {
         </View>
       ) : null}
       <ReorderableTaskList
-        items={section.data.map((t) => ({ key: t.id, kind: 'task', task: t }))}
+        items={items}
         showProject={showProject}
+        showSubtasks
         onOpenTask={onOpenTask}
-        onCommitKeys={onCommitKeys}
+        onToggleExpand={toggleExpand}
+        onCommitKeys={commit}
       />
     </View>
   );

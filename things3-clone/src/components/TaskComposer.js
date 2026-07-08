@@ -19,9 +19,9 @@ function whenLabel(when) {
 }
 
 // A small outlined field chip (icon + label), highlighted when it has a value.
-function Chip({ icon, label, color, active, onPress }) {
+function Chip({ icon, label, color, active, onPress, testID }) {
   return (
-    <Pressable style={[styles.chip, active && { borderColor: color || colors.accent }]} onPress={onPress}>
+    <Pressable testID={testID} style={[styles.chip, active && { borderColor: color || colors.accent }]} onPress={onPress}>
       <Ionicons name={icon} size={14} color={active ? color || colors.accent : colors.textSecondary} />
       <Text
         style={[styles.chipText, active && { color: color || colors.accent, fontWeight: '600' }]}
@@ -78,6 +78,7 @@ export default function TaskComposer({
     <View style={styles.card}>
       <TextInput
         ref={ref}
+        testID="composer-title-input"
         style={styles.title}
         value={title}
         onChangeText={setTitle}
@@ -99,6 +100,7 @@ export default function TaskComposer({
 
       <View style={styles.fields}>
         <Chip
+          testID="composer-when"
           icon={when ? 'calendar' : 'calendar-outline'}
           label={whenLabel(when)}
           color={colors.accent}
@@ -106,13 +108,15 @@ export default function TaskComposer({
           onPress={() => setSheet('when')}
         />
         <Chip
-          icon="alarm-outline"
+          testID="composer-deadline"
+          icon="hourglass-outline"
           label={deadline ? relativeLabel(deadline) : 'Deadline'}
           color={colors.deadline}
           active={!!deadline}
           onPress={() => setSheet('deadline')}
         />
         <Chip
+          testID="composer-priority"
           icon={priority ? 'flag' : 'flag-outline'}
           label={priorityMeta ? priorityMeta.label : 'Priority'}
           color={priorityMeta ? priorityMeta.color : colors.textSecondary}
@@ -127,6 +131,7 @@ export default function TaskComposer({
           onPress={() => setSheet('location')}
         />
         <Chip
+          testID="composer-tags"
           icon="pricetag-outline"
           label={tags.length ? `${tags.length} Label${tags.length > 1 ? 's' : ''}` : 'Labels'}
           color={colors.accent}
@@ -140,6 +145,7 @@ export default function TaskComposer({
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
         <Pressable
+          testID="composer-submit"
           style={[styles.add, !title.trim() && styles.addDisabled]}
           onPress={add}
           disabled={!title.trim()}

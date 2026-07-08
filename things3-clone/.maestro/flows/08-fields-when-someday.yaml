@@ -1,0 +1,16 @@
+# Task fields · "When = Someday puts the task in the Someday list"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-date" }
+- tapOn: { id: "when-menu-someday" }
+- tapOn: { id: "detail-title" }
+- inputText: "Learn the cello"
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-someday" }
+- assertVisible: "Learn the cello"
+- tapOn: { id: "list-back" }

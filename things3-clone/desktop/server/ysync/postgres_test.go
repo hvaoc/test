@@ -164,3 +164,119 @@ func TestPostgresMaterializedRecords(t *testing.T) {
 	_ = pp.DB().QueryRow(`SELECT count(*) FROM record_registers`).Scan(&total)
 	t.Logf("record_registers holds %d live rows (one per field) — no edit history accumulates", total)
 }
+
+// TestPostgresTombstoneGC proves the delete/lagger design (docs/tombstone-gc.html):
+// deletes are purged after their retention window (so the DB never leaks tombstones),
+// the purge raises a per-tenant watermark, a client whose cursor fell below it is told
+// to full-reload (cursorExpired), and a full reload neither resurrects the delete nor
+// loop-expires (the full-copy cursor is floored at the watermark).
+func TestPostgresTombstoneGC(t *testing.T) {
+	const port = 54331
+	pg := embeddedpostgres.NewDatabase(
+		embeddedpostgres.DefaultConfig().Port(port).Username("postgres").Password("postgres").Database("things_gc"),
+	)
+	if err := pg.Start(); err != nil {
+		t.Skipf("embedded postgres unavailable: %v", err)
+	}
+	defer func() { _ = pg.Stop() }()
+	dsn := fmt.Sprintf("host=localhost port=%d user=postgres password=postgres dbname=things_gc sslmode=disable", port)
+
+	pp, err := NewPostgresPersistence(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pp.Close()
+	rs, err := NewPGRecordStore(pp.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc, ok := rs.(RecordGC)
+	if !ok {
+		t.Fatal("pg record store should implement RecordGC")
+	}
+	hub := NewHub(DevAuth{}, pp)
+	hub.SetRecordStore(rs)
+	srv := httptest.NewServer(hub.Handler())
+	defer srv.Close()
+
+	// Alice creates t1 + t2 and pushes; Bob syncs and remembers his cursor.
+	alice := newRecClient(t, srv, "acme:alice")
+	if err := alice.store.ApplyLocalSnapshot(recState(
+		map[string]any{"id": "t1", "title": "delete me"},
+		map[string]any{"id": "t2", "title": "keep me"},
+	)); err != nil {
+		t.Fatal(err)
+	}
+	alice.push()
+
+	bob := newRecClient(t, srv, "acme:bob")
+	bob.pull()
+	if _, ok := bob.tasks()["t1"]; !ok {
+		t.Fatalf("bob should see t1 before the delete: %v", bob.tasks())
+	}
+	staleCursor := bob.cursor
+	if staleCursor == 0 {
+		t.Fatal("bob's cursor should have advanced")
+	}
+
+	// Alice deletes t1 — a snapshot without it emits presence(t1)=false — and pushes.
+	if err := alice.store.ApplyLocalSnapshot(recState(
+		map[string]any{"id": "t2", "title": "keep me"},
+	)); err != nil {
+		t.Fatal(err)
+	}
+	alice.push()
+
+	// GC with zero retention purges the tombstone at once and raises the watermark. Run
+	// twice: pass 1 purges the presence row, pass 2 sweeps t1's now-orphaned title row
+	// (the two DELETEs share a snapshot, so the field is reclaimed one pass later).
+	if _, err := gc.RunGC(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.RunGC(0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Requirement 1: nothing about t1 remains — no leaked tombstone, no orphaned field.
+	var t1rows int
+	_ = pp.DB().QueryRow(`SELECT count(*) FROM record_registers WHERE entity='t1'`).Scan(&t1rows)
+	if t1rows != 0 {
+		t.Fatalf("t1 should be fully reclaimed after GC, found %d row(s)", t1rows)
+	}
+	var watermark int
+	if err := pp.DB().QueryRow(`SELECT watermark FROM record_gc WHERE scope='acme'`).Scan(&watermark); err != nil {
+		t.Fatalf("a watermark row should exist after GC: %v", err)
+	}
+	if staleCursor >= watermark {
+		t.Fatalf("bob's stale cursor (%d) must be below the watermark (%d) to trigger expiry", staleCursor, watermark)
+	}
+
+	// Requirement 2: bob's incremental pull at his stale cursor is EXPIRED — he can't be
+	// trusted to have the delete, so the server refuses to ship deltas.
+	resp := bob.post("/v1/records/pull", map[string]any{"cursor": staleCursor})
+	if exp, _ := resp["cursorExpired"].(bool); !exp {
+		t.Fatalf("stale-cursor pull should be cursorExpired, got %v", resp)
+	}
+
+	// Full reload (cursor 0) rebuilds the whole current copy: t2 present, t1 gone — the
+	// delete is NOT resurrected even though its tombstone was purged.
+	carol := newRecClient(t, srv, "acme:carol")
+	carol.pull()
+	if _, ok := carol.tasks()["t1"]; ok {
+		t.Fatalf("full reload must not resurrect the deleted t1: %v", carol.tasks())
+	}
+	if carol.tasks()["t2"]["title"] != "keep me" {
+		t.Fatalf("full reload lost the surviving t2: %v", carol.tasks())
+	}
+
+	// D8 guardrail: the full-copy cursor is floored at the watermark, so the freshly
+	// reloaded client does not immediately loop-expire on its next pull.
+	if carol.cursor < watermark {
+		t.Fatalf("full-copy cursor (%d) must be floored at the watermark (%d)", carol.cursor, watermark)
+	}
+	resp2 := carol.post("/v1/records/pull", map[string]any{"cursor": carol.cursor})
+	if exp, _ := resp2["cursorExpired"].(bool); exp {
+		t.Fatalf("a caught-up client must not expire, got %v", resp2)
+	}
+	t.Logf("tombstone GC: watermark=%d; stale cursor %d expired; full reload dropped t1, kept t2", watermark, staleCursor)
+}

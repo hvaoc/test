@@ -1,0 +1,18 @@
+# Task fields · "When = Today puts the task in the Today list"
+# Mobile sets When via the detail popover menu (the AnchoredPopover bug is fixed),
+# not the wide-only inline composer sheet. Set When first (keyboard down) then title.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-date" }
+- tapOn: { id: "when-menu-today" }
+- tapOn: { id: "detail-title" }
+- inputText: "Ship the release"
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-today" }
+- assertVisible: "Ship the release"
+- tapOn: { id: "list-back" }

@@ -6,8 +6,8 @@ export function ClearSyncServer() {
   return window['go']['main']['App']['ClearSyncServer']();
 }
 
-export function ResetStore() {
-  return window['go']['main']['App']['ResetStore']();
+export function CloseNote(arg1) {
+  return window['go']['main']['App']['CloseNote'](arg1);
 }
 
 export function GetWindowMode() {
@@ -16,6 +16,10 @@ export function GetWindowMode() {
 
 export function LoadSnapshot() {
   return window['go']['main']['App']['LoadSnapshot']();
+}
+
+export function ResetStore() {
+  return window['go']['main']['App']['ResetStore']();
 }
 
 export function SaveSnapshot(arg1) {
@@ -32,4 +36,8 @@ export function SetWindowMode(arg1) {
 
 export function Sync() {
   return window['go']['main']['App']['Sync']();
+}
+
+export function SyncNote(arg1) {
+  return window['go']['main']['App']['SyncNote'](arg1);
 }

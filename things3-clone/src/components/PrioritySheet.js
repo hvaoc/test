@@ -14,13 +14,13 @@ export default function PrioritySheet({ visible, onClose, value, onChange }) {
   return (
     <BottomSheet visible={visible} onClose={onClose} title="Priority">
       {PRIORITIES.map((p) => (
-        <Pressable key={p.key} style={styles.row} onPress={() => pick(p.key)}>
+        <Pressable testID={`priority-option-${p.key}`} key={p.key} style={styles.row} onPress={() => pick(p.key)}>
           <Ionicons name="flag" size={18} color={p.color} />
           <Text style={styles.label}>{p.label}</Text>
           {value === p.key && <Ionicons name="checkmark" size={18} color={colors.accent} />}
         </Pressable>
       ))}
-      <Pressable style={styles.row} onPress={() => pick(null)}>
+      <Pressable testID="priority-option-none" style={styles.row} onPress={() => pick(null)}>
         <Ionicons name="flag-outline" size={18} color={colors.textTertiary} />
         <Text style={styles.label}>None</Text>
         {!value && <Ionicons name="checkmark" size={18} color={colors.accent} />}

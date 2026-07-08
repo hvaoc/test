@@ -1,0 +1,30 @@
+# Settings · 'toggling "Completed tasks" shows/hides completed tasks'
+# The full Settings sheet is sign-in-gated; the same preference is reachable offline
+# via a project's Display menu. Cycle: complete (visible) -> off (hidden) -> on (visible).
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-new-list" }
+- tapOn: { id: "newlist-mode-project" }
+- tapOn: { id: "newlist-name" }
+- inputText: "Sprint"
+- pressKey: Enter          # onSubmitEditing on the name field creates the list (the Create button can sit under the keyboard)
+- tapOn: "Sprint"
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Finished chore"
+- tapOn: { id: "detail-checkbox" }
+- tapOn: { id: "detail-back" }
+- assertVisible: "Finished chore"
+# turn Completed tasks OFF -> hidden
+- tapOn: { id: "list-display" }
+- tapOn: { id: "setting-show-completed" }
+- tapOn: { id: "display-done" }
+- assertNotVisible: "Finished chore"
+# turn it back ON -> visible again
+- tapOn: { id: "list-display" }
+- tapOn: { id: "setting-show-completed" }
+- tapOn: { id: "display-done" }
+- assertVisible: "Finished chore"
+- tapOn: { id: "list-back" }

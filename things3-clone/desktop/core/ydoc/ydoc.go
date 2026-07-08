@@ -113,6 +113,16 @@ func (e *Engine) NoteText(taskID string) string {
 	return ""
 }
 
+// Settings returns the current per-user settings map (the settings scope), for the
+// coordinator to overlay onto the record engine's structured materialization.
+func (e *Engine) Settings() map[string]any {
+	m := e.settings.GetMap(settingsRoot).Entries()
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
 // Scopes lists every scope with a live local doc, for persistence. shared and
 // settings are always present; note scopes appear once their doc exists (i.e. the
 // task has notes locally or its note doc was pulled).

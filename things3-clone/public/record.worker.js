@@ -402,7 +402,12 @@ function markSynced(seqs) {
 }
 // applyRemote merges pulled ops (LWW), witnesses their clocks, reprojects touched
 // tasks, and does NOT re-log them. Wire ops use {t,k,i,f,e,v,p,h}.
-function applyRemote(ops) {
+//
+// rebuild=true is used only after wipeLocalRecords() during a full reload: it applies
+// EVERY op including ones authored by this node. In normal sync we skip our own echoes
+// (the server replays them back to us), but after a wipe those echoes ARE our state —
+// skipping them would drop everything this device ever created (docs/tombstone-gc §05).
+function applyRemote(ops, rebuild) {
   if (!ops || !ops.length) return 0;
   let n = 0;
   run('BEGIN');
@@ -410,7 +415,7 @@ function applyRemote(ops) {
     const touched = {};
     for (const w of ops) {
       witness(w.h);
-      if (parseHLC(w.h).node === node) continue; // our own echo
+      if (!rebuild && parseHLC(w.h).node === node) continue; // our own echo
       const op = { type: w.t, kind: w.k, id: w.i, field: w.f || '', elem: w.e || '', value: w.v || '', present: !!w.p, hlc: w.h };
       const applied = applyOp(op, false);
       if (applied) n++;
@@ -423,6 +428,14 @@ function applyRemote(ops) {
 }
 function getCursor() { return metaGet('cursor') || ''; }
 function setCursor(c) { metaSet('cursor', c == null ? '' : String(c)); return true; }
+
+// wipeLocalRecords drops all materialized state + the local op-log, preserving meta
+// (node identity, HLC clock). Used by a full reload before rebuilding from the server's
+// current copy (docs/tombstone-gc.html §05). Callers must push/abandon pending ops first.
+function wipeLocalRecords() {
+  run('DELETE FROM fields; DELETE FROM setelems; DELETE FROM presence; DELETE FROM oplog; DELETE FROM tasks; DELETE FROM tasks_fts;');
+  return true;
+}
 
 // ---- single-owner init (Web Lock held for the worker's lifetime + install retry) ----
 async function acquireOwnership() {
@@ -460,7 +473,8 @@ const handlers = {
   materialize: () => materialize(),
   pendingOps: (limit) => pendingOps(limit),
   markSynced: (seqs) => markSynced(seqs),
-  applyRemote: (ops) => applyRemote(ops),
+  applyRemote: (ops, rebuild) => applyRemote(ops, rebuild),
+  wipeLocalRecords: () => wipeLocalRecords(),
   cursor: () => getCursor(),
   setCursor: (c) => setCursor(c),
   queryTasks: (q) => queryTasks(q),
@@ -473,7 +487,7 @@ const handlers = {
   toggleComplete: (id, completed) => toggleComplete(id, completed),
   moveTask: (id, beforeId, afterId) => moveTask(id, beforeId, afterId),
   deleteTask: (id) => deleteTask(id),
-  reset: () => { run('DELETE FROM fields; DELETE FROM setelems; DELETE FROM presence; DELETE FROM oplog; DELETE FROM tasks; DELETE FROM tasks_fts;'); return true; },
+  reset: () => wipeLocalRecords(),
 };
 
 let ready = false;

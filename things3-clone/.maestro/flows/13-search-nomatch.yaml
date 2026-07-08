@@ -1,0 +1,10 @@
+# Search · "a non-matching query shows no results"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-search" }
+- tapOn: { id: "search-input" }
+- inputText: "qqqzzznotathing"
+- assertVisible: { id: "search-empty" }
+- tapOn: { id: "search-back" }

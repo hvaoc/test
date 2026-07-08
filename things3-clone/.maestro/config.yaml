@@ -1,0 +1,36 @@
+# Maestro workspace config for the mobile suite.
+#
+# CRITICAL: `executionOrder` forces the flows to run SEQUENTIALLY in one app session.
+# Without it, `maestro test <folder>` runs the flows in PARALLEL against the single
+# shared app — they stomp each other's navigation (00-setup doesn't run first, flows
+# find the app on the wrong screen) and most fail spuriously. `flowsOrder` pins the
+# order; `continueOnFailure` runs every case even if one fails, so we still get a full
+# 21-row matrix. Run with `maestro test .maestro` so this config is picked up.
+flows:
+  - "flows/*.yaml"
+# App under test (same RN binary on iOS + Android).
+appId: com.functionofq.thingsclone
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - 00-setup
+    - 01-smart-lists-all
+    - 02-smart-lists-navigate
+    - 03-crud-create
+    - 04-crud-edit
+    - 05-crud-complete
+    - 06-crud-delete
+    - 07-fields-when-today
+    - 08-fields-when-someday
+    - 09-fields-priority
+    - 10-fields-deadline
+    - 11-fields-notes
+    - 12-search-match
+    - 13-search-nomatch
+    - 14-settings-showcompleted
+    - 15-org-area
+    - 16-org-project
+    - 18-org-project-task
+    - 19-org-move
+    - 20-org-tag
+    - 21-customview-textfilter

@@ -9,6 +9,7 @@ import {
   Platform,
   Modal,
   Dimensions,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,6 +37,10 @@ import { useDrag, SIDEBAR_ZONE_KEY } from '../store/DragContext';
 // `embedded` + `selectedKey` are passed by the two-pane SplitView (iPad / web /
 // desktop): the sidebar stays mounted and highlights the active row instead of
 // pushing a new screen. On phones both are undefined and it behaves as a stack.
+// Larger, roomier sidebar rows on the phone only. Web + the Wails desktop both report
+// Platform 'web', so gating on native keeps the desktop sidebar exactly as it was.
+const IS_MOBILE = Platform.OS !== 'web';
+
 export default function HomeScreen({ navigation, selectedKey, embedded, onToggleSidebar }) {
   const insets = useSafeAreaInsets();
   const { state, setSetting, addCustomView, reorderProjects, refreshWorkspace } = useTasks();
@@ -103,6 +108,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
     if (!list) return null;
     const row = (
       <SidebarRow
+        testID={`sidebar-${list.id}`}
         icon={list.icon}
         color={list.color}
         outline={list.outline}
@@ -148,11 +154,15 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
       ]}
     >
       <View style={styles.headerRow}>
-        <Text style={styles.appTitle}>Things</Text>
+        <View style={styles.brand}>
+          <Image source={require('../../assets/logo.png')} style={styles.appIcon} />
+          <Text style={styles.appTitle}>Tally</Text>
+        </View>
         <View style={styles.headerActions}>
           {/* New List — always available, so a new/empty install can create its
               first Area or Project (the sheet has a Project/Area toggle). */}
           <Pressable
+            testID="sidebar-new-list"
             hitSlop={8}
             onPress={() => openNewList(null)}
             style={({ hovered, pressed }) => [styles.headerBtn, (hovered || pressed) && styles.rowHover]}
@@ -167,6 +177,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
         {/* Global search — opens the search screen scoped to everything. */}
         <View style={styles.section}>
           <SidebarRow
+            testID="sidebar-search"
             icon="search"
             color={colors.sidebarTextSecondary}
             outline
@@ -259,7 +270,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             <View style={styles.areaHeaderMain}>
               <Text style={styles.areaTitle}>Views</Text>
             </View>
-            <Pressable hitSlop={6} style={styles.areaBtn} onPress={() => setNewViewOpen(true)}>
+            <Pressable testID="sidebar-new-view" hitSlop={6} style={styles.areaBtn} onPress={() => setNewViewOpen(true)}>
               <Ionicons name="add" size={18} color={colors.sidebarTextSecondary} />
             </Pressable>
           </View>
@@ -283,7 +294,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
           account popover (Settings for now; room to grow). */}
       <Pressable
         ref={profileRef}
-        onPress={account ? openProfileMenu : () => openAuth('login')}
+        onPress={openProfileMenu}
         style={({ pressed, hovered }) => [
           styles.profileRow,
           { paddingBottom: insets.bottom + spacing.sm },
@@ -306,7 +317,7 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             'Sign in or sign up'
           )}
         </Text>
-        <Ionicons name={account ? 'chevron-up' : 'log-in-outline'} size={16} color={colors.sidebarTextSecondary} />
+        <Ionicons name="chevron-up" size={16} color={colors.sidebarTextSecondary} />
       </Pressable>
 
       <Modal
@@ -329,22 +340,24 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
             ]}
           >
             <Text style={styles.menuEmail} numberOfLines={1}>
-              {(account && (account.email || account.username)) || 'Signed in'}
+              {(account && (account.email || account.username)) || 'Not signed in'}
             </Text>
             <View style={styles.menuDivider} />
-            <Pressable
-              style={({ hovered, pressed }) => [
-                styles.menuItem,
-                (hovered || pressed) && styles.menuItemActive,
-              ]}
-              onPress={() => {
-                setProfileOpen(false);
-                setWorkspacesOpen(true);
-              }}
-            >
-              <Ionicons name="people-outline" size={18} color={colors.sidebarText} />
-              <Text style={styles.menuItemText}>Workspaces & team</Text>
-            </Pressable>
+            {account && (
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={() => {
+                  setProfileOpen(false);
+                  setWorkspacesOpen(true);
+                }}
+              >
+                <Ionicons name="people-outline" size={18} color={colors.sidebarText} />
+                <Text style={styles.menuItemText}>Workspaces & team</Text>
+              </Pressable>
+            )}
             <Pressable
               style={({ hovered, pressed }) => [
                 styles.menuItem,
@@ -359,20 +372,36 @@ export default function HomeScreen({ navigation, selectedKey, embedded, onToggle
               <Text style={styles.menuItemText}>Settings</Text>
             </Pressable>
             <View style={styles.menuDivider} />
-            <Pressable
-              style={({ hovered, pressed }) => [
-                styles.menuItem,
-                (hovered || pressed) && styles.menuItemActive,
-              ]}
-              onPress={() => {
-                setProfileOpen(false);
-                logout();
-                refreshWorkspace();
-              }}
-            >
-              <Ionicons name="log-out-outline" size={18} color={colors.sidebarText} />
-              <Text style={styles.menuItemText}>Sign out</Text>
-            </Pressable>
+            {account ? (
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={() => {
+                  setProfileOpen(false);
+                  logout();
+                  refreshWorkspace();
+                }}
+              >
+                <Ionicons name="log-out-outline" size={18} color={colors.sidebarText} />
+                <Text style={styles.menuItemText}>Sign out</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={() => {
+                  setProfileOpen(false);
+                  openAuth('login');
+                }}
+              >
+                <Ionicons name="log-in-outline" size={18} color={colors.sidebarText} />
+                <Text style={styles.menuItemText}>Sign in or sign up</Text>
+              </Pressable>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -476,9 +505,10 @@ function AreaSection({
   );
 }
 
-function SidebarRow({ icon, color, title, badge, onPress, selected, outline }) {
+function SidebarRow({ icon, color, title, badge, onPress, selected, outline, testID }) {
   return (
     <Pressable
+      testID={testID}
       style={({ pressed, hovered }) => [
         styles.row,
         selected && styles.rowSelected,
@@ -488,7 +518,7 @@ function SidebarRow({ icon, color, title, badge, onPress, selected, outline }) {
       onPress={onPress}
     >
       <View style={[styles.iconWrap, !outline && { backgroundColor: color }]}>
-        <Ionicons name={icon} size={outline ? 20 : 15} color={outline ? color : colors.white} />
+        <Ionicons name={icon} size={outline ? (IS_MOBILE ? 22 : 20) : (IS_MOBILE ? 16 : 15)} color={outline ? color : colors.white} />
       </View>
       <Text style={styles.rowTitle}>{title}</Text>
       {badge > 0 && <Text style={styles.badge}>{badge}</Text>}
@@ -500,6 +530,7 @@ function ProjectRow({ project, stats, onPress, selected }) {
   const { done, total } = stats;
   return (
     <Pressable
+      testID={`sidebar-project-${project.id}`}
       style={({ pressed, hovered }) => [
         styles.row,
         selected && styles.rowSelected,
@@ -540,6 +571,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  appIcon: { width: 30, height: 30, borderRadius: radius.sm },
   appTitle: { ...typography.largeTitle, color: colors.sidebarText },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   headerBtn: {
@@ -557,7 +590,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 9,
+    paddingVertical: IS_MOBILE ? 12 : 9,
     paddingHorizontal: spacing.sm,
     borderRadius: radius.md,
     gap: spacing.md,
@@ -573,7 +606,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowTitle: { flex: 1, ...typography.body, color: colors.sidebarText },
+  rowTitle: {
+    flex: 1,
+    ...typography.body,
+    ...(IS_MOBILE ? { fontSize: 17, fontWeight: '500' } : null),
+    color: colors.sidebarText,
+  },
   badge: {
     ...typography.subhead,
     color: colors.sidebarTextSecondary,

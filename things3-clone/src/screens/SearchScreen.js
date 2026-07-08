@@ -60,7 +60,7 @@ export default function SearchScreen({
             <SidebarToggle onPress={onToggleSidebar} color={colors.accent} style={styles.back} />
           )
         ) : (
-          <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
+          <Pressable testID="search-back" hitSlop={10} onPress={() => navigation.goBack()} style={styles.back}>
             <Ionicons name="chevron-back" size={26} color={colors.accent} />
           </Pressable>
         )}
@@ -77,6 +77,7 @@ export default function SearchScreen({
         <View style={styles.searchBox}>
           <Ionicons name="search" size={18} color={colors.textTertiary} />
           <TextInput
+            testID="search-input"
             style={styles.searchInput}
             value={query.text}
             onChangeText={(t) => setQuery((q) => ({ ...q, text: t }))}
@@ -115,7 +116,7 @@ export default function SearchScreen({
       ) : results.length === 0 ? (
         <View style={styles.hint}>
           <Ionicons name="sad-outline" size={40} color={colors.separatorStrong} />
-          <Text style={styles.hintText}>No to-dos match.</Text>
+          <Text testID="search-empty" style={styles.hintText}>No to-dos match.</Text>
         </View>
       ) : (
         <>

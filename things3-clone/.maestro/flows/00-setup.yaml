@@ -1,0 +1,10 @@
+# ONE-TIME setup for the whole run: launch the app fresh and clear state ONCE.
+# Every case flow after this runs against this same running instance (no relaunch),
+# so the ~60s cold launch + CRDT/OPFS hydration is paid exactly once per suite.
+appId: com.functionofq.thingsclone
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: { id: "sidebar-inbox" }
+    timeout: 60000

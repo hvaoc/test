@@ -47,6 +47,9 @@ type recordsPullReq struct {
 type recordsPullResp struct {
 	Ops    []json.RawMessage `json:"ops"`
 	Cursor int               `json:"cursor"`
+	// CursorExpired tells the client its cursor fell below the GC watermark: it must wipe
+	// and full-reload from cursor 0 rather than trust these deltas (docs/tombstone-gc §03).
+	CursorExpired bool `json:"cursorExpired,omitempty"`
 }
 
 // handleRecordsPull returns the tenant's record ops after the client's cursor (0 = a
@@ -57,9 +60,13 @@ func (h *Hub) handleRecordsPull(p Principal, w http.ResponseWriter, r *http.Requ
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	ops, cursor, err := h.records.Pull(scope, req.Cursor)
+	ops, cursor, expired, err := h.records.Pull(scope, req.Cursor)
 	if err != nil {
 		writeErr(w, 500, err.Error())
+		return
+	}
+	if expired {
+		writeJSON(w, 200, recordsPullResp{CursorExpired: true})
 		return
 	}
 	writeJSON(w, 200, recordsPullResp{Ops: ops, Cursor: cursor})

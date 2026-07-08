@@ -515,9 +515,49 @@ async function recordServerSync(base, headers) {
   const rr = await fetch(base + '/v1/records/pull', { method: 'POST', headers, body: JSON.stringify({ cursor: cur ? parseInt(cur, 10) : 0 }) });
   if (!rr.ok) throw new Error('records pull failed: ' + rr.status);
   const body = await rr.json();
+  // The server GC'd past our cursor — our incremental view may be missing a delete, so
+  // we can't trust these deltas. Wipe + rebuild from the whole current copy instead
+  // (docs/tombstone-gc.html §03).
+  if (body.cursorExpired) return recordFullReload(base, headers);
   if (body.ops && body.ops.length) await recordStore.applyRemote(body.ops);
   await recordStore.setCursor(String(body.cursor != null ? body.cursor : ''));
   return (body.ops || []).length;
+}
+
+// recordFullReload rebuilds local state from the server's whole current copy after our
+// cursor expired. It must NOT resurrect an entity that was deleted while we were gone:
+// we push only pending edits to entities that still exist in the copy (plus our own
+// offline creations), and drop edits to vanished entities on the floor (docs/tombstone-gc
+// §06). We then wipe and rebuild — the deleted entity is simply absent.
+async function recordFullReload(base, headers) {
+  const rr = await fetch(base + '/v1/records/pull', { method: 'POST', headers, body: JSON.stringify({ cursor: 0 }) });
+  if (!rr.ok) throw new Error('records full-reload pull failed: ' + rr.status);
+  const body = await rr.json();
+  const fullOps = body.ops || [];
+  // Entities the server still has (a live presence op in the copy).
+  const live = new Set(fullOps.filter((o) => o.t === 'presence' && o.p).map((o) => o.k + ':' + o.i));
+  const isOwnCreate = (op) => op.t === 'presence' && op.p; // we created it offline
+  const stillLive = (op) => live.has(op.k + ':' + op.i);
+
+  const pending = await recordStore.pendingOps(0);
+  const keep = pending.filter((p) => isOwnCreate(p.op) || stillLive(p.op));
+  if (keep.length) {
+    const pr = await fetch(base + '/v1/records/push', { method: 'POST', headers, body: JSON.stringify({ ops: keep.map((p) => p.op) }) });
+    if (!pr.ok) throw new Error('records reconcile push failed: ' + pr.status);
+  }
+  // Mark ALL pending synced: kept ops were just pushed; dropped ones are intentionally
+  // abandoned (they targeted entities that no longer exist).
+  if (pending.length) await recordStore.markSynced(pending.map((p) => p.seq));
+
+  await recordStore.wipeLocalRecords();
+  // rebuild=true so our OWN-node rows in the copy aren't skipped as echoes.
+  if (fullOps.length) await recordStore.applyRemote(fullOps, true);
+  // Re-apply our kept edits on top (they're newer than the copy but weren't in it yet).
+  if (keep.length) await recordStore.applyRemote(keep.map((p) => p.op), true);
+  // Keep our cursor at the copy's high-water (server floors it at the GC watermark); our
+  // just-pushed keep ops re-arrive as harmless echoes on the next incremental pull.
+  await recordStore.setCursor(String(body.cursor != null ? body.cursor : ''));
+  return fullOps.length;
 }
 
 // Merge the record engine's structured state (source of truth for tasks/projects/…)

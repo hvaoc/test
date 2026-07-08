@@ -14,18 +14,27 @@ import (
 	"things3-clone-desktop/core/record"
 )
 
+// rec is the record engine used by the Record* query bindings. It is NOT a separate
+// store: Open() (mobile.go) points it at the coordinator's ONE record.Store, so the
+// snapshot-save path and these queries share state (the old two-store bug). RecordOpen
+// remains only for callers that open the record layer directly, but production goes
+// through Open().
 var (
 	recMu sync.Mutex
 	rec   *record.Store
 )
 
-var errRecNotOpen = errors.New("record: store not open (call RecordOpen first)")
+var errRecNotOpen = errors.New("record: store not open (call Open first)")
 
-// RecordOpen opens/creates the record-layer SQLite database at path (the app's
-// writable files dir + a filename, supplied by the native side).
+// RecordOpen is retained for compatibility but the coordinator normally supplies the
+// shared store via Open(). If a store is already set (the coordinator's), this is a
+// no-op so the two never diverge; otherwise it opens a standalone record DB at path.
 func RecordOpen(path string) error {
 	recMu.Lock()
 	defer recMu.Unlock()
+	if rec != nil {
+		return nil // already backed by the coordinator's shared store
+	}
 	r, err := record.Open(path)
 	if err != nil {
 		return err

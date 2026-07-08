@@ -44,7 +44,13 @@ type Store struct {
 
 // Open creates/opens the database at path (":memory:" for tests).
 func Open(path string) (*Store, error) {
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	// synchronous=NORMAL is safe under WAL for a re-syncable local cache (a crash can
+	// lose only the last commit, which re-pulls from the server) and cuts the per-write
+	// fsync cost that dominates interactive writes (docs/autonomous-status.md, perf D-I).
+	// analysis_limit(400) bounds ANALYZE to ~400 samples per index so it stays fast even at
+	// 1M rows, while giving the planner the stats it needs to pick the selective partial
+	// indexes (e.g. Today's date-range arms) over a full open-row scan.
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=analysis_limit(400)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -76,7 +82,12 @@ func (s *Store) loadRankCtr() uint64 {
 	return 0
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// Close runs PRAGMA optimize (SQLite's recommended shutdown step) so any index stats that
+// went stale as the dataset grew via sync are refreshed for the next session's planner.
+func (s *Store) Close() error {
+	_, _ = s.db.Exec("PRAGMA optimize")
+	return s.db.Close()
+}
 func (s *Store) Node() string { return s.node }
 
 func (s *Store) migrate() error {
@@ -126,15 +137,55 @@ CREATE INDEX IF NOT EXISTS tasks_rank ON tasks(rank);
 CREATE INDEX IF NOT EXISTS tasks_proj_comp ON tasks(projectId, completed, rank);
 CREATE INDEX IF NOT EXISTS tasks_status_ord ON tasks(status, ord);
 CREATE INDEX IF NOT EXISTS tasks_completed ON tasks(completed, rank);
+-- Custom-view filter indexes: (field, rank) lets an equality/IN filter on when/deadline/
+-- priority seek to matches and walk them in rank order, so QueryTasks(...LIMIT n) early-
+-- terminates instead of full-scanning 1M rows + sorting (docs/autonomous-status.md, perf).
+-- whenDate is a FULL index: equality/IN filters (when = today, the primary custom-view and
+-- smart-list case) must seek it, and SQLite won't use a PARTIAL index for an equality it
+-- cannot prove satisfies the partial predicate.
+-- deadline is PARTIAL (deadline is non-empty): the common deadline filter is the
+-- non-selective range deadline <= today (empty deadlines also satisfy it), which must NOT
+-- use an index -- the partial index excludes it so the planner falls back to the fast
+-- rank-walk + LIMIT, while a dated before/on custom view still seeks it.
+CREATE INDEX IF NOT EXISTS tasks_when_rank ON tasks(whenDate, rank);
+CREATE INDEX IF NOT EXISTS tasks_deadline_rank ON tasks(deadline, rank) WHERE deadline <> '';
+CREATE INDEX IF NOT EXISTS tasks_priority_rank ON tasks(priority, rank);
+-- Smart-list "Today" indexes: partial on status='open' so its date-range arms seek by
+-- whenDate/deadline WITHIN open rows. Without these the planner uses tasks_status_ord and
+-- scans ALL ~open rows filtering the date per row (~900ms at 1M); with them it seeks the
+-- small dated range directly (docs/autonomous-status.md perf findings).
+CREATE INDEX IF NOT EXISTS tasks_open_when ON tasks(whenDate, rank) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS tasks_open_deadline ON tasks(deadline, rank) WHERE status = 'open' AND deadline <> '';
 
--- Full-text search over title + notes (offline). id UNINDEXED lets us map hits
--- back to a task and re-sync a single row.
--- Title-only, word-prefix search (FTS5 default tokenizer). Notes are intentionally
--- NOT searchable; every other field filters via indexed SQL comparison operators,
--- not FTS. (Future: 'trigram' tokenizer for substring/contains — see
--- docs/architecture-1m.md §3.)
-CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(id UNINDEXED, title);
+-- Title-only, word-prefix full-text search (FTS5 default tokenizer). Notes are NOT
+-- searchable; every other field filters via indexed SQL comparison operators, not FTS.
+-- Rows are keyed by the implicit rowid = tasks.rowid, so a per-task FTS delete/update is
+-- O(1) by rowid (an id-UNINDEXED column would force an O(n) index scan on every write --
+-- the 1M write regression; see docs/autonomous-status.md perf findings).
+CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(title);
 `)
+	if err != nil {
+		return err
+	}
+	return s.migrateFTSRowid()
+}
+
+// migrateFTSRowid upgrades a pre-existing tasks_fts that still has the old
+// `id UNINDEXED` column (which made per-task deletes O(n)) to the rowid-keyed schema,
+// rebuilding it from the tasks read-model. One-time: fresh DBs already have the new
+// schema, so this detects the old column and no-ops otherwise.
+func (s *Store) migrateFTSRowid() error {
+	var hasID int
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('tasks_fts') WHERE name='id'`).Scan(&hasID); err != nil {
+		return err
+	}
+	if hasID == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`
+DROP TABLE tasks_fts;
+CREATE VIRTUAL TABLE tasks_fts USING fts5(title);
+INSERT INTO tasks_fts(rowid, title) SELECT rowid, title FROM tasks;`)
 	return err
 }
 
@@ -227,11 +278,19 @@ func reprojectTaskTx(tx *sql.Tx, id string, ftsDirty bool) error {
 	var present int
 	err := tx.QueryRow(`SELECT present FROM presence WHERE kind='task' AND id=?`, id).Scan(&present)
 	if err == sql.ErrNoRows || (err == nil && present == 0) {
+		// Grab the rowid BEFORE deleting the task so the FTS row can be removed by rowid
+		// (O(1)) rather than by an unindexed id scan (O(n)).
+		var rowid int64
+		rerrr := tx.QueryRow(`SELECT rowid FROM tasks WHERE id=?`, id).Scan(&rowid)
 		if _, e := tx.Exec(`DELETE FROM tasks WHERE id=?`, id); e != nil {
 			return e
 		}
-		_, e := tx.Exec(`DELETE FROM tasks_fts WHERE id=?`, id)
-		return e
+		if rerrr == nil {
+			if _, e := tx.Exec(`DELETE FROM tasks_fts WHERE rowid=?`, rowid); e != nil {
+				return e
+			}
+		}
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -275,10 +334,16 @@ func reprojectTaskTx(tx *sql.Tx, id string, ftsDirty bool) error {
 	if !ftsDirty {
 		return nil
 	}
-	if _, e := tx.Exec(`DELETE FROM tasks_fts WHERE id=?`, id); e != nil {
+	// Maintain the FTS row by rowid (= tasks.rowid, stable across the upsert above), so
+	// the delete is O(1) instead of an O(n) scan over an unindexed id column.
+	var rowid int64
+	if e := tx.QueryRow(`SELECT rowid FROM tasks WHERE id=?`, id).Scan(&rowid); e != nil {
 		return e
 	}
-	_, e := tx.Exec(`INSERT INTO tasks_fts(id,title) VALUES(?,?)`, id, asString(f["title"]))
+	if _, e := tx.Exec(`DELETE FROM tasks_fts WHERE rowid=?`, rowid); e != nil {
+		return e
+	}
+	_, e := tx.Exec(`INSERT INTO tasks_fts(rowid,title) VALUES(?,?)`, rowid, asString(f["title"]))
 	return e
 }
 
@@ -426,6 +491,10 @@ func (s *Store) BulkLoad(tasks []TaskInput, batch int) error {
 			return err
 		}
 	}
+	// Refresh planner stats after a large import so range queries (e.g. the Today
+	// smart-list) use the selective partial indexes instead of scanning open rows.
+	// Bounded by analysis_limit → milliseconds even at 1M.
+	_, _ = s.db.Exec("ANALYZE")
 	return nil
 }
 
@@ -456,7 +525,7 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 		return err
 	}
 	defer tStmt.Close()
-	ftsStmt, err := tx.Prepare(`INSERT INTO tasks_fts(id,title) VALUES(?,?)`)
+	ftsStmt, err := tx.Prepare(`INSERT INTO tasks_fts(rowid,title) VALUES(?,?)`)
 	if err != nil {
 		return err
 	}
@@ -494,10 +563,15 @@ func (s *Store) bulkBatch(tasks []TaskInput) (err error) {
 			}
 		}
 		st := t.status()
-		if _, err = tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(st == "completed"), st, t.ParentID, t.Order, t.Rank, preview(t.Notes)); err != nil {
-			return err
+		res, terr := tStmt.Exec(t.ID, t.Title, t.ProjectID, t.When, t.Deadline, t.Priority, b2i(st == "completed"), st, t.ParentID, t.Order, t.Rank, preview(t.Notes))
+		if terr != nil {
+			return terr
 		}
-		if _, err = ftsStmt.Exec(t.ID, t.Title); err != nil {
+		rowid, lerr := res.LastInsertId()
+		if lerr != nil {
+			return lerr
+		}
+		if _, err = ftsStmt.Exec(rowid, t.Title); err != nil {
 			return err
 		}
 	}
@@ -747,7 +821,7 @@ func (s *Store) SearchTasks(text string, q Query) ([]TaskRow, error) {
 		return nil, err
 	}
 	full := `SELECT t.id,t.title,t.projectId,t.whenDate,t.deadline,t.priority,t.completed,t.rank
-	         FROM tasks t JOIN (SELECT id FROM tasks_fts WHERE tasks_fts MATCH ?) m ON m.id=t.id` +
+	         FROM tasks t JOIN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?) m ON m.rowid=t.rowid` +
 		where + ` ORDER BY t.rank, t.id`
 	if q.Limit > 0 {
 		full += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, q.Offset)
@@ -764,12 +838,28 @@ func (s *Store) QueryList(listID, todayKey string) ([]TaskRow, error) {
 	}
 	// Today = open, top-level, and due today/evening OR a concrete date/deadline
 	// on-or-before today; ordered by the app's numeric order.
-	return s.scanRows(`SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM tasks
-		WHERE status='open' AND (parentId IS NULL OR parentId='')
-		  AND ( whenDate IN ('today','evening')
-		        OR (whenDate LIKE '____-__-__' AND whenDate <= ?)
-		        OR (deadline LIKE '____-__-__' AND deadline <= ?) )
-		ORDER BY ord, id`, []any{todayKey, todayKey})
+	//
+	// Written as a UNION of three index-seekable arms rather than one WHERE with an OR:
+	// SQLite can't use an index across an OR, so the OR form full-scans 1M rows + sorts
+	// (~800ms). Each arm seeks tasks_when_rank / tasks_deadline_rank; the outer query
+	// dedups and orders by ord (docs/autonomous-status.md perf findings).
+	//
+	// Each arm is pinned to its partial "open" index with INDEXED BY. Without the hint the
+	// planner (working from sampled stats) mis-estimates the date-range selectivity and
+	// falls back to tasks_status_ord, scanning every open row (~900ms at 1M). The hint is
+	// deterministic and needs no ANALYZE, so even an incremental-sync client that never ran
+	// ANALYZE gets the fast plan. The date arms also carry a lower bound (>= '0000-00-00')
+	// so the range seeks straight past the many whenDate='' entries.
+	return s.scanRows(`SELECT id,title,projectId,whenDate,deadline,priority,completed,rank FROM (
+		SELECT id,title,projectId,whenDate,deadline,priority,completed,rank,ord FROM tasks INDEXED BY tasks_open_when
+		  WHERE status='open' AND (parentId IS NULL OR parentId='') AND whenDate IN ('today','evening')
+		UNION
+		SELECT id,title,projectId,whenDate,deadline,priority,completed,rank,ord FROM tasks INDEXED BY tasks_open_when
+		  WHERE status='open' AND (parentId IS NULL OR parentId='') AND whenDate >= '0000-00-00' AND whenDate <= ? AND whenDate LIKE '____-__-__'
+		UNION
+		SELECT id,title,projectId,whenDate,deadline,priority,completed,rank,ord FROM tasks INDEXED BY tasks_open_deadline
+		  WHERE status='open' AND (parentId IS NULL OR parentId='') AND deadline <> '' AND deadline >= '0000-00-00' AND deadline <= ? AND deadline LIKE '____-__-__'
+	) ORDER BY ord, id`, []any{todayKey, todayKey})
 }
 
 // CountTasks returns the number of matching tasks via an indexed COUNT (never loads

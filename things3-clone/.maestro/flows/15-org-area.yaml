@@ -1,0 +1,11 @@
+# Organization · "create an Area (appears in the sidebar)"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-new-list" }
+- tapOn: { id: "newlist-mode-area" }
+- tapOn: { id: "newlist-name" }
+- inputText: "Personal"
+- pressKey: Enter          # onSubmitEditing on the name field creates the list (the Create button can sit under the keyboard)
+- assertVisible: "Personal"

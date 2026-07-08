@@ -1,0 +1,23 @@
+# Best-effort recovery to the sidebar root, run at the START of every case flow so a
+# flow is resilient to whatever screen the PREVIOUS flow left open after a failure
+# (executionOrder runs every case even when one fails). Each step is guarded by
+# `when: visible`, so at the root it's a fast no-op. The guards are ordered by nav
+# depth — close overlays first, then unwind detail -> list -> root — so a single pass
+# handles the deepest stack (sheet over detail over list).
+appId: com.functionofq.thingsclone
+---
+- runFlow:
+    when: { visible: { id: "display-done" } }
+    commands: [{ tapOn: { id: "display-done" } }]
+- runFlow:
+    when: { visible: { id: "sheet-done" } }
+    commands: [{ tapOn: { id: "sheet-done" } }]
+- runFlow:
+    when: { visible: { id: "detail-back" } }
+    commands: [{ tapOn: { id: "detail-back" } }]
+- runFlow:
+    when: { visible: { id: "search-back" } }
+    commands: [{ tapOn: { id: "search-back" } }]
+- runFlow:
+    when: { visible: { id: "list-back" } }
+    commands: [{ tapOn: { id: "list-back" } }]

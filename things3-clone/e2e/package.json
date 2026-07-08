@@ -1,0 +1,14 @@
+{
+  "name": "things3-clone-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Isolated Playwright E2E suite for the web + Wails-served desktop frontend (shared expo-web bundle). Kept separate from the RN root deps for CI portability.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}

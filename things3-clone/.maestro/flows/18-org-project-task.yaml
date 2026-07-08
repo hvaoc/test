@@ -1,0 +1,19 @@
+# Organization · "add a task to a project via the inline composer"
+# Phones have no inline composer (wide-only); the equivalent is the FAB inside the
+# project, which creates the task in that project.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-new-list" }
+- tapOn: { id: "newlist-mode-project" }
+- tapOn: { id: "newlist-name" }
+- inputText: "Backlog"
+- pressKey: Enter          # onSubmitEditing on the name field creates the list (the Create button can sit under the keyboard)
+- tapOn: "Backlog"
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Research competitors"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Research competitors"
+- tapOn: { id: "list-back" }

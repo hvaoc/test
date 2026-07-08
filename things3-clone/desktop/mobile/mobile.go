@@ -19,25 +19,31 @@ import (
 	"errors"
 	"sync"
 
-	"things3-clone-desktop/core/ydstore"
+	"things3-clone-desktop/core/coordinator"
 )
 
 var (
 	mu    sync.Mutex
-	store *ydstore.Store
+	store *coordinator.Coordinator
 )
 
-// Open initialises the ygo replica under dir (the app's writable files directory,
-// supplied by the native side). Call once at app launch. Safe to call again
-// (re-opens). Attach a sync server later via SetServer once the user signs in.
+// Open initialises the native coordinator under dir (the app's writable files
+// directory, supplied by the native side): the record engine for structured data plus
+// the ygo layer for settings + notes. Call once at app launch. Safe to call again
+// (re-opens). Attach a sync server later via SetServer once the user signs in. This is
+// the SAME store the Record* query bindings use (see record.go), so saves and queries
+// share state.
 func Open(dir string) error {
 	mu.Lock()
 	defer mu.Unlock()
-	s, err := ydstore.Open(dir)
+	s, err := coordinator.Open(dir)
 	if err != nil {
 		return err
 	}
 	store = s
+	recMu.Lock()
+	rec = s.Record()
+	recMu.Unlock()
 	return nil
 }
 
@@ -66,7 +72,14 @@ func Reset() error {
 	if store == nil {
 		return errNotOpen
 	}
-	return store.Reset()
+	if err := store.Reset(); err != nil {
+		return err
+	}
+	// Reset recreates the record DB, so refresh the shared handle the Record* bindings use.
+	recMu.Lock()
+	rec = store.Record()
+	recMu.Unlock()
+	return nil
 }
 
 // LoadSnapshot returns the persisted state JSON, or "" when the DB is empty (so
@@ -76,10 +89,6 @@ func LoadSnapshot() (string, error) {
 	defer mu.Unlock()
 	if store == nil {
 		return "", errNotOpen
-	}
-	has, err := store.HasData()
-	if err != nil || !has {
-		return "", err
 	}
 	return store.LoadSnapshot()
 }

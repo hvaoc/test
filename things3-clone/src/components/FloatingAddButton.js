@@ -9,6 +9,9 @@ export default function FloatingAddButton({ onPress, bottom = 24 }) {
   return (
     <Pressable
       onPress={onPress}
+      testID="fab-add-task"
+      accessibilityLabel="Add task"
+      accessibilityRole="button"
       style={({ pressed }) => [
         styles.fab,
         { bottom },

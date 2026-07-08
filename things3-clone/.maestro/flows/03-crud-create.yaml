@@ -1,0 +1,12 @@
+# Task CRUD · "create a task in Inbox"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Write the quarterly report"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Write the quarterly report"
+- tapOn: { id: "list-back" }

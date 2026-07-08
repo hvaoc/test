@@ -18,12 +18,12 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
 
   const currentProject = task?.projectId;
 
-  const Row = ({ icon, color, label, active, onPress, indent }) => (
+  const Row = ({ icon, glyph, color, label, active, onPress, indent }) => (
     <Pressable
       style={[styles.row, indent && { paddingLeft: spacing.xl + spacing.md }]}
       onPress={onPress}
     >
-      <Ionicons name={icon} size={18} color={color} style={styles.icon} />
+      {glyph || <Ionicons name={icon} size={18} color={color} style={styles.icon} />}
       <Text style={styles.label} numberOfLines={1}>
         {label}
       </Text>
@@ -31,12 +31,21 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
     </Pressable>
   );
 
+  // A project's leading glyph: its emoji if set, otherwise a "#" tinted in its color
+  // (matches how projects render in the sidebar).
+  const projectGlyph = (p) =>
+    p.emoji ? (
+      <Text style={styles.glyphEmoji}>{p.emoji}</Text>
+    ) : (
+      <Text style={[styles.glyphHash, { color: p.color }]}>#</Text>
+    );
+
   return (
     <BottomSheet visible={visible} onClose={onClose} title="Move To">
       <ScrollView style={{ maxHeight: 420 }}>
         <Row
-          icon="file-tray"
-          color={colors.inbox}
+          icon="file-tray-outline"
+          color={colors.accent}
           label="Inbox"
           active={!task?.projectId && !task?.areaId}
           onPress={() => choose({ projectId: null, areaId: null, headingId: null })}
@@ -53,8 +62,7 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
               {projects.map((p) => (
                 <Row
                   key={p.id}
-                  icon="ellipse"
-                  color={p.color}
+                  glyph={projectGlyph(p)}
                   label={p.name}
                   indent
                   active={currentProject === p.id}
@@ -73,8 +81,7 @@ export default function MoveSheet({ visible, onClose, task, onMove }) {
           .map((p) => (
             <Row
               key={p.id}
-              icon="ellipse"
-              color={p.color}
+              glyph={projectGlyph(p)}
               label={p.name}
               active={currentProject === p.id}
               onPress={() => choose({ projectId: p.id, areaId: null, headingId: null })}
@@ -94,6 +101,8 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   icon: { width: 22, textAlign: 'center' },
+  glyphEmoji: { width: 22, textAlign: 'center', fontSize: 16 },
+  glyphHash: { width: 22, textAlign: 'center', fontSize: 18, fontWeight: '700' },
   label: { flex: 1, ...typography.body, color: colors.text },
   areaHeader: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

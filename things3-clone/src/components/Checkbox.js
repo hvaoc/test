@@ -16,7 +16,7 @@ const HOVERABLE = Platform.OS === 'web';
 // caller tint the outline (e.g. a task's priority in the project view). On web,
 // hovering an open box fades in a tick and a faint (25%) fill in that same
 // border color.
-export default function Checkbox({ status = STATUS.OPEN, color, borderColor, onPress, size = 22 }) {
+export default function Checkbox({ status = STATUS.OPEN, color, borderColor, onPress, size = 22, testID, hitSlop = 10 }) {
   const done = status === STATUS.COMPLETED;
   const canceled = status === STATUS.CANCELED;
   const tint = color || colors.accent;
@@ -36,7 +36,10 @@ export default function Checkbox({ status = STATUS.OPEN, color, borderColor, onP
 
   return (
     <Pressable
-      hitSlop={10}
+      testID={testID}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: done }}
+      hitSlop={hitSlop}
       onPress={onPress}
       {...hoverProps}
       style={[

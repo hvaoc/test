@@ -1,0 +1,26 @@
+{
+  "_comment": "Canonical mobile case list. Mirrors the 21 web Playwright cases (e2e/tests/*.spec.ts) 1:1. 'file' + 'title' MUST match the web spec's describe-file basename + test title so gen-test-report.mjs aligns the rows across all four flavors. 'flow' is the Maestro flow filename (no .yaml) run in the single-session suite; a null 'flow' with 'na' means the feature has no mobile UI and is honestly rendered 'not run'.",
+  "cases": [
+    { "flow": "01-smart-lists-all",        "file": "smart-lists",  "title": "sidebar lists all built-in smart lists" },
+    { "flow": "02-smart-lists-navigate",   "file": "smart-lists",  "title": "clicking each smart list navigates and shows its header" },
+    { "flow": "03-crud-create",            "file": "task-crud",    "title": "create a task in Inbox" },
+    { "flow": "04-crud-edit",              "file": "task-crud",    "title": "edit a task title" },
+    { "flow": "05-crud-complete",          "file": "task-crud",    "title": "complete a task → moves to Logbook, then reopen" },
+    { "flow": "06-crud-delete",            "file": "task-crud",    "title": "delete a task → moves to Trash" },
+    { "flow": "07-fields-when-today",      "file": "task-fields",  "title": "When = Today puts the task in the Today list" },
+    { "flow": "08-fields-when-someday",    "file": "task-fields",  "title": "When = Someday puts the task in the Someday list" },
+    { "flow": "09-fields-priority",        "file": "task-fields",  "title": "Priority = High is set via the composer and persists on the row" },
+    { "flow": "10-fields-deadline",        "file": "task-fields",  "title": "set a Deadline via the detail calendar sheet" },
+    { "flow": "11-fields-notes",           "file": "task-fields",  "title": "add Notes to a task and see them persist" },
+    { "flow": "12-search-match",           "file": "search",       "title": "typing a query lists only matching tasks" },
+    { "flow": "13-search-nomatch",         "file": "search",       "title": "a non-matching query shows no results" },
+    { "flow": "14-settings-showcompleted", "file": "settings",     "title": "toggling \"Completed tasks\" shows/hides completed tasks" },
+    { "flow": "15-org-area",               "file": "organization", "title": "create an Area (appears in the sidebar)" },
+    { "flow": "16-org-project",            "file": "organization", "title": "create a Project (appears in the sidebar and opens)" },
+    { "flow": null,                        "file": "organization", "title": "add a Heading (section) to a project", "na": "No mobile UI: 'Add section' is a wide-layout-only affordance (isWide gate in ListScreen); not reachable on a phone." },
+    { "flow": "18-org-project-task",       "file": "organization", "title": "add a task to a project via the inline composer" },
+    { "flow": "19-org-move",               "file": "organization", "title": "move a task into a project via the detail Project field" },
+    { "flow": "20-org-tag",                "file": "organization", "title": "add a Tag to a task and see the badge on its row" },
+    { "flow": "21-customview-textfilter",  "file": "custom-view",  "title": "a saved text filter lists only matching tasks" }
+  ]
+}

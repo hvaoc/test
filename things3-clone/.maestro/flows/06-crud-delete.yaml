@@ -1,0 +1,18 @@
+# Task CRUD · "delete a task -> moves to Trash"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-title" }
+- inputText: "Disposable task"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Disposable task"
+- tapOn: "Disposable task"
+- tapOn: { id: "detail-delete" }
+- assertNotVisible: "Disposable task"
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-trash" }
+- assertVisible: "Disposable task"
+- tapOn: { id: "list-back" }

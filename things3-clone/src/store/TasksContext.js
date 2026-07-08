@@ -94,6 +94,8 @@ function newTask(partial = {}) {
     // startMinutes is null the task is "all day" for that date.
     startMinutes: null,
     durationMinutes: null,
+    // Per-task time zone for the scheduled time; null = "Floating Time" (no zone).
+    timezone: null,
     status: STATUS.OPEN,
     createdAt: Date.now(),
     completedAt: null,

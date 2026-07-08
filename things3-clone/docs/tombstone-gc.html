@@ -77,7 +77,8 @@
   <p class="eyebrow">Record sync engine · design note</p>
   <h1>Deleting is easy. <span class="accent">Forgetting</span> a delete is the hard part.</h1>
   <p class="lede">How the structured-data op-log handles deletes across devices — why a naïve
-  “clean up deleted rows” corrupts stragglers, and the retention-window fix that keeps it correct.</p>
+  “clean up deleted rows” corrupts stragglers, and the two-part fix (a retention window on the server
+  plus a server-issued <em>cursor-expiry</em>) that keeps every client correct no matter how long it was gone.</p>
 </header>
 
 <p><strong>The cast.</strong> Two of one user’s devices and the server, which stores the
@@ -226,9 +227,11 @@ before the phone ever reads it. The delete is lost to that device — forever.</
 a lagging device reads it, and that device is stranded showing a ghost task.</p>
 
 <!-- ============================ DIAGRAM 3 ============================ -->
-<h2><span class="num">03</span>The fix — retention window + a “how long have I been gone?” check</h2>
-<p class="sub">Keep tombstones for a retention window (say 35 days). Each client remembers when it
-last synced. On reconnect it picks its lane: caught up recently → incremental; gone too long → full reload.</p>
+<h2><span class="num">03</span>The fix — retention window + a server-issued cursor-expiry</h2>
+<p class="sub">Keep tombstones for a retention window (35 days). The <b>server</b> stamps a GC
+<b>watermark</b> — the highest <code>seq</code> it has ever reclaimed — and returns <code>cursorExpired</code>
+to any client whose cursor sits below it. Caught-up devices pull the retained tombstone; long-gone devices
+wipe and full-reload. The client’s clock is never in the trust path.</p>
 
 <div class="fig">
 <svg viewBox="0 0 780 560" role="img" aria-label="Sequence with two branches: a phone reconnecting within the window pulls the retained tombstone; a phone gone longer than the window does a full reload from cursor zero. Both converge.">
@@ -246,14 +249,14 @@ last synced. On reconnect it picks its lane: caught up recently → incremental;
 
   <!-- server retention note -->
   <rect x="286" y="60" width="208" height="34" rx="8" fill="#12203a" stroke="#2f558a"/>
-  <text x="390" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9c6ef">retains tombstones 35 days, then purges</text>
+  <text x="390" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9c6ef">purge tombstones &gt;35d · raise watermark</text>
 
-  <!-- client self-check -->
+  <!-- server-side cursor check -->
   <rect x="516" y="60" width="248" height="34" rx="8" fill="#1b2334" stroke="#3a4763"/>
-  <text x="640" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#c9d0e0">on reconnect: check now − last_sync</text>
+  <text x="640" y="82" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#c9d0e0">server checks: cursor vs gc-watermark</text>
 
   <!-- BRANCH A -->
-  <text x="640" y="128" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#8fe6a6">Branch A · gone ≤ 30 days</text>
+  <text x="640" y="128" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#8fe6a6">Branch A · cursor ≥ watermark</text>
   <line x1="516" y1="140" x2="764" y2="140" stroke="#2a3450" stroke-width="1"/>
   <g>
     <line x1="640" y1="176" x2="396" y2="176" stroke="#5aa6ff" stroke-width="2" marker-end="url(#aSync3)"/>
@@ -269,15 +272,15 @@ last synced. On reconnect it picks its lane: caught up recently → incremental;
   </g>
 
   <!-- BRANCH B -->
-  <text x="640" y="322" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f0b86a">Branch B · gone &gt; 30 days</text>
+  <text x="640" y="322" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f0b86a">Branch B · cursor &lt; watermark</text>
   <line x1="516" y1="334" x2="764" y2="334" stroke="#2a3450" stroke-width="1"/>
   <g>
     <rect x="500" y="350" width="280" height="34" rx="8" fill="#241d12" stroke="#6b4d22"/>
-    <text x="640" y="372" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f0b86a">stale &gt; window → don’t trust my cursor</text>
+    <text x="640" y="372" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#f0b86a">cursorExpired → don’t trust my cursor</text>
   </g>
   <g>
     <line x1="640" y1="418" x2="396" y2="418" stroke="#46c46a" stroke-width="2" marker-end="url(#aOk3)"/>
-    <text x="520" y="410" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#8fe6a6">push pending, then full pull (cursor 0)</text>
+    <text x="520" y="410" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#8fe6a6">reconcile pending, then full pull (cursor 0)</text>
   </g>
   <g>
     <line x1="390" y1="454" x2="634" y2="454" stroke="#46c46a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aOk3)"/>
@@ -294,9 +297,11 @@ is <i>younger</i> than your gap, so it’s still retained — you pull it. If yo
 trust your cursor at all: you rebuild from scratch, and the deleted task simply isn’t in the copy.</p>
 
 <div class="callout ok">
-  <b>The one subtlety:</b> track <i>“last time I successfully synced”</i> — the last time you reached the
-  server — not the age of your newest op. A workspace nobody touched for 40 days is still <b>fresh</b> if you
-  synced yesterday and got nothing new.
+  <b>Why a server watermark beats a client clock:</b> the server already numbers every change with a
+  monotonic <code>seq</code>, and the cursor <i>is</i> a <code>seq</code>. So “has this device fallen behind the
+  purge?” is the exact test <code>cursor &lt; watermark</code> — no wall-clock, no <code>last_sync_at</code>, no
+  skew, no dependence on a device’s (possibly wrong) clock. A device off for 34 days whose cursor still clears
+  the watermark stays on the cheap incremental path; a pure time rule would have force-reloaded it for nothing.
 </div>
 
 <h2><span class="num">04</span>The whole mechanism, on two index cards</h2>
@@ -304,19 +309,21 @@ trust your cursor at all: you rebuild from scratch, and the deleted task simply 
   <div class="card server">
     <h3><span class="dot"></span> Server</h3>
     <ul>
-      <li>Store deletes as tombstones (<code>present=false</code>) with a <code>deleted_at</code> timestamp.</li>
-      <li>Background job: <code>DELETE … WHERE present=false AND deleted_at &lt; now() − 35 days</code>, plus a sweep of orphaned field rows.</li>
-      <li>No per-client tracking, no watermark. Just purge by age.</li>
-      <li>Retention window is deliberately <b>longer</b> than the client threshold (35&nbsp;&gt;&nbsp;30) — slack for skew &amp; sync latency.</li>
+      <li>Store deletes as tombstones (<code>present=false</code>) with a server-clock <code>deleted_at</code>.</li>
+      <li>Hourly job: <code>DELETE … WHERE present=false AND deleted_at &lt; now() − 35 days</code>, plus a sweep of field/elem rows orphaned by a purged entity.</li>
+      <li>Each purge <b>raises a per-tenant <code>gc_watermark</code></b> = the highest <code>seq</code> it just reclaimed. That one number is the whole client-facing contract — no per-client tracking.</li>
+      <li>On pull: <code>cursor&gt;0 AND cursor&lt;watermark</code> → return <code>cursorExpired</code>; else return deltas (<code>seq&gt;cursor</code>). A full (cursor 0) pull floors its returned cursor at the watermark so the client can’t loop-expire.</li>
+      <li>Retention (35d) is just slack over the advisory client hint (30d); correctness rides on the watermark, not the interval.</li>
     </ul>
   </div>
   <div class="card client">
     <h3><span class="dot"></span> Client</h3>
     <ul>
-      <li>Keep one value: <code>last_sync_at</code>, set to <i>now</i> on every successful pull (even an empty one).</li>
-      <li>On reconnect: <code>now − last_sync_at ≤ 30d</code> → normal incremental pull.</li>
-      <li>Otherwise → <b>push pending edits first</b> (don’t lose offline work), then wipe local &amp; full-pull from cursor&nbsp;0.</li>
-      <li>Optional hardening: measure the gap in <i>server</i> time (returned in the pull) so a wrong device clock can’t fool it.</li>
+      <li>The <b>cursor is the only sync state that must persist</b> — device-scoped (OPFS), shared across tabs by the leader, never per-tab.</li>
+      <li>Normal path: incremental <code>pull(cursor)</code> → apply ops (including any retained tombstones) → advance cursor.</li>
+      <li>Server said <code>cursorExpired</code> → <b>reconcile pending</b> (push offline creates + edits to still-living entities; <i>drop</i> edits to vanished ones), then wipe local &amp; full-pull from cursor&nbsp;0.</li>
+      <li>Reconstruction shows an entity <b>only</b> if it has a <code>present=true</code> presence row — an orphan field row is invisible, never a ghost.</li>
+      <li>Optional: a local <code>now − last_sync &gt; 30d</code> check may pre-empt a doomed incremental round-trip, but it is <i>advisory only</i>.</li>
     </ul>
   </div>
 </div>
@@ -331,54 +338,178 @@ listening.</p>
 on each reconnect, whether its cursor is still trustworthy.</p>
 
 <div class="code">
-  <div class="code-h"><span>Server · GC job (runs hourly)</span><span class="lang">SQL</span></div>
-<pre><span class="cm">-- stamp the SERVER clock when a row becomes a tombstone (not the op's HLC)</span>
+  <div class="code-h"><span>Server · schema + GC job (runs hourly)</span><span class="lang">SQL</span></div>
+<pre><span class="cm">-- stamp the SERVER clock when a row becomes a tombstone (never the op's HLC)</span>
 <span class="kw">ALTER TABLE</span> record_registers <span class="kw">ADD COLUMN</span> deleted_at timestamptz;
-<span class="cm">--   on push:  present = false  →  deleted_at = now()</span>
+<span class="cm">--   on every applied op:  deleted_at = present ? NULL : now()</span>
+<span class="cm">--   (a newer tombstone only re-stamps LATER — retention can move out, never in)</span>
 
-<span class="cm">-- GC job — retention MUST exceed the client threshold (35 &gt; 30) for slack.</span>
-<span class="cm">-- 1 · forget tombstones older than the window</span>
-<span class="kw">DELETE FROM</span> record_registers
- <span class="kw">WHERE</span> present = false
-   <span class="kw">AND</span> deleted_at &lt; now() - <span class="kw">interval</span> <span class="st">'35 days'</span>;
+<span class="cm">-- one row per tenant: the highest seq the GC has ever reclaimed</span>
+<span class="kw">CREATE TABLE</span> record_gc ( scope <span class="kw">TEXT PRIMARY KEY</span>, watermark <span class="kw">BIGINT NOT NULL DEFAULT</span> 0 );
 
-<span class="cm">-- 2 · sweep field/tag rows orphaned by a purged entity (no presence row left)</span>
-<span class="kw">DELETE FROM</span> record_registers r
- <span class="kw">WHERE</span> r.field &lt;&gt; <span class="st">''</span>
-   <span class="kw">AND NOT EXISTS</span> (
-     <span class="kw">SELECT</span> 1 <span class="kw">FROM</span> record_registers p
-      <span class="kw">WHERE</span> p.scope = r.scope <span class="kw">AND</span> p.kind = r.kind
-        <span class="kw">AND</span> p.entity = r.entity <span class="kw">AND</span> p.field = <span class="st">''</span>);</pre>
+<span class="cm">-- GC job — retention (35d) is slack over the client hint (30d); correctness</span>
+<span class="cm">-- rides on the watermark, not the interval. One statement, three CTEs:</span>
+<span class="kw">WITH</span> purged <span class="kw">AS</span> (                          <span class="cm">-- 1 · forget tombstones past the window</span>
+  <span class="kw">DELETE FROM</span> record_registers
+   <span class="kw">WHERE</span> present = false <span class="kw">AND</span> deleted_at &lt; now() - <span class="kw">interval</span> <span class="st">'35 days'</span>
+  <span class="kw">RETURNING</span> scope, seq ),
+swept <span class="kw">AS</span> (                               <span class="cm">-- 2 · sweep field/elem rows of a purged entity</span>
+  <span class="kw">DELETE FROM</span> record_registers r
+   <span class="kw">WHERE</span> r.field &lt;&gt; <span class="st">''</span>
+     <span class="kw">AND NOT EXISTS</span> (<span class="kw">SELECT</span> 1 <span class="kw">FROM</span> record_registers p
+                      <span class="kw">WHERE</span> p.scope=r.scope <span class="kw">AND</span> p.kind=r.kind
+                        <span class="kw">AND</span> p.entity=r.entity <span class="kw">AND</span> p.field=<span class="st">''</span>)
+  <span class="kw">RETURNING</span> scope, seq ),
+reclaimed <span class="kw">AS</span> (
+  <span class="kw">SELECT</span> scope, max(seq) <span class="kw">AS</span> hi
+    <span class="kw">FROM</span> (<span class="kw">SELECT</span> * <span class="kw">FROM</span> purged <span class="kw">UNION ALL SELECT</span> * <span class="kw">FROM</span> swept) u
+   <span class="kw">GROUP BY</span> scope )
+<span class="kw">INSERT INTO</span> record_gc (scope, watermark)  <span class="cm">-- 3 · raise each tenant's watermark</span>
+<span class="kw">SELECT</span> scope, hi <span class="kw">FROM</span> reclaimed
+<span class="kw">ON CONFLICT</span> (scope) <span class="kw">DO UPDATE</span>
+  <span class="kw">SET</span> watermark = <span class="kw">GREATEST</span>(record_gc.watermark, EXCLUDED.watermark);</pre>
+</div>
+
+<div class="code">
+  <div class="code-h"><span>Server · pull (the cursor-expiry gate)</span><span class="lang">Go</span></div>
+<pre>w := watermarkFor(scope)                    <span class="cm">// SELECT watermark FROM record_gc WHERE scope=…</span>
+<span class="kw">if</span> cursor &gt; 0 &amp;&amp; cursor &lt; w {
+    respond({ cursorExpired: true })        <span class="cm">// behind the purge — its view can't be trusted</span>
+    <span class="kw">return</span>
+}
+ops, newCursor := rowsWhere(seq &gt; cursor)   <span class="cm">// cursor 0 ⇒ the whole current copy</span>
+<span class="kw">if</span> cursor == 0 &amp;&amp; newCursor &lt; w {           <span class="cm">// GUARDRAIL: a full copy whose newest live rows</span>
+    newCursor = w                           <span class="cm">// sit below a purged tombstone's seq would else</span>
+}                                           <span class="cm">// loop-expire on the very next pull. Floor it.</span>
+respond({ ops, cursor: newCursor })</pre>
 </div>
 
 <div class="code">
   <div class="code-h"><span>Client · on reconnect</span><span class="lang">JS</span></div>
-<pre><span class="kw">const</span> THRESHOLD = 30 * 864e5;              <span class="cm">// 30 days  (&lt; server's 35-day retention)</span>
-
-<span class="kw">async function</span> sync() {
-  <span class="kw">const</span> gap = Date.now() - lastSyncAt;     <span class="cm">// time since we last reached the server</span>
-  <span class="kw">await</span> (gap &gt; THRESHOLD ? fullReload() : incrementalPull());
-  lastSyncAt = Date.now();                 <span class="cm">// stamp EVERY successful sync (even empty)</span>
+<pre><span class="kw">async function</span> sync() {
+  <span class="kw">const</span> res = <span class="kw">await</span> pull({ cursor });        <span class="cm">// server compares cursor vs its gc-watermark</span>
+  <span class="kw">if</span> (res.cursorExpired) <span class="kw">return</span> fullReload();   <span class="cm">// gone past the purge — cursor untrustworthy</span>
+  <span class="kw">await</span> applyRemote(res.ops);              <span class="cm">// LWW-merge; includes any retained tombstones</span>
+  setCursor(res.cursor);                     <span class="cm">// the cursor is the ONLY persisted sync state</span>
 }
 
-<span class="kw">async function</span> incrementalPull() {
-  <span class="kw">await</span> pushPending();                     <span class="cm">// send our local ops first</span>
-  <span class="kw">const</span> { ops, cursor } = <span class="kw">await</span> pull({ cursor });
-  <span class="kw">await</span> applyRemote(ops);                  <span class="cm">// LWW-merge — includes any tombstones</span>
-  setCursor(cursor);
-}
-
-<span class="kw">async function</span> fullReload() {              <span class="cm">// gone too long: don't trust the cursor</span>
-  <span class="kw">await</span> pushPending();                     <span class="cm">// 1 · don't lose offline edits</span>
-  <span class="kw">const</span> full = <span class="kw">await</span> pull({ cursor: 0 });  <span class="cm">// 2 · fetch the whole current copy</span>
-  <span class="kw">await</span> wipeLocalRecords();                <span class="cm">// 3 · drop stale local state</span>
-  <span class="kw">await</span> applyRemote(full.ops);             <span class="cm">// 4 · rebuild — deleted rows simply absent</span>
+<span class="kw">async function</span> fullReload() {              <span class="cm">// authoritative recovery — no clock involved</span>
+  <span class="kw">const</span> full = <span class="kw">await</span> pull({ cursor: 0 });    <span class="cm">// 1 · whole current copy (deleted rows absent)</span>
+  <span class="kw">await</span> reconcilePending(full);             <span class="cm">// 2 · keep creates + edits to LIVING entities…</span>
+  <span class="kw">await</span> wipeLocalRecords();                 <span class="cm">// 3 · drop stale local state, incl. ghosts</span>
+  <span class="kw">await</span> applyRemote(full.ops);              <span class="cm">// 4 · rebuild from the copy</span>
   setCursor(full.cursor);
+}
+
+<span class="cm">// Anti-resurrection: never re-push an edit to an entity the server no longer has,</span>
+<span class="cm">// unless WE created it offline — else a stale field write revives a deleted task.</span>
+<span class="kw">function</span> reconcilePending(full) {
+  <span class="kw">const</span> live = <span class="kw">new</span> Set(full.ops
+    .filter(o =&gt; o.t === <span class="st">'presence'</span> &amp;&amp; o.p)
+    .map(o =&gt; o.k + <span class="st">':'</span> + o.i));
+  <span class="kw">const</span> keep = pending.filter(op =&gt;
+       (op.t === <span class="st">'presence'</span> &amp;&amp; op.p)     <span class="cm">// our own offline creations — always keep</span>
+    || live.has(op.k + <span class="st">':'</span> + op.i));     <span class="cm">// edits to something still alive</span>
+  <span class="kw">return</span> pushOps(keep);                      <span class="cm">// edits to vanished entities are dropped</span>
 }</pre>
 </div>
-<p class="cap"><b>Not wired yet.</b> This is the design. The live <span class="k">record_registers</span> table
-has no <span class="k">deleted_at</span> column and keeps tombstones indefinitely — adding this GC job +
-the client’s <span class="k">last_sync_at</span> check is the remaining work.</p>
+<p class="cap"><b>Status — wired &amp; tested.</b> Server: <span class="k">deleted_at</span> column, the
+<span class="k">record_gc</span> watermark table, the hourly GC job, the <span class="k">cursorExpired</span>
+gate + full-copy floor all live in <span class="k">server/ysync/pgrecord.go</span> /
+<span class="k">records.go</span>, with the ticker in <span class="k">cmd/ysync-server/main.go</span>. Client:
+<span class="k">recordFullReload</span> + <span class="k">reconcilePending</span> in
+<span class="k">src/store/backend.js</span>, backed by a rebuild-mode <span class="k">applyRemote</span> and
+<span class="k">wipeLocalRecords</span> in <span class="k">public/record.worker.js</span>. End-to-end coverage:
+<span class="k">TestPostgresTombstoneGC</span> (purge → watermark → expiry → full-reload drops the delete →
+no loop-expire). <b>One subtlety the wiring pinned down:</b> a field-value row travels with
+<span class="k">present=false</span> on the wire, so the tombstone predicate is
+<span class="k">present=false AND (field='' OR elem&lt;&gt;'')</span> — value rows are values, never tombstones.</p>
+
+<!-- ============================ SECTION 06 ============================ -->
+<h2><span class="num">06</span>The late-write trap — and why a delete can’t be resurrected</h2>
+<p class="sub">Retention protects a device that needs to <i>read</i> a delete. The remaining hazard is a device
+that <i>wrote</i> to an entity that was deleted — and stayed offline past the retention window.</p>
+
+<p>Picture a phone offline 40 days that edited <code>t1.title</code> locally. <code>t1</code> was deleted on
+day&nbsp;0; its presence tombstone was purged on day&nbsp;35. Presence and field are <b>independent LWW
+registers</b>, so a naïvely re-pushed title op (with a fresher HLC than the long-gone delete) would land as a
+<code>title</code> row with <strong>no presence row left to gate it</strong> — a partial “zombie.” Three
+independent layers stop it, so no single miss revives a task:</p>
+
+<div class="rules">
+  <div class="card client">
+    <h3><span class="dot"></span> At the source (client)</h3>
+    <ul>
+      <li><code>reconcilePending</code> drops any field/set edit whose entity is absent from the fresh full
+      copy — unless the client created it offline. The zombie op is <b>never sent</b>.</li>
+    </ul>
+  </div>
+  <div class="card server">
+    <h3><span class="dot"></span> In view (reconstruction)</h3>
+    <ul>
+      <li>Materialize emits an entity <b>only</b> with a <code>present=true</code> presence row
+      (<span class="k">snapshot.go</span> skips the rest). An orphan field row is <i>invisible</i> — never a ghost.</li>
+      <li><b>Invariant:</b> the JS reconstruction in <span class="k">record.worker.js</span> must apply the
+      same presence-required rule. Pin it with a shared cross-impl test.</li>
+    </ul>
+  </div>
+</div>
+<div class="callout ok">
+  <b>Backstop:</b> should a zombie field row ever reach Postgres anyway, the GC’s <b>orphan sweep</b> reclaims
+  it within the hour (and lifts the watermark), so it can neither accumulate nor leak. The same sweep is what
+  reclaims a deleted task’s ordinary field rows once its presence tombstone is purged — which is why
+  Requirement&nbsp;1 stays bounded.
+</div>
+
+<!-- ============================ SECTION 07 ============================ -->
+<h2><span class="num">07</span>Decisions — the record we’re committing to</h2>
+<p class="sub">Everything above, distilled to the choices a future reader (or a re-implementation) shouldn’t
+re-litigate — grouped by the two requirements they satisfy.</p>
+
+<div class="rules">
+  <div class="card server">
+    <h3><span class="dot"></span> Req 1 · the DB never leaks deletes</h3>
+    <ul>
+      <li><b>D1</b> Deletes are tombstones (<code>present=false</code>) carrying a server-clock <code>deleted_at</code> — set <code>present ? NULL : now()</code> on every applied op.</li>
+      <li><b>D2</b> Hourly GC purges tombstones older than <b>35 days</b>, then sweeps field/elem rows orphaned by a purged entity. A startup backfill stamps pre-column tombstones so legacy deletes can’t leak.</li>
+      <li><b>D3</b> Steady-state size = live registers + ≤ 35 days of tombstones + ≤ 1 hour of orphans. <b>Bounded</b>, not unbounded.</li>
+    </ul>
+  </div>
+  <div class="card client">
+    <h3><span class="dot"></span> Req 2 · every client learns every delete</h3>
+    <ul>
+      <li><b>D4</b> The authoritative staleness signal is the server’s per-tenant <b>gc-watermark</b> (max <code>seq</code> ever reclaimed); Pull returns <code>cursorExpired</code> when <code>cursor &lt; watermark</code>. <b>The client clock is never in the trust path.</b></li>
+      <li><b>D5</b> Recent client (<code>cursor ≥ watermark</code>) → incremental pull carries the retained tombstone. Long-gone client → <code>cursorExpired</code> → wipe + full reload, deleted rows simply absent.</li>
+      <li><b>D6</b> A local <code>now − last_sync &gt; 30d</code> hint is <i>advisory only</i> — it may skip a doomed round-trip, never decides correctness.</li>
+    </ul>
+  </div>
+</div>
+<div class="rules">
+  <div class="card server">
+    <h3><span class="dot"></span> Correctness guardrails</h3>
+    <ul>
+      <li><b>D7</b> The watermark is <b>per-scope</b> (seq is per-tenant) and rises from tombstone purge <i>and</i> orphan sweep.</li>
+      <li><b>D8</b> A full (cursor 0) pull floors its returned cursor at the watermark, or a client whose newest live rows predate a purged tombstone would loop-expire forever.</li>
+      <li><b>D9</b> Full-reload pull must paginate by <code>seq</code> range — a cursor-0 copy of a 1M-entity tenant can’t ship in one response.</li>
+    </ul>
+  </div>
+  <div class="card client">
+    <h3><span class="dot"></span> Client guardrails</h3>
+    <ul>
+      <li><b>D10</b> The cursor is the <i>only</i> persisted sync state; device-scoped (OPFS), shared across tabs by the leader — not per-tab.</li>
+      <li><b>D11</b> Full reload runs <code>reconcilePending</code> first (see §06) so recovery can’t resurrect a deleted entity.</li>
+      <li><b>D12</b> Reconstruction requires a <code>present=true</code> presence row — matched in <span class="k">snapshot.go</span> (Go) and <span class="k">record.worker.js</span> (JS).</li>
+    </ul>
+  </div>
+</div>
+<div class="callout ok">
+  <b>Why this is fool-proof for an absence of any length.</b> Take a client gone for a gap <i>g</i>. Either no
+  tombstone it still needs has been purged (<code>cursor ≥ watermark</code>) and the incremental pull carries
+  every missed delete — or one has (<code>cursor &lt; watermark</code>) and the server refuses to trust the
+  cursor, forcing a from-scratch copy in which deleted entities don’t exist. There is <b>no value of g</b> that
+  silently drops a delete. (The <span class="k">ygo</span> notes/settings layer keeps its own delete-set, so it
+  never faced this trade.)
+</div>
 
 <footer>
   Record sync engine · tombstone garbage collection. Structured data (tasks / projects / areas) syncs as a

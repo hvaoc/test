@@ -100,10 +100,18 @@ export default function DisplayMenu({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
+      <Pressable testID="display-backdrop" style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.card} onPress={(e) => e?.stopPropagation?.()}>
           <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={styles.title}>Layout</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.title}>Layout</Text>
+              {/* Explicit close control. The full-screen backdrop can't be reliably
+                  dismissed by an automated tap (its center sits over the card), so a
+                  testID'd Done button gives tests a deterministic, cross-platform close. */}
+              <Pressable testID="display-done" hitSlop={10} onPress={onClose}>
+                <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 15 }}>Done</Text>
+              </Pressable>
+            </View>
             <View style={styles.layoutRow}>
               {shownLayouts.map((l) => {
                 const active = layout === l.key;
@@ -123,6 +131,7 @@ export default function DisplayMenu({
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Completed tasks</Text>
               <Switch
+                testID="setting-show-completed"
                 value={showCompleted}
                 onValueChange={onToggleCompleted}
                 trackColor={{ true: colors.accent, false: colors.separatorStrong }}

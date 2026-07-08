@@ -1,0 +1,23 @@
+# Organization · "move a task into a project via the detail Project field"
+# The project name ("Ops") is test-entered data (not localized chrome), so the
+# MoveSheet option and the opened project are targeted by that value.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-new-list" }
+- tapOn: { id: "newlist-mode-project" }
+- tapOn: { id: "newlist-name" }
+- inputText: "Ops"
+- pressKey: Enter          # onSubmitEditing on the name field creates the list (the Create button can sit under the keyboard)
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-project" }
+- tapOn: "Ops"
+- tapOn: { id: "detail-title" }
+- inputText: "Rotate API keys"
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "list-back" }
+- tapOn: "Ops"
+- assertVisible: "Rotate API keys"
+- tapOn: { id: "list-back" }

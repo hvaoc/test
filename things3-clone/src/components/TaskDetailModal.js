@@ -131,7 +131,7 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
         {!isWide && isWails && <WailsTitleBar />}
         {/* Top bar */}
         <View style={styles.topBar}>
-          <Pressable hitSlop={10} onPress={onClose} style={styles.topBtn}>
+          <Pressable testID="detail-back" hitSlop={10} onPress={onClose} style={styles.topBtn}>
             <Ionicons name="chevron-back" size={26} color={colors.accent} />
             <Text style={styles.backText} numberOfLines={1}>
               {containerLabel}
@@ -172,7 +172,7 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
                 color={task.status === STATUS.CANCELED ? colors.deadline : colors.textSecondary}
               />
             </Pressable>
-            <Pressable hitSlop={10} onPress={() => { deleteTask(task.id); onClose(); }}>
+            <Pressable testID="detail-delete" hitSlop={10} onPress={() => { deleteTask(task.id); onClose(); }}>
               <Ionicons name="trash-outline" size={22} color={colors.textSecondary} />
             </Pressable>
           </View>
@@ -191,12 +191,14 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
             {/* Title row */}
             <View style={styles.titleRow}>
               <Checkbox
+                testID="detail-checkbox"
                 status={task.status}
                 color={project?.color}
                 onPress={() => toggleTask(task.id)}
                 size={24}
               />
               <TextInput
+                testID="detail-title"
                 style={[styles.title, done && styles.titleDone, { height: Math.max(28, titleH) }]}
                 value={task.title}
                 placeholder="New To-Do"
@@ -211,6 +213,7 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
             <View style={styles.notesWrap}>
               <TextInput
                 nativeID="task-notes-editor"
+                testID="detail-notes"
                 style={styles.notes}
                 value={task.notes}
                 placeholder="Notes"
@@ -460,7 +463,7 @@ function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpd
       <FieldRow tone={tone} icon="ellipse" iconColor={containerColor} label="Project" value={containerLabel} active onPress={() => onEdit('move')} />
       <FieldRow tone={tone} icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={popover?.kind === 'when'} onPress={open('when')} />
       <TimeField task={task} onUpdate={onUpdate} tone={tone} />
-      <FieldRow tone={tone} icon="alarm-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
+      <FieldRow tone={tone} icon="hourglass-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
       <FieldRow tone={tone} icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={popover?.kind === 'priority'} onPress={open('priority')} />
       <FieldRow tone={tone} icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
       <FieldRow tone={tone} icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
@@ -490,6 +493,7 @@ function FieldRow({ icon, iconColor, label, value, active, highlighted, onPress,
   return (
     <Pressable
       ref={ref}
+      testID={'detail-' + String(label).toLowerCase()}
       style={[styles.fieldRow, { borderBottomColor: tone.divider }, highlighted && styles.fieldRowOpen, highlighted && { backgroundColor: tone.highlight }]}
       onPress={handlePress}
     >
@@ -521,11 +525,17 @@ function AnchoredPopover({ visible, anchor, onClose, children, width }) {
     : { left, top: belowTop, maxHeight: spaceBelow };
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.popBackdrop} onPress={onClose}>
-        <Pressable style={[styles.popCard, { width: w }, posStyle]} onPress={(e) => e?.stopPropagation?.()}>
+      {/* Backdrop is a SIBLING behind the card (absolute fill), not a parent Pressable.
+          A parent backdrop Pressable swallows taps meant for the menu options on iOS/web
+          (RN's stopPropagation doesn't reliably block the parent onPress), so the option's
+          onPress never fires. As siblings, taps on the card reach the options directly and
+          taps outside hit the backdrop → close. */}
+      <View style={{ flex: 1 }}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={[styles.popCard, { width: w }, posStyle]}>
           <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -534,13 +544,13 @@ function PriorityMenu({ value, onChange }) {
   return (
     <View style={styles.menu}>
       {PRIORITIES.map((p) => (
-        <Pressable key={p.key} style={styles.menuRow} onPress={() => onChange(p.key)}>
+        <Pressable testID={`pri-menu-${p.key}`} key={p.key} style={styles.menuRow} onPress={() => onChange(p.key)}>
           <Ionicons name="flag" size={18} color={p.color} style={styles.menuIcon} />
           <Text style={styles.menuLabel}>{p.label}</Text>
-          {value === p.key && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+          {value === p.key && <Ionicons testID={`pri-check-${p.key}`} name="checkmark" size={18} color={colors.accent} />}
         </Pressable>
       ))}
-      <Pressable style={styles.menuRow} onPress={() => onChange(null)}>
+      <Pressable testID="pri-menu-none" style={styles.menuRow} onPress={() => onChange(null)}>
         <Ionicons name="flag-outline" size={18} color={colors.textTertiary} style={styles.menuIcon} />
         <Text style={styles.menuLabel}>None</Text>
         {!value && <Ionicons name="checkmark" size={18} color={colors.accent} />}
@@ -551,8 +561,8 @@ function PriorityMenu({ value, onChange }) {
 
 function WhenMenu({ value, onChange }) {
   const isDate = value && ![WHEN.TODAY, WHEN.EVENING, WHEN.SOMEDAY].includes(value);
-  const Opt = ({ icon, color, label, active, onPress }) => (
-    <Pressable style={styles.menuRow} onPress={onPress}>
+  const Opt = ({ icon, color, label, active, onPress, testID }) => (
+    <Pressable testID={testID} style={styles.menuRow} onPress={onPress}>
       <Ionicons name={icon} size={18} color={color} style={styles.menuIcon} />
       <Text style={styles.menuLabel}>{label}</Text>
       {active && <Ionicons name="checkmark" size={18} color={colors.accent} />}
@@ -560,11 +570,11 @@ function WhenMenu({ value, onChange }) {
   );
   return (
     <View style={styles.menu}>
-      <Opt icon="star" color={colors.today} label="Today" active={value === WHEN.TODAY} onPress={() => onChange(WHEN.TODAY)} />
-      <Opt icon="moon" color={colors.someday} label="This Evening" active={value === WHEN.EVENING} onPress={() => onChange(WHEN.EVENING)} />
-      <Opt icon="archive" color={colors.someday} label="Someday" active={value === WHEN.SOMEDAY} onPress={() => onChange(WHEN.SOMEDAY)} />
+      <Opt testID="when-menu-today" icon="star" color={colors.today} label="Today" active={value === WHEN.TODAY} onPress={() => onChange(WHEN.TODAY)} />
+      <Opt testID="when-menu-evening" icon="moon" color={colors.someday} label="This Evening" active={value === WHEN.EVENING} onPress={() => onChange(WHEN.EVENING)} />
+      <Opt testID="when-menu-someday" icon="archive" color={colors.someday} label="Someday" active={value === WHEN.SOMEDAY} onPress={() => onChange(WHEN.SOMEDAY)} />
       {value ? (
-        <Opt icon="close-circle" color={colors.textSecondary} label="No Date" active={false} onPress={() => onChange(null)} />
+        <Opt testID="when-menu-none" icon="close-circle" color={colors.textSecondary} label="No Date" active={false} onPress={() => onChange(null)} />
       ) : null}
       <View style={styles.menuDivider} />
       <MiniCalendar selected={isDate ? value : null} onSelect={(key) => onChange(key)} />

@@ -1,0 +1,15 @@
+# Organization · "create a Project (appears in the sidebar and opens)"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-new-list" }
+- tapOn: { id: "newlist-mode-project" }
+- tapOn: { id: "newlist-name" }
+- inputText: "Website Redesign"
+- pressKey: Enter          # onSubmitEditing on the name field creates the list (the Create button can sit under the keyboard)
+- assertVisible: "Website Redesign"
+- tapOn: "Website Redesign"
+- assertVisible: { id: "list-back" }
+- assertVisible: "Website Redesign"
+- tapOn: { id: "list-back" }

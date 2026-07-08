@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"things3-clone-desktop/core/ydstore"
+	"things3-clone-desktop/core/coordinator"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -75,7 +75,7 @@ func savePrefs(p windowPrefs) {
 // persist and sync through the same Go engine the mobile apps use.
 type App struct {
 	ctx   context.Context
-	store *ydstore.Store
+	store *coordinator.Coordinator
 }
 
 // dataDir is the per-user writable directory for the database + mock cloud file.
@@ -95,10 +95,6 @@ func dataDir() string {
 // empty, so the frontend falls back to its seed data).
 func (a *App) LoadSnapshot() string {
 	if a.store == nil {
-		return ""
-	}
-	has, err := a.store.HasData()
-	if err != nil || !has {
 		return ""
 	}
 	snap, err := a.store.LoadSnapshot()
@@ -225,7 +221,7 @@ func (a *App) startup(ctx context.Context) {
 	//   2. a persisted sign-in (Settings → Sync in the app)
 	//   3. none — the replica works fully offline until a server is set.
 	// Failure is non-fatal: the frontend keeps working from its in-memory seed.
-	if store, err := ydstore.Open(dataDir()); err == nil {
+	if store, err := coordinator.Open(dataDir()); err == nil {
 		a.store = store
 		if url := os.Getenv("THINGS_SYNC_URL"); url != "" {
 			store.SetServer(url, os.Getenv("THINGS_SYNC_TOKEN"))

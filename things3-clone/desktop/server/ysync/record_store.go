@@ -3,6 +3,7 @@ package ysync
 import (
 	"encoding/json"
 	"sync"
+	"time"
 )
 
 // RecordStore is the storage + transport for the structured-data op stream
@@ -18,7 +19,18 @@ import (
 //     This is "the database as another client" (docs/architecture-1m.md §5.4).
 type RecordStore interface {
 	Push(scope string, ops []json.RawMessage) (cursor int, err error)
-	Pull(scope string, cursor int) (ops []json.RawMessage, newCursor int, err error)
+	// Pull returns ops after cursor (0 = a full copy). expired=true means the client's
+	// cursor has fallen below the GC watermark (a purged delete may be missing from its
+	// incremental view) and it must wipe + full-reload; only the materialized Postgres
+	// store ever sets it (docs/tombstone-gc.html §03).
+	Pull(scope string, cursor int) (ops []json.RawMessage, newCursor int, expired bool, err error)
+}
+
+// RecordGC is implemented by stores that garbage-collect tombstones on a timer. Only the
+// materialized Postgres store qualifies; the append-only blob log keeps full history and
+// never purges, so it never expires a cursor. The server wires a ticker when present.
+type RecordGC interface {
+	RunGC(retention time.Duration) (reclaimed int, err error)
 }
 
 // ---- blob impl: an append-only log persisted via the Persistence blob layer ----
@@ -67,7 +79,9 @@ func (b *blobRecordStore) Push(scope string, ops []json.RawMessage) (int, error)
 	return n, nil
 }
 
-func (b *blobRecordStore) Pull(scope string, cursor int) ([]json.RawMessage, int, error) {
+// Pull never expires a cursor: the blob log keeps full history and never purges, so any
+// cursor can still be served incrementally (expired is always false).
+func (b *blobRecordStore) Pull(scope string, cursor int) ([]json.RawMessage, int, bool, error) {
 	rl := b.logFor(scope)
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -79,5 +93,5 @@ func (b *blobRecordStore) Pull(scope string, cursor int) ([]json.RawMessage, int
 	}
 	out := make([]json.RawMessage, len(rl.ops)-cursor)
 	copy(out, rl.ops[cursor:])
-	return out, len(rl.ops), nil
+	return out, len(rl.ops), false, nil
 }

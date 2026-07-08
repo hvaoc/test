@@ -1,0 +1,21 @@
+# Smart lists · "clicking each smart list navigates and shows its header"
+# testID-only: tap the specific list (sidebar-<id>), then assert the pushed list
+# screen (list-back) and its rendered header (list-title). Specificity comes from
+# the sidebar testID we tapped, not from a localized header string.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-today" }
+- assertVisible: { id: "list-back" }
+- assertVisible: { id: "list-title" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-anytime" }
+- assertVisible: { id: "list-title" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-logbook" }
+- assertVisible: { id: "list-title" }
+- tapOn: { id: "list-back" }
+- tapOn: { id: "sidebar-trash" }
+- assertVisible: { id: "list-title" }
+- tapOn: { id: "list-back" }

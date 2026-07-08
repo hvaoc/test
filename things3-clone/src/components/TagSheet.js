@@ -38,6 +38,7 @@ export default function TagSheet({ visible, onClose, selected = [], onChange }) 
       <View style={styles.inputRow}>
         <Ionicons name="pricetag-outline" size={18} color={colors.textTertiary} />
         <TextInput
+          testID="tag-input"
           style={styles.input}
           placeholder="New tag…"
           placeholderTextColor={colors.placeholder}
@@ -47,7 +48,7 @@ export default function TagSheet({ visible, onClose, selected = [], onChange }) 
           returnKeyType="done"
         />
         {draft.length > 0 && (
-          <Pressable onPress={create}>
+          <Pressable testID="tag-add" onPress={create}>
             <Text style={styles.add}>Add</Text>
           </Pressable>
         )}

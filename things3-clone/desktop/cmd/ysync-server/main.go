@@ -14,11 +14,17 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"things3-clone-desktop/server/auth"
 	"things3-clone-desktop/server/mail"
 	"things3-clone-desktop/server/ysync"
 )
+
+// tombstoneRetention is how long a delete's tombstone is kept before the GC forgets it.
+// It MUST exceed any client's staleness threshold (30d) so a client that synced within
+// its window still finds every delete it missed still retained (docs/tombstone-gc.html §04).
+const tombstoneRetention = 35 * 24 * time.Hour
 
 func main() {
 	addr := flag.String("addr", ":8090", "listen address")
@@ -86,6 +92,12 @@ func main() {
 		}
 		hub.SetRecordStore(rs)
 		log.Printf("ysync: materialized record engine on Postgres (bounded, queryable full copy)")
+		// Tombstone GC: purge deletes older than the retention window + sweep orphaned
+		// field rows, hourly, raising each tenant's cursor-expiry watermark (docs/tombstone-gc).
+		if gc, ok := rs.(ysync.RecordGC); ok {
+			go runTombstoneGC(gc)
+			log.Printf("ysync: tombstone GC active (%s retention, hourly purge + watermark)", tombstoneRetention)
+		}
 		// One-time: fold any legacy append-only record blobs into the register store.
 		var regCount int
 		_ = pgStore.DB().QueryRow(`SELECT count(*) FROM record_registers`).Scan(&regCount)
@@ -102,5 +114,23 @@ func main() {
 	log.Printf("ysync: listening on %s (real accounts: /v1/register, /v1/login)", *addr)
 	if err := http.ListenAndServe(*addr, ysync.CORS(mux)); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// runTombstoneGC purges expired tombstones once at startup, then hourly. Errors are
+// logged and retried on the next tick (a transient DB hiccup shouldn't kill the loop).
+func runTombstoneGC(gc ysync.RecordGC) {
+	sweep := func() {
+		if n, err := gc.RunGC(tombstoneRetention); err != nil {
+			log.Printf("ysync: tombstone GC: %v", err)
+		} else if n > 0 {
+			log.Printf("ysync: tombstone GC reclaimed %d row(s)", n)
+		}
+	}
+	sweep()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for range t.C {
+		sweep()
 	}
 }

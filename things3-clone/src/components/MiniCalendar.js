@@ -21,9 +21,13 @@ export default function MiniCalendar({ selected, onSelect }) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = todayKey();
 
+  // Always lay out a fixed 6-row grid (6 × 7 = 42 cells). A month spans 4–6 weeks
+  // depending on where the 1st falls, so padding to the maximum keeps the calendar a
+  // constant height — it no longer grows/jumps when you page between months.
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length < 42) cells.push(null);
 
   const monthKey = dateToKey(new Date(year, month, 1));
 
@@ -64,6 +68,7 @@ export default function MiniCalendar({ selected, onSelect }) {
           return (
             <Pressable
               key={key}
+              testID={`cal-day-${key}`}
               style={styles.cell}
               onPress={() => onSelect(key)}
             >
@@ -84,6 +89,7 @@ export default function MiniCalendar({ selected, onSelect }) {
                   {d}
                 </Text>
               </View>
+              {isToday && !isSel && <View style={styles.todayDot} />}
             </Pressable>
           );
         })}
@@ -128,5 +134,13 @@ const styles = StyleSheet.create({
   },
   todayCircle: { backgroundColor: colors.accentSoft },
   selectedCircle: { backgroundColor: colors.accent },
+  todayDot: {
+    position: 'absolute',
+    bottom: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+  },
   dayText: { ...typography.callout, color: colors.text },
 });

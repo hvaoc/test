@@ -84,6 +84,7 @@ export default function QueryBuilderSheet({
           <>
             <Text style={styles.label}>Name</Text>
             <TextInput
+              testID="qb-name"
               style={styles.input}
               value={meta.name}
               onChangeText={(t) => setMeta((m) => ({ ...m, name: t }))}
@@ -120,6 +121,7 @@ export default function QueryBuilderSheet({
 
         <Text style={styles.label}>Text contains</Text>
         <TextInput
+          testID="qb-text"
           style={styles.input}
           value={query.text}
           onChangeText={(t) => patch({ text: t })}
@@ -150,7 +152,7 @@ export default function QueryBuilderSheet({
           />
         ))}
 
-        <Pressable style={styles.addCond} onPress={addCondition}>
+        <Pressable testID="qb-add-condition" style={styles.addCond} onPress={addCondition}>
           <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
           <Text style={styles.addCondText}>Add condition</Text>
         </Pressable>
@@ -170,6 +172,7 @@ export default function QueryBuilderSheet({
           )}
           <View style={{ flex: 1 }} />
           <Pressable
+            testID="qb-save"
             style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
             disabled={!canSave}
             onPress={submit}
@@ -204,12 +207,14 @@ function ConditionRow({ cond, availableTags, onChange, onRemove }) {
     <View style={styles.condCard}>
       <View style={styles.condTop}>
         <Dropdown
+          testID="qb-field"
           value={field.key}
           options={QUERY_FIELDS.map((f) => ({ key: f.key, label: f.label }))}
           onChange={onField}
           style={{ flex: 1 }}
         />
         <Dropdown
+          testID="qb-op"
           value={op.key}
           options={field.ops.map((o) => ({ key: o.key, label: o.label }))}
           onChange={onOp}
@@ -240,6 +245,7 @@ function ValueEditor({ op, value, onChange, availableTags }) {
     case 'priorities':
       return (
         <MultiChips
+          testID="qb-priority"
           options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, color: p.color }))}
           value={Array.isArray(value) ? value : []}
           onChange={onChange}
@@ -317,12 +323,12 @@ function defaultValue(op) {
 // Small primitives.
 // ---------------------------------------------------------------------------
 
-function Dropdown({ value, options, onChange, style }) {
+function Dropdown({ value, options, onChange, style, testID }) {
   const [open, setOpen] = useState(false);
   const cur = options.find((o) => o.key === value);
   return (
     <View style={[{ position: 'relative' }, style]}>
-      <Pressable style={styles.dd} onPress={() => setOpen((o) => !o)}>
+      <Pressable testID={testID} style={styles.dd} onPress={() => setOpen((o) => !o)}>
         <Text style={styles.ddText} numberOfLines={1}>{cur ? cur.label : '—'}</Text>
         <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
       </Pressable>
@@ -331,6 +337,7 @@ function Dropdown({ value, options, onChange, style }) {
           {options.map((o) => (
             <Pressable
               key={o.key}
+              testID={testID ? `${testID}-${o.key}` : undefined}
               style={({ hovered }) => [styles.ddItem, (hovered || o.key === value) && styles.ddItemActive]}
               onPress={() => { onChange(o.key); setOpen(false); }}
             >
@@ -359,7 +366,7 @@ function Segmented({ options, value, onChange }) {
   );
 }
 
-function MultiChips({ options, value, onChange, empty }) {
+function MultiChips({ options, value, onChange, empty, testID }) {
   if (!options.length) return <Text style={styles.emptyChips}>{empty || 'None available'}</Text>;
   const toggle = (k) =>
     onChange(value.includes(k) ? value.filter((x) => x !== k) : [...value, k]);
@@ -370,6 +377,7 @@ function MultiChips({ options, value, onChange, empty }) {
         return (
           <Pressable
             key={o.key}
+            testID={testID ? `${testID}-${o.key}` : undefined}
             onPress={() => toggle(o.key)}
             style={[styles.chip, on && { backgroundColor: (o.color || colors.accent) + '22', borderColor: o.color || colors.accent }]}
           >

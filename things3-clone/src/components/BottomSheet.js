@@ -43,7 +43,7 @@ export default function BottomSheet({ visible, onClose, title, children }) {
           {title ? (
             <View style={styles.header}>
               <Text style={styles.title}>{title}</Text>
-              <Pressable hitSlop={10} onPress={onClose}>
+              <Pressable testID="sheet-done" hitSlop={10} onPress={onClose}>
                 <Text style={styles.done}>Done</Text>
               </Pressable>
             </View>

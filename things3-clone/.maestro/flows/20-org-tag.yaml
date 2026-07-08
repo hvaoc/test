@@ -1,0 +1,23 @@
+# Organization · "add a Tag to a task and see the badge on its row"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-labels" }
+- tapOn: { id: "tag-input" }
+- inputText: "urgent"
+- tapOn: { id: "tag-add" }
+# NOTE: don't assert the tag chip here — it renders at the bottom of the sheet where the
+# soft-keyboard / IME overlay can cover it. Close the sheet first, then assert the tag on
+# the task row (keyboard gone), which is the meaningful check anyway.
+# Close the tag sheet via the sheet's Done button testID (not its "Done" text, which
+# collides with the keyboard's Done key on iOS).
+- tapOn: { id: "sheet-done" }
+- tapOn: { id: "detail-title" }
+- inputText: "Tagged task"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Tagged task"
+- assertVisible: "urgent"
+- tapOn: { id: "list-back" }

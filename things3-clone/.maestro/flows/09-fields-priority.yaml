@@ -1,0 +1,22 @@
+# Task fields · "Priority = High is set via the composer and persists on the row"
+# Mobile sets Priority via the detail popover menu; persistence is verified by
+# reopening the task + popover and asserting the High row's selected check (testID),
+# not the localized "High" value label.
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- tapOn: { id: "sidebar-inbox" }
+- tapOn: { id: "fab-add-task" }
+- tapOn: { id: "detail-priority" }
+- tapOn: { id: "pri-menu-high" }
+- tapOn: { id: "detail-title" }
+- inputText: "Fix production bug"
+- tapOn: { id: "detail-back" }
+- assertVisible: "Fix production bug"
+- tapOn: "Fix production bug"
+- tapOn: { id: "detail-priority" }
+- assertVisible: { id: "pri-check-high" }
+- tapOn: { id: "pri-menu-high" }
+- tapOn: { id: "detail-back" }
+- tapOn: { id: "list-back" }

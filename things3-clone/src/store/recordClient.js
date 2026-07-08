@@ -50,7 +50,7 @@ function fireWrite() {
 
 // Which methods can change data → notify other tabs. applyLocalSnapshot/applyRemote
 // return an op count (0 = no change) so a no-op save never notifies (no reload loop).
-const ALWAYS_WRITE = new Set(['createTask', 'setTaskField', 'toggleComplete', 'moveTask', 'deleteTask', 'hydrate', 'reset']);
+const ALWAYS_WRITE = new Set(['createTask', 'setTaskField', 'toggleComplete', 'moveTask', 'deleteTask', 'hydrate', 'reset', 'wipeLocalRecords']);
 const COUNTED_WRITE = new Set(['applyLocalSnapshot', 'applyRemote']);
 function didChange(method, result) {
   return ALWAYS_WRITE.has(method) || (COUNTED_WRITE.has(method) && !!result);
@@ -218,7 +218,8 @@ export const recordStore = {
   materialize: () => call('materialize'),
   pendingOps: (limit) => call('pendingOps', [limit]),
   markSynced: (seqs) => call('markSynced', [seqs]),
-  applyRemote: (ops) => call('applyRemote', [ops]),
+  applyRemote: (ops, rebuild) => call('applyRemote', [ops, rebuild]),
+  wipeLocalRecords: () => call('wipeLocalRecords'),
   cursor: () => call('cursor'),
   setCursor: (c) => call('setCursor', [c]),
 };

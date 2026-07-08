@@ -137,6 +137,46 @@ func (s *Store) SaveSnapshot(state string) error {
 	return s.persistLocked()
 }
 
+// SaveAux persists ONLY the ygo-owned parts of the whole-state snapshot — settings
+// (per-user) and each open task's notes — leaving structured entities to the record
+// engine. The coordinator uses this so ygo never re-materializes task data. See
+// ydoc.Engine.ApplyLocalSnapshotAux.
+func (s *Store) SaveAux(state string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.engine.ApplyLocalSnapshotAux(state); err != nil {
+		return err
+	}
+	return s.persistLocked()
+}
+
+// Settings returns the current settings map (the per-user ygo scope), for the
+// coordinator to overlay onto the record engine's structured materialization.
+func (s *Store) Settings() (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.engine.Settings(), nil
+}
+
+// NoteText returns a task's note body from its (loaded) per-task ygo doc, or "".
+func (s *Store) NoteText(taskID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.engine.NoteText(taskID)
+}
+
+// OpenNotes lists the task ids whose note scope is currently marked for on-demand
+// sync, so the coordinator can overlay their note text at materialize time.
+func (s *Store) OpenNotes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.openNotes))
+	for id := range s.openNotes {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // Reset wipes the local replica (backs the app's "Delete all data").
 func (s *Store) Reset() error {
 	s.mu.Lock()
@@ -235,6 +275,39 @@ func (s *Store) Sync() (string, error) {
 		Version: version, Snapshot: snap,
 	})
 	return string(b), nil
+}
+
+// SyncAux runs one offline-first cycle for the ygo-owned scopes ONLY: settings (per
+// user) plus any open note scopes — never the shared scope, whose structured data now
+// syncs through the record op-log. The coordinator uses this so ygo carries no task
+// data over the wire. Returns the number of scopes that applied a remote update. With
+// no server configured it is a no-op.
+func (s *Store) SyncAux() (int, error) {
+	s.mu.Lock()
+	server := s.server
+	if server.url == "" || server.token == "" {
+		s.mu.Unlock()
+		return 0, nil
+	}
+	scopes := []string{ydoc.ScopeSettings}
+	for id := range s.openNotes {
+		scopes = append(scopes, ydoc.NoteScope(id))
+	}
+	s.mu.Unlock()
+
+	base := strings.TrimRight(server.url, "/")
+	applied := 0
+	for _, scope := range scopes {
+		a, _, err := s.syncScope(base, server.token, scope)
+		if err != nil {
+			return applied, err
+		}
+		applied += a
+	}
+	s.mu.Lock()
+	_ = s.persistLocked()
+	s.mu.Unlock()
+	return applied, nil
 }
 
 // SyncNote syncs a single task's note scope on demand (and marks it open so later

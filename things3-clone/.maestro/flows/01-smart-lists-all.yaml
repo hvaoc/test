@@ -1,0 +1,13 @@
+# Smart lists · "sidebar lists all built-in smart lists"
+appId: com.functionofq.thingsclone
+---
+# recover to the sidebar root first, so this case is resilient to the previous one.
+- runFlow: ../reset.yaml
+- assertVisible: { id: "sidebar-inbox" }
+- assertVisible: { id: "sidebar-today" }
+- assertVisible: { id: "sidebar-upcoming" }
+- assertVisible: { id: "sidebar-overdue" }
+- assertVisible: { id: "sidebar-anytime" }
+- assertVisible: { id: "sidebar-someday" }
+- assertVisible: { id: "sidebar-logbook" }
+- assertVisible: { id: "sidebar-trash" }
