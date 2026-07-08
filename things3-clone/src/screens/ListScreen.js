@@ -977,9 +977,18 @@ export default function ListScreen({
     const morning = sliceSection(MORNING_DIVIDER, dayData);
     const eve = sliceSection(EVENING_DIVIDER, eveningData);
     const slot = (dividerKey, key, title, icon, sliced, data) => {
+      // Emit each task and, when expanded, its subtasks nested beneath it — same
+      // depth-carrying rows the other lists use, so Today supports drag-nesting.
+      const rows = [];
+      const emit = (t, depth) => {
+        const kids = selectSubtasks(state.tasks, t.id);
+        rows.push({ key: t.id, kind: 'task', task: t, depth, hasChildren: kids.length > 0, expanded: expandedTasks.has(t.id) });
+        if (kids.length > 0 && expandedTasks.has(t.id)) kids.forEach((k) => emit(k, depth + 1));
+      };
+      sliced.rows.forEach((t) => emit(t, 0));
       const out = [
         { key, kind: 'divider', dividerKey, title, icon, collapsible: true, collapsed: sliced.collapsed, chevron: sliced.chevron },
-        ...sliced.rows.map((t) => ({ key: t.id, kind: 'task', task: t })),
+        ...rows,
       ];
       if (sliced.more) {
         out.push({ key: `more:${key}`, kind: 'more', sectionKey: key, action: sliced.more.action, hidden: sliced.more.hidden });
@@ -993,26 +1002,57 @@ export default function ListScreen({
       ...slot('evening', EVENING_DIVIDER, 'This Evening', 'moon', eve, eveningData),
     ];
   }
+  // Rendered depth of each Today task row (for the nesting commit below).
+  const todayDepthByKey = new Map(
+    (todayItems || []).filter((i) => i.kind === 'task').map((i) => [i.key, i.depth || 0])
+  );
 
   // Commit a Today reorder: tasks below the Evening divider become "This
   // Evening" (when = EVENING); tasks above (under Morning) revert to Today; then
   // persist the order.
-  const commitTodayLayout = (rawKeys) => {
-    // Fold any collapsed/overflow-hidden rows back in after their divider so the
-    // committed order still covers every task.
-    const keys = reinsertHidden(rawKeys);
-    const dividerIdx = keys.indexOf(EVENING_DIVIDER);
-    const orderedIds = [];
+  const commitTodayLayout = (rawKeys, meta = {}) => {
+    const { draggedKey, dx = 0, depth: metaDepth = null } = meta;
+    // Fold hidden rows back in, then carry the dragged task's whole subtree with it.
+    const orderedDepths = (todayItems || [])
+      .filter((i) => i.kind === 'task')
+      .map((i) => ({ key: i.key, depth: i.depth || 0 }));
+    const { keys, descendants } = carrySubtree(reinsertHidden(rawKeys), draggedKey, orderedDepths);
+    const eveningIdx = keys.indexOf(EVENING_DIVIDER);
+    const taskById = new Map(state.tasks.map((t) => [t.id, t]));
+    const stack = []; // stack[d] = last task id at depth d
+    const tasks = [];
+    let draggedDelta = 0;
     keys.forEach((k, i) => {
-      if (k === MORNING_DIVIDER || k === 'morning-empty' || k === EVENING_DIVIDER || k === 'evening-empty') return;
-      orderedIds.push(k);
-      const task = state.tasks.find((t) => t.id === k);
-      if (!task) return;
-      const isEvening = dividerIdx >= 0 && i > dividerIdx;
-      if (isEvening && task.when !== WHEN.EVENING) updateTask(k, { when: WHEN.EVENING });
-      else if (!isEvening && task.when === WHEN.EVENING) updateTask(k, { when: WHEN.TODAY });
+      if (k === MORNING_DIVIDER || k === 'morning-empty' || k === EVENING_DIVIDER || k === 'evening-empty' || k.startsWith('more:')) {
+        return;
+      }
+      const aboveDepth = stack.length - 1;
+      let depth = todayDepthByKey.get(k) || 0;
+      if (k === draggedKey) {
+        depth = aboveDepth < 0 ? 0 : Math.max(0, Math.min(aboveDepth + 1, metaDepth != null ? metaDepth : depth + Math.round(dx / NEST_STEP)));
+        draggedDelta = depth - (todayDepthByKey.get(k) || 0);
+      } else if (descendants.has(k)) {
+        depth = Math.max(0, (todayDepthByKey.get(k) || 0) + draggedDelta);
+      }
+      const parentId = depth > 0 ? stack[depth - 1] || null : null;
+      // A subtask belongs to no heading; a top-level task keeps whatever heading it
+      // had (a project task scheduled today mustn't be torn out of its section).
+      const headingId = parentId ? null : (taskById.get(k)?.headingId ?? null);
+      tasks.push({ id: k, parentId, headingId });
+      stack[depth] = k;
+      stack.length = depth + 1;
+      // Only TOP-LEVEL tasks adopt the Morning/Evening slot from their position;
+      // subtasks follow their parent (their own `when` is left alone).
+      if (depth === 0) {
+        const task = state.tasks.find((t) => t.id === k);
+        if (task) {
+          const isEvening = eveningIdx >= 0 && i > eveningIdx;
+          if (isEvening && task.when !== WHEN.EVENING) updateTask(k, { when: WHEN.EVENING });
+          else if (!isEvening && task.when === WHEN.EVENING) updateTask(k, { when: WHEN.TODAY });
+        }
+      }
     });
-    reorderTasks(orderedIds);
+    setProjectLayout({ tasks, headings: [] });
   };
 
   // The chevron/sidebar-toggle bar sits above the content and is intentionally
@@ -1402,7 +1442,9 @@ export default function ListScreen({
           <ReorderableTaskList
             items={todayItems}
             showProject
+            showSubtasks
             onOpenTask={setOpenTaskId}
+            onToggleExpand={toggleTaskExpand}
             onCommitKeys={commitTodayLayout}
             onToggleDivider={onDividerToggle}
             onToggleMore={onToggleMore}
