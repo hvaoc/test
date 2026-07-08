@@ -18,9 +18,13 @@ import DeadlineSheet from './DeadlineSheet';
 import MoveSheet from './MoveSheet';
 import TagSheet from './TagSheet';
 import LocationSheet from './LocationSheet';
+import WhenSheet from './WhenSheet';
+import PrioritySheet from './PrioritySheet';
+import TimeSheet from './TimeSheet';
 import MiniCalendar from './MiniCalendar';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN, STATUS, PRIORITY_MAP, PRIORITIES } from '../store/constants';
+import { whenShortcuts } from '../utils/whenShortcuts';
 import { relativeLabel } from '../utils/date';
 import { useTasks, newTask } from '../store/TasksContext';
 import { presenceIdentity, openTaskNote, closeTaskNote } from '../store/backend';
@@ -55,6 +59,8 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
     return () => setPresence({ ...me, taskId: null, cursor: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me, taskId]);
+  // Reset inline title editing whenever a different task opens.
+  React.useEffect(() => { setEditingTitle(false); setEditingCheckId(null); }, [taskId]);
   // On-demand notes: a task's notes are their own sync scope, pulled only while
   // the task is open. On open, sync this note and merge the latest text in; on
   // close, stop syncing it. (docs/architecture-1m §2.2)
@@ -86,6 +92,12 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
   const [newCheck, setNewCheck] = useState('');
   const [newSub, setNewSub] = useState('');
   const [titleH, setTitleH] = useState(0); // auto-grow the title to its content height
+  // A completed task's title renders as struck-through TEXT (not a TextInput), so
+  // its line-through can't leak onto the next focused field (iOS attribute bug).
+  // Tapping it switches to an editable input for that one edit.
+  const [editingTitle, setEditingTitle] = useState(false);
+  // Same treatment for a done checklist item's editable field (another leak source).
+  const [editingCheckId, setEditingCheckId] = useState(null);
 
   if (!task) return null;
 
@@ -197,16 +209,28 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
                 onPress={() => toggleTask(task.id)}
                 size={24}
               />
-              <TextInput
-                testID="detail-title"
-                style={[styles.title, done && styles.titleDone, { height: Math.max(28, titleH) }]}
-                value={task.title}
-                placeholder="New To-Do"
-                placeholderTextColor={colors.placeholder}
-                onChangeText={(text) => updateTask(task.id, { title: text })}
-                onContentSizeChange={(e) => setTitleH(e.nativeEvent.contentSize.height)}
-                multiline
-              />
+              {done && !editingTitle ? (
+                // Struck-through TEXT (not an input) so the line-through can't leak
+                // to the next focused TextInput on iOS. Tap to edit.
+                <Pressable style={styles.titleWrap} onPress={() => setEditingTitle(true)}>
+                  <Text style={[styles.title, styles.titleDone]}>
+                    {task.title || 'New To-Do'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <TextInput
+                  testID="detail-title"
+                  style={[styles.title, { height: Math.max(28, titleH) }]}
+                  value={task.title}
+                  placeholder="New To-Do"
+                  placeholderTextColor={colors.placeholder}
+                  onChangeText={(text) => updateTask(task.id, { title: text })}
+                  onContentSizeChange={(e) => setTitleH(e.nativeEvent.contentSize.height)}
+                  onBlur={() => setEditingTitle(false)}
+                  autoFocus={editingTitle}
+                  multiline
+                />
+              )}
             </View>
 
             {/* Notes — with live remote carets (collaborators' cursors). */}
@@ -331,11 +355,23 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
                         color={c.done ? colors.accent : colors.separatorStrong}
                       />
                     </Pressable>
-                    <TextInput
-                      style={[styles.checkText, c.done && styles.checkTextDone]}
-                      value={c.title}
-                      onChangeText={(text) => updateCheck(task.id, c.id, text)}
-                    />
+                    {c.done && editingCheckId !== c.id ? (
+                      // Struck-through Text (not an input) so its line-through can't
+                      // leak to the next focused field; tap to edit.
+                      <Pressable style={styles.checkTextWrap} onPress={() => setEditingCheckId(c.id)}>
+                        <Text style={[styles.checkText, styles.checkTextDone]} numberOfLines={1}>
+                          {c.title}
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <TextInput
+                        style={styles.checkText}
+                        value={c.title}
+                        onChangeText={(text) => updateCheck(task.id, c.id, text)}
+                        onBlur={() => setEditingCheckId(null)}
+                        autoFocus={editingCheckId === c.id}
+                      />
+                    )}
                     <Pressable hitSlop={8} onPress={() => deleteCheck(task.id, c.id)}>
                       <Ionicons name="close" size={16} color={colors.textTertiary} />
                     </Pressable>
@@ -413,6 +449,36 @@ export default function TaskDetailModal({ visible, taskId, onClose, onOpenTask }
           value={task.location}
           onChange={(location) => updateTask(task.id, { location })}
         />
+        {/* Phone only: Date / Priority / Time open as bottom sheets (the same ones
+            the quick-add composer uses). Wide surfaces (iPad / desktop / web) edit
+            these via the anchored popover + inline Time control in FieldsPanel. */}
+        {!isWide && (
+          <>
+            <WhenSheet
+              visible={sheet === 'when'}
+              onClose={() => setSheet(null)}
+              value={task.when}
+              onChange={(w) => updateTask(task.id, { when: w })}
+            />
+            <PrioritySheet
+              visible={sheet === 'priority'}
+              onClose={() => setSheet(null)}
+              value={task.priority}
+              onChange={(priority) => updateTask(task.id, { priority })}
+            />
+            <TimeSheet
+              visible={sheet === 'time'}
+              minutes={task.startMinutes}
+              duration={task.durationMinutes}
+              timezone={task.timezone}
+              onClose={() => setSheet(null)}
+              onSave={(m, d, zone) => {
+                updateTask(task.id, { startMinutes: m, durationMinutes: d, timezone: zone });
+                setSheet(null);
+              }}
+            />
+          </>
+        )}
       </View>
   );
 
@@ -452,8 +518,11 @@ const CONTENT_TONE = {
 };
 
 function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpdate, style, tone = CONTENT_TONE }) {
-  // Date and Priority edit inline via a popover anchored to their row; the rest
-  // still open their bottom sheets.
+  // The narrow phone opens each editor as a bottom sheet; wide surfaces (iPad,
+  // desktop, web) keep the anchored popover + inline Time control. Gate on screen
+  // WIDTH, not platform — an iPad reports Platform.OS === 'ios' but is a big screen
+  // and should behave like desktop.
+  const isWide = useIsWide();
   const [popover, setPopover] = useState(null); // { kind, anchor }
   const open = (kind) => (anchor) => setPopover({ kind, anchor });
   const close = () => setPopover(null);
@@ -461,19 +530,56 @@ function FieldsPanel({ task, when, containerLabel, containerColor, onEdit, onUpd
     <View style={[styles.panel, style]}>
       <Text style={[styles.panelHeader, { color: tone.muted }]}>Details</Text>
       <FieldRow tone={tone} icon="ellipse" iconColor={containerColor} label="Project" value={containerLabel} active onPress={() => onEdit('move')} />
-      <FieldRow tone={tone} icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={popover?.kind === 'when'} onPress={open('when')} />
-      <TimeField task={task} onUpdate={onUpdate} tone={tone} />
-      <FieldRow tone={tone} icon="hourglass-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} onPress={() => onEdit('deadline')} />
-      <FieldRow tone={tone} icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={popover?.kind === 'priority'} onPress={open('priority')} />
+      <FieldRow tone={tone} icon={when.icon} iconColor={when.color} label="Date" value={task.when ? when.label : 'None'} active={!!task.when} highlighted={isWide && popover?.kind === 'when'} onPress={isWide ? open('when') : () => onEdit('when')} />
+      {isWide ? (
+        <TimeField task={task} onUpdate={onUpdate} tone={tone} />
+      ) : (
+        // Phone: Time opens the same bottom-sheet TimePicker the quick-add sheet uses.
+        // Needs a concrete date first (a bucket like Today/Someday has no clock time).
+        <FieldRow
+          tone={tone}
+          icon="time-outline"
+          iconColor={isDateStr(task.when) && task.startMinutes != null ? colors.accent : undefined}
+          label="Time"
+          value={isDateStr(task.when) ? (task.startMinutes != null ? fmtTime(task.startMinutes) : 'None') : 'Set a date first'}
+          active={isDateStr(task.when) && task.startMinutes != null}
+          onPress={() => { if (isDateStr(task.when)) onEdit('time'); }}
+        />
+      )}
+      <FieldRow tone={tone} icon="hourglass-outline" iconColor={task.deadline ? colors.deadline : undefined} label="Deadline" value={task.deadline ? relativeLabel(task.deadline) : 'None'} active={!!task.deadline} highlighted={isWide && popover?.kind === 'deadline'} onPress={isWide ? open('deadline') : () => onEdit('deadline')} />
+      <FieldRow tone={tone} icon={task.priority ? 'flag' : 'flag-outline'} iconColor={task.priority ? PRIORITY_MAP[task.priority].color : undefined} label="Priority" value={task.priority ? PRIORITY_MAP[task.priority].label : 'None'} active={!!task.priority} highlighted={isWide && popover?.kind === 'priority'} onPress={isWide ? open('priority') : () => onEdit('priority')} />
       <FieldRow tone={tone} icon="pricetag-outline" label="Labels" value={task.tags.length ? task.tags.join(', ') : 'None'} active={task.tags.length > 0} onPress={() => onEdit('tags')} />
       <FieldRow tone={tone} icon={task.location ? 'location' : 'location-outline'} iconColor={task.location ? colors.accent : undefined} label="Location" value={task.location || 'None'} active={!!task.location} onPress={() => onEdit('location')} />
 
-      <AnchoredPopover visible={popover?.kind === 'priority'} anchor={popover?.anchor} onClose={close}>
-        <PriorityMenu value={task.priority} onChange={(p) => { onUpdate({ priority: p }); close(); }} />
-      </AnchoredPopover>
-      <AnchoredPopover visible={popover?.kind === 'when'} anchor={popover?.anchor} onClose={close} width={300}>
-        <WhenMenu value={task.when} onChange={(w) => { onUpdate({ when: w }); close(); }} />
-      </AnchoredPopover>
+      {/* Wide (iPad / desktop / web): Date + Priority edit in an anchored popover
+          next to the field; Time edits inline above. The narrow phone uses the
+          bottom sheets rendered by the parent instead. */}
+      {isWide && (
+        <>
+          <AnchoredPopover visible={popover?.kind === 'priority'} anchor={popover?.anchor} onClose={close}>
+            <PriorityMenu value={task.priority} onChange={(p) => { onUpdate({ priority: p }); close(); }} />
+          </AnchoredPopover>
+          <AnchoredPopover visible={popover?.kind === 'when'} anchor={popover?.anchor} onClose={close} width={300}>
+            <WhenMenu value={task.when} onChange={(w) => { onUpdate({ when: w }); close(); }} />
+          </AnchoredPopover>
+          {/* Deadline: a plain calendar popover (no shortcut rows — a deadline is a
+              concrete due date, not a "when to work on it" bucket). */}
+          <AnchoredPopover visible={popover?.kind === 'deadline'} anchor={popover?.anchor} onClose={close} width={300}>
+            <View style={styles.menu}>
+              <MiniCalendar selected={task.deadline || null} onSelect={(key) => { onUpdate({ deadline: key }); close(); }} />
+              {task.deadline ? (
+                <>
+                  <View style={styles.menuDivider} />
+                  <Pressable testID="deadline-menu-remove" style={styles.menuRow} onPress={() => { onUpdate({ deadline: null }); close(); }}>
+                    <Ionicons name="close-circle" size={18} color={colors.textSecondary} style={styles.menuIcon} />
+                    <Text style={styles.menuLabel}>Remove Deadline</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+          </AnchoredPopover>
+        </>
+      )}
     </View>
   );
 }
@@ -559,22 +665,24 @@ function PriorityMenu({ value, onChange }) {
   );
 }
 
+// The Date popover — same shortcut rows as the mobile quick-add tray (via the
+// shared whenShortcuts), then a month calendar. Shortcuts commit immediately.
 function WhenMenu({ value, onChange }) {
   const isDate = value && ![WHEN.TODAY, WHEN.EVENING, WHEN.SOMEDAY].includes(value);
-  const Opt = ({ icon, color, label, active, onPress, testID }) => (
-    <Pressable testID={testID} style={styles.menuRow} onPress={onPress}>
-      <Ionicons name={icon} size={18} color={color} style={styles.menuIcon} />
-      <Text style={styles.menuLabel}>{label}</Text>
-      {active && <Ionicons name="checkmark" size={18} color={colors.accent} />}
-    </Pressable>
-  );
   return (
     <View style={styles.menu}>
-      <Opt testID="when-menu-today" icon="star" color={colors.today} label="Today" active={value === WHEN.TODAY} onPress={() => onChange(WHEN.TODAY)} />
-      <Opt testID="when-menu-evening" icon="moon" color={colors.someday} label="This Evening" active={value === WHEN.EVENING} onPress={() => onChange(WHEN.EVENING)} />
-      <Opt testID="when-menu-someday" icon="archive" color={colors.someday} label="Someday" active={value === WHEN.SOMEDAY} onPress={() => onChange(WHEN.SOMEDAY)} />
+      {whenShortcuts(value).map((s) => (
+        <Pressable key={s.testID} testID={s.testID} style={styles.menuRow} onPress={() => onChange(s.value)}>
+          <Ionicons name={s.icon} size={18} color={s.color} style={styles.menuIcon} />
+          <Text style={styles.menuLabel}>{s.label}</Text>
+          {s.hint ? <Text style={styles.menuHint}>{s.hint}</Text> : null}
+        </Pressable>
+      ))}
       {value ? (
-        <Opt testID="when-menu-none" icon="close-circle" color={colors.textSecondary} label="No Date" active={false} onPress={() => onChange(null)} />
+        <Pressable testID="when-menu-none" style={styles.menuRow} onPress={() => onChange(null)}>
+          <Ionicons name="close-circle" size={18} color={colors.textSecondary} style={styles.menuIcon} />
+          <Text style={styles.menuLabel}>No Date</Text>
+        </Pressable>
       ) : null}
       <View style={styles.menuDivider} />
       <MiniCalendar selected={isDate ? value : null} onSelect={(key) => onChange(key)} />
@@ -730,12 +838,21 @@ const styles = StyleSheet.create({
   editingText: { ...typography.caption, color: colors.textSecondary, fontStyle: 'italic' },
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  // Wraps the struck-through completed title (a Pressable Text) so it fills the
+  // row like the editable input it replaces.
+  titleWrap: { flex: 1, justifyContent: 'center', minHeight: 28 },
   title: {
     flex: 1,
     ...typography.title,
-    fontSize: 22,
+    // Smaller, regular weight — matching the quick-add composer (typography.title
+    // is too large/bold for the title field).
+    fontSize: 18,
+    fontWeight: '400',
     color: colors.text,
     padding: 0,
+    // Reset explicitly so an open task's title never inherits a leaked
+    // line-through from a previously-completed task's field (iOS TextInput quirk).
+    textDecorationLine: 'none',
   },
   titleDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   notesWrap: {
@@ -764,6 +881,7 @@ const styles = StyleSheet.create({
     marginLeft: spacing.xl + spacing.md,
   },
   checkText: { flex: 1, ...typography.body, color: colors.text, padding: 0 },
+  checkTextWrap: { flex: 1, justifyContent: 'center' },
   checkTextDone: { color: colors.textTertiary, textDecorationLine: 'line-through' },
   tagsRow: {
     flexDirection: 'row',
@@ -848,6 +966,7 @@ const styles = StyleSheet.create({
   },
   menuIcon: { width: 22, textAlign: 'center' },
   menuLabel: { flex: 1, ...typography.subhead, color: colors.text },
+  menuHint: { ...typography.caption, color: colors.textTertiary, marginLeft: spacing.sm },
   menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginVertical: spacing.xs },
   timePill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

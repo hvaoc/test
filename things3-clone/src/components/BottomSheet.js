@@ -8,6 +8,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius, typography } from '../theme';
 import { useIsWide } from '../navigation/responsive';
@@ -39,12 +40,14 @@ export default function BottomSheet({ visible, onClose, title, children }) {
               : { paddingBottom: insets.bottom + spacing.md },
           ]}
         >
-          {!centered && <View style={styles.grabber} />}
+          {/* No grab handle: this sheet isn't drag-dismissable (backdrop / Done
+              only), so showing one would imply a gesture that doesn't exist. */}
           {title ? (
             <View style={styles.header}>
               <Text style={styles.title}>{title}</Text>
-              <Pressable testID="sheet-done" hitSlop={10} onPress={onClose}>
-                <Text style={styles.done}>Done</Text>
+              {/* A ✓ tick button (matching the Date sheet) instead of a "Done" label. */}
+              <Pressable testID="sheet-done" hitSlop={10} onPress={onClose} style={styles.doneBtn}>
+                <Ionicons name="checkmark" size={20} color={colors.white} />
               </Pressable>
             </View>
           ) : null}
@@ -111,5 +114,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   title: { ...typography.heading, color: colors.text },
-  done: { ...typography.body, color: colors.accent, fontWeight: '600' },
+  // Round accent ✓ button — same affordance the Date sheet uses to confirm.
+  doneBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
 });

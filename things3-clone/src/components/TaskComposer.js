@@ -179,6 +179,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     padding: 0,
+    // Clear any line-through leaked from a completed task's field (iOS quirk).
+    textDecorationLine: 'none',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
   },
   desc: {

@@ -96,7 +96,7 @@ export default function TimeSheet({ visible, minutes, duration = null, timezone 
           </Pressable>
           <Text style={styles.hTitle}>Time</Text>
           <Pressable testID="time-save" hitSlop={10} onPress={() => onSave(startMinutes, dur, tz)} style={styles.saveBtn}>
-            <Text style={styles.saveText}>Save</Text>
+            <Ionicons name="checkmark" size={20} color={colors.white} />
           </Pressable>
         </View>
 
@@ -147,8 +147,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.md },
   hBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceMuted },
   hTitle: { ...typography.heading, color: colors.text },
-  saveBtn: { backgroundColor: colors.accent, borderRadius: radius.pill, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  saveText: { ...typography.body, color: colors.white, fontWeight: '700' },
+  // Round accent ✓ button — same confirm affordance as the Date sheet and BottomSheet.
+  saveBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.lg, marginTop: spacing.md },
   rowLabel: { ...typography.body, color: colors.text },
   rowValue: { ...typography.body, color: colors.text, backgroundColor: colors.surfaceMuted, borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: 6 },

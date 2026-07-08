@@ -11,7 +11,7 @@
 // dark text on light(-tinted) surfaces; dark-family themes use light text on
 // dark(-tinted) surfaces.
 
-import { Platform } from 'react-native';
+import { Platform, Appearance } from 'react-native';
 
 const isWeb = Platform.OS === 'web' && typeof document !== 'undefined';
 
@@ -317,11 +317,21 @@ let mediaQuery = null;
 
 const cssVar = (k) => `--c-${k}`;
 
-// `colors` — themed tokens point at CSS vars (fallback = Light) on web; static
-// Light on native. Constants are shared by every theme.
+// On native there are no CSS variables, so pick the palette up front from the OS
+// appearance (Light in Light mode, Dark in Dark mode). This is read synchronously
+// at module load — before any StyleSheet bakes a value — so the whole app renders
+// in the right palette. (Switching to a *specific* theme from Settings on native
+// needs an app reload; see setThemeId.)
+const nativePalette =
+  !isWeb && Appearance.getColorScheme && Appearance.getColorScheme() === 'dark'
+    ? DARK
+    : LIGHT;
+
+// `colors` — themed tokens point at CSS vars (fallback = Light) on web; the
+// OS-appropriate palette on native. Constants are shared by every theme.
 const themed = {};
 TOKENS.forEach((k) => {
-  themed[k] = isWeb ? `var(${cssVar(k)}, ${LIGHT[k]})` : LIGHT[k];
+  themed[k] = isWeb ? `var(${cssVar(k)}, ${LIGHT[k]})` : nativePalette[k];
 });
 export const colors = { ...CONSTANT, ...themed };
 
@@ -342,7 +352,9 @@ export function applyTheme(id) {
 }
 
 export function getThemeId() {
-  if (!isWeb) return 'light';
+  // Native follows the OS appearance (Light/Dark), so "System" is the truthful
+  // selection in the picker.
+  if (!isWeb) return 'system';
   try {
     return window.localStorage.getItem(KEY) || 'system';
   } catch {

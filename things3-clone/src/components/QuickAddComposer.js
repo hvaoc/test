@@ -346,8 +346,16 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     ...typography.title,
+    // Quick-add title: smaller and regular weight (the full typography.title is
+    // too large/bold for the compact composer).
+    fontSize: 18,
+    fontWeight: '400',
     color: colors.text,
     padding: 0,
+    // Explicitly clear the decoration: iOS leaks a previous TextInput's
+    // line-through (e.g. a task title marked done in the detail editor) onto the
+    // next focused field, striking through this placeholder otherwise.
+    textDecorationLine: 'none',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
   },
   controlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

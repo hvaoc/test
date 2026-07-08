@@ -16,23 +16,15 @@ import ScrollCalendar from './ScrollCalendar';
 import TimeSheet from './TimeSheet';
 import { colors, spacing, typography, radius } from '../theme';
 import { WHEN } from '../store/constants';
-import { todayKey, keyToDate, addDays, longLabel } from '../utils/date';
+import { longLabel } from '../utils/date';
+import { whenShortcuts } from '../utils/whenShortcuts';
 
-const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const isBucket = (v) => v === WHEN.TODAY || v === WHEN.EVENING || v === WHEN.SOMEDAY;
 const isDate = (v) => v && !isBucket(v);
 
 const WIN = Dimensions.get('window');
 const COLLAPSED_H = Math.min(680, Math.round(WIN.height * 0.8));
 const EXPANDED_H = Math.round(WIN.height * 0.94);
-
-function nextWeekday(target, keepToday) {
-  const today = todayKey();
-  const day = keyToDate(today).getDay();
-  let add = (target - day + 7) % 7;
-  if (add === 0 && !keepToday) add = 7;
-  return addDays(today, add);
-}
 
 function fmtTime(mins) {
   const h = Math.floor(mins / 60);
@@ -48,10 +40,6 @@ function fmtTime(mins) {
 // the header ✓ commits.
 export default function WhenSheet({ visible, onClose, value, onChange, timeInfo = null, showTime = false }) {
   const insets = useSafeAreaInsets();
-  const today = todayKey();
-  const tomorrow = addDays(today, 1);
-  const weekend = nextWeekday(6, true);
-  const nextWeek = nextWeekday(1, false);
 
   const [draft, setDraft] = useState(isDate(value) ? value : null);
   const [mins, setMins] = useState(timeInfo?.startMinutes ?? null);
@@ -139,22 +127,8 @@ export default function WhenSheet({ visible, onClose, value, onChange, timeInfo 
     </Pressable>
   );
 
-  // The shortcut rows adapt to the current selection. The middle slot toggles between
-  // "Tomorrow" and "Later this Week": normally it's Tomorrow, but when Tomorrow is the
-  // current selection it flips to "Later this Week" (and vice-versa). The already-selected
-  // shortcut is dropped (redundant), and once anything is scheduled a "No date" row is
-  // appended so it can be cleared.
-  const later = addDays(today, 3);
-  const tomorrowRow = { testID: 'when-option-tomorrow', icon: 'partly-sunny', color: colors.deadlineSoon, label: 'Tomorrow', hint: WD[keyToDate(tomorrow).getDay()], value: tomorrow };
-  const laterRow = { testID: 'when-option-later', icon: 'calendar-clear-outline', color: '#3aa675', label: 'Later this Week', hint: WD[keyToDate(later).getDay()], value: later };
-  const midRow = value === tomorrow ? laterRow : tomorrowRow;
-  const shortcuts = [
-    { testID: 'when-option-today', icon: 'star', color: colors.today, label: 'Today', hint: WD[keyToDate(today).getDay()], value: WHEN.TODAY },
-    { testID: 'when-option-evening', icon: 'moon', color: colors.someday, label: 'This Evening', value: WHEN.EVENING },
-    midRow,
-    { testID: 'when-option-weekend', icon: 'bed', color: colors.accent, label: 'This Weekend', hint: WD[keyToDate(weekend).getDay()], value: weekend },
-    { testID: 'when-option-nextweek', icon: 'arrow-forward-circle', color: '#9b6dff', label: 'Next Week', hint: WD[keyToDate(nextWeek).getDay()], value: nextWeek },
-  ].filter((s) => s.value !== value);
+  // Shortcut rows (shared with the iPad Date popover — one source of truth).
+  const shortcuts = whenShortcuts(value);
 
   // When both Today and This Evening survive (neither is selected), they're both "today"
   // — pair them onto one row to save a line; otherwise everything renders full-width.
@@ -173,9 +147,9 @@ export default function WhenSheet({ visible, onClose, value, onChange, timeInfo 
           </View>
 
           <View style={styles.header}>
-            <Pressable testID="when-cancel" hitSlop={10} onPress={onClose} style={styles.hBtn}>
-              <Ionicons name="close" size={24} color={colors.text} />
-            </Pressable>
+            {/* No X — the ✓ confirms and a backdrop tap cancels. This spacer keeps
+                the "Date" title optically centered opposite the ✓ button. */}
+            <View style={styles.hBtn} />
             <Pressable onPress={() => snapTo(!expanded)} hitSlop={10} style={styles.hTitleWrap}>
               <Text style={styles.hTitle}>Date</Text>
               <Ionicons name={expanded ? 'chevron-down' : 'chevron-up'} size={16} color={colors.textSecondary} />

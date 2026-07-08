@@ -122,6 +122,13 @@ export function monthTitle(key) {
     : `${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
+// Always "Month YYYY" — the multi-year scroll calendar needs the year on every
+// month and must not double it the way monthTitle + a manual year would.
+export function monthYearTitle(key) {
+  const date = keyToDate(key);
+  return `${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+}
+
 const pad2 = (n) => String(n).padStart(2, '0');
 
 // Predefined absolute-date formats, offered as a preference and used for the

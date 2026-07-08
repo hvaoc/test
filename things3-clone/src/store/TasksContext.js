@@ -624,8 +624,9 @@ export function TasksProvider({ children }) {
         // Ephemeral "just added" flash (not persisted) + tell teammates.
         const id = payload && payload.id;
         if (id) {
+          // Tell teammates so THEY get the "added by you" flash — but don't show it
+          // on our own instance (no point flagging a task you just added yourself).
           const me = presenceIdentity() || { user: 'You' };
-          markAdded(id, { user: me.user, color: me.color });
           activityRef.current({ kind: 'added', taskId: id, user: me.user, color: me.color });
         }
       },

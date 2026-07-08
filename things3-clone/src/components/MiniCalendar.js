@@ -6,7 +6,7 @@ import {
   todayKey,
   keyToDate,
   dateToKey,
-  monthTitle,
+  monthYearTitle,
   WEEKDAYS_SHORT,
 } from '../utils/date';
 
@@ -21,13 +21,13 @@ export default function MiniCalendar({ selected, onSelect }) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = todayKey();
 
-  // Always lay out a fixed 6-row grid (6 × 7 = 42 cells). A month spans 4–6 weeks
-  // depending on where the 1st falls, so padding to the maximum keeps the calendar a
-  // constant height — it no longer grows/jumps when you page between months.
+  // Pad leading blanks so the 1st lands on its weekday, then trailing blanks only to
+  // finish the LAST week (a multiple of 7). Months that fit in 5 weeks render 5 rows
+  // — no empty 6th row leaving dead space at the bottom of the sheet.
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length < 42) cells.push(null);
+  while (cells.length % 7 !== 0) cells.push(null);
 
   const monthKey = dateToKey(new Date(year, month, 1));
 
@@ -40,9 +40,7 @@ export default function MiniCalendar({ selected, onSelect }) {
         >
           <Ionicons name="chevron-back" size={20} color={colors.accent} />
         </Pressable>
-        <Text style={styles.monthLabel}>
-          {monthTitle(monthKey)} {year !== new Date().getFullYear() ? '' : ''}
-        </Text>
+        <Text style={styles.monthLabel}>{monthYearTitle(monthKey)}</Text>
         <Pressable
           hitSlop={10}
           onPress={() => setCursor(new Date(year, month + 1, 1))}

@@ -1766,7 +1766,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: spacing.md,
   },
-  screenTitle: { ...typography.largeTitle, color: colors.text },
+  // A notch smaller than largeTitle (34) so the title sits closer in scale to its
+  // 26px list icon instead of towering over it.
+  screenTitle: { ...typography.largeTitle, fontSize: 28, color: colors.text },
   section: { marginBottom: spacing.lg },
   sectionHeader: {
     flexDirection: 'row',

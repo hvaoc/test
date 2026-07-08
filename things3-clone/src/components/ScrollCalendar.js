@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { colors, spacing, typography, radius } from '../theme';
-import { todayKey, dateToKey, monthTitle } from '../utils/date';
+import { todayKey, dateToKey, monthYearTitle } from '../utils/date';
 
 const WEEK = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const CELL = `${100 / 7}%`;
@@ -48,7 +48,7 @@ export default function ScrollCalendar({ selected, onSelect, height = 260, fill 
           const cells = monthCells(year, month);
           return (
             <View key={`${year}-${month}`} style={styles.month}>
-              <Text style={styles.monthLabel}>{monthTitle(dateToKey(new Date(year, month, 1)))} {year}</Text>
+              <Text style={styles.monthLabel}>{monthYearTitle(dateToKey(new Date(year, month, 1)))}</Text>
               <View style={styles.grid}>
                 {cells.map((d, i) => {
                   if (d === null) return <View key={`e${i}`} style={styles.cell} />;
@@ -84,8 +84,10 @@ export default function ScrollCalendar({ selected, onSelect, height = 260, fill 
 const styles = StyleSheet.create({
   weekRow: { flexDirection: 'row', paddingBottom: spacing.xs },
   weekday: { width: CELL, textAlign: 'center', ...typography.caption, color: colors.textTertiary },
-  month: { marginBottom: spacing.sm },
-  monthLabel: { ...typography.heading, color: colors.text, marginTop: spacing.sm, marginBottom: spacing.xs, paddingHorizontal: spacing.xs },
+  // Months flow tightly: no bottom margin, and only a small gap above each label
+  // (the partial last/first weeks already leave visual breathing room).
+  month: { marginBottom: 0 },
+  monthLabel: { ...typography.heading, color: colors.text, marginTop: spacing.xs, marginBottom: spacing.xs, paddingHorizontal: spacing.xs },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cell: { width: CELL, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
   dayCircle: { width: 34, height: 34, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
