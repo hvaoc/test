@@ -633,7 +633,7 @@ function RowActions({ visible, onEdit, onDate, onPriority, priority }) {
   );
 }
 
-function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, depth, hasChildren, expanded, onToggleExpand, onOpenTask, onCommit, ctx }) {
+function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, depth, hasChildren, expanded, justAdded, onToggleExpand, onOpenTask, onCommit, ctx }) {
   const { positions, heights, kinds, activeId, activeBlockSet, blockTranslate, blockStartTops, dragging } = ctx;
   const { updateTask } = useTasks();
   // Cross-pane drop onto sidebar projects/areas (two-pane layout only).
@@ -649,6 +649,15 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
   const endGhost = drag?.endGhost;
   const hasGhost = !!drag;
   const top = useRowTop(itemKey, ctx);
+  // Newly-revealed rows (e.g. children shown by expanding a parent) fade in over a
+  // couple of frames, hiding the brief mis-position before their neighbours'
+  // heights are measured. Rows present from the start begin fully opaque.
+  const appear = useSharedValue(justAdded ? 0 : 1);
+  React.useEffect(() => {
+    if (justAdded) appear.value = withTiming(1, { duration: 160 });
+    // Mount-only: justAdded is captured at mount; later renders don't re-trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const startTop = useSharedValue(0);
   // Snapshot of the row order at drag start, restored while hovering the sidebar
   // so the list shows no reflow gap.
@@ -813,7 +822,7 @@ function DraggableRow({ itemKey, task, showProject, inProject, showSubtasks, dep
       // Phone (no cross-pane ghost): the dragged row itself floats — free on BOTH
       // axes and semi-transparent so the drop target shows through behind it. Ghost
       // surfaces (iPad/desktop) keep hiding the original while the ghost carries it.
-      opacity: isActive && !onSidebar ? (hasGhost ? 0 : 0.6) : 1,
+      opacity: (isActive && !onSidebar ? (hasGhost ? 0 : 0.6) : 1) * appear.value,
       transform: [
         { translateX: isActive && !onSidebar && !hasGhost ? ctx.dragDX.value : nestShift },
         { scale: withTiming(isActive && !onSidebar ? 1.03 : 1, EASE) },
@@ -1089,11 +1098,25 @@ export default function ReorderableTaskList({
   // means rows are placed correctly on the first frame; heights measured for
   // tasks common to both views are retained, so there's no re-measure flash.
   const prevKeys = React.useRef(keysKey);
+  // Keys present in the previous render, so we can tell which rows are *newly
+  // revealed* this render (e.g. children shown by expanding a parent). Those rows
+  // mount before their neighbours' real heights are known, so their absolute top
+  // is briefly wrong (computed from fallback heights) — for a deep subtree the
+  // last node can flash near the top of the list. We fade only those rows in,
+  // hiding the one or two frames it takes heights to settle. Seeded to the
+  // initial keys so the first mount / list navigation never fades.
+  const prevKeySet = React.useRef(null);
+  if (prevKeySet.current === null) prevKeySet.current = new Set(items.map((it) => it.key));
+  let addedKeys = null;
   if (prevKeys.current !== keysKey) {
+    const curSet = new Set(items.map((it) => it.key));
+    addedKeys = new Set();
+    for (const it of items) if (!prevKeySet.current.has(it.key)) addedKeys.add(it.key);
     positions.value = Object.fromEntries(items.map((it, i) => [it.key, i]));
     kinds.value = Object.fromEntries(items.map((it) => [it.key, it.kind]));
     ctx.depths.value = Object.fromEntries(items.map((it) => [it.key, it.depth || 0]));
     prevKeys.current = keysKey;
+    prevKeySet.current = curSet;
   }
 
   const commit = () => {
@@ -1196,6 +1219,7 @@ export default function ReorderableTaskList({
             depth={item.depth}
             hasChildren={item.hasChildren}
             expanded={item.expanded}
+            justAdded={!!addedKeys && addedKeys.has(item.key)}
             onToggleExpand={onToggleExpand}
             onOpenTask={onOpenTask}
             onCommit={commit}
